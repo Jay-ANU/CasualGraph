@@ -5,11 +5,9 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Tuple
 
-import torch
-
-from ai_service.model_loader import get_model_and_tokenizer
 from ai_service.remote_extractor import extract_esg_with_deepseek
 from ai_service.utils import normalize_result, parse_json_safely
+from configs.settings import ESG_EXTRACTION_BACKEND
 
 
 PROMPT_TEMPLATE = """You are an ESG knowledge extraction expert. Your goal is to be COMPREHENSIVE -- extract every entity and relation that appears in the text.
@@ -94,7 +92,16 @@ def extract_esg(text: str) -> Dict:
     if remote is not None:
         return remote
 
+    if ESG_EXTRACTION_BACKEND == "remote":
+        fallback = _heuristic_extract_esg(text)
+        fallback["raw"] = "heuristic_fallback_after_remote_unavailable"
+        fallback["backend"] = "heuristic"
+        return fallback
+
     try:
+        import torch
+        from ai_service.model_loader import get_model_and_tokenizer
+
         model, tokenizer = get_model_and_tokenizer()
         prompt = PROMPT_TEMPLATE.format(text=text.strip())
 

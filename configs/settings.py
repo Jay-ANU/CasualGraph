@@ -25,7 +25,7 @@ BASE_MODEL_PATH = os.getenv("ESG_BASE_MODEL_PATH", BASE_MODEL)
 HF_LOCAL_FILES_ONLY = os.getenv("HF_LOCAL_FILES_ONLY", "False").lower() == "true"
 MODEL_ALLOW_DOWNLOAD = os.getenv("ESG_MODEL_ALLOW_DOWNLOAD", "False").lower() == "true"
 
-DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR = _resolve_project_path(os.getenv("DATA_DIR", "data"))
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 CHUNK_DIR = DATA_DIR / "chunks"
@@ -45,9 +45,13 @@ INGESTION_AUDIT_THROTTLE_SECONDS = max(0.0, float(os.getenv("INGESTION_AUDIT_THR
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 LOCAL_EMBEDDING_MODEL_DIR = PROJECT_ROOT / "models" / "BAAI_bge-m3"
 EMBEDDING_MODEL = DEFAULT_EMBEDDING_MODEL
+EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "local").strip().lower()
 EMBEDDING_LOCAL_FILES_ONLY = os.getenv("ESG_EMBEDDING_LOCAL_FILES_ONLY", "False").lower() == "true"
 EMBEDDING_ALLOW_DOWNLOAD = os.getenv("ESG_EMBEDDING_ALLOW_DOWNLOAD", "False").lower() == "true"
 EMBEDDING_FALLBACK_DIM = int(os.getenv("ESG_EMBEDDING_FALLBACK_DIM", "384"))
+DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY", "").strip()
+DEEPINFRA_BASE_URL = os.getenv("DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai").strip()
+DEEPINFRA_EMBEDDING_MODEL = os.getenv("DEEPINFRA_EMBEDDING_MODEL", "BAAI/bge-m3").strip()
 
 VECTOR_STORE_PROVIDER = os.getenv("VECTOR_STORE_PROVIDER", "local").strip().lower()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
@@ -229,6 +233,8 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
 DEEPSEEK_TIMEOUT = float(os.getenv("DEEPSEEK_TIMEOUT", "60"))
 DEEPSEEK_EXTRACTION_MODEL = os.getenv("DEEPSEEK_EXTRACTION_MODEL", DEEPSEEK_MODEL).strip()
 DEEPSEEK_EXTRACTION_MAX_TOKENS = int(os.getenv("DEEPSEEK_EXTRACTION_MAX_TOKENS", "8000"))
+ESG_EXTRACTION_BACKEND = os.getenv("ESG_EXTRACTION_BACKEND", "remote").strip().lower()
+INGESTION_ENABLED = os.getenv("INGESTION_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def deepseek_configured() -> bool:

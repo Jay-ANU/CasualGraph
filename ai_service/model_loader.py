@@ -3,11 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
-
-import torch
-from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from typing import Any, Tuple
 
 from configs.settings import BASE_MODEL_PATH, HF_LOCAL_FILES_ONLY, MODEL_ALLOW_DOWNLOAD, resolve_adapter_path
 
@@ -15,12 +11,22 @@ _MODEL = None
 _TOKENIZER = None
 
 
-def get_model_and_tokenizer() -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
+def get_model_and_tokenizer() -> Tuple[Any, Any]:
     """Return the loaded model/tokenizer pair with process-global caching."""
     global _MODEL, _TOKENIZER
 
     if _MODEL is not None and _TOKENIZER is not None:
         return _MODEL, _TOKENIZER
+
+    try:
+        import torch
+        from peft import PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    except Exception as exc:
+        raise RuntimeError(
+            "Local QLoRA dependencies are not installed. Use RAG_ANSWER_MODE=openai and "
+            "ESG_EXTRACTION_BACKEND=remote in production, or install torch/transformers/peft locally."
+        ) from exc
 
     adapter_dir = resolve_adapter_path()
     if not adapter_dir.exists():
@@ -97,6 +103,11 @@ def get_model_and_tokenizer() -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
 
 def _can_use_4bit_quantization() -> bool:
     """Use 4-bit loading only when CUDA is available and bitsandbytes is usable."""
+    try:
+        import torch
+    except Exception:
+        return False
+
     if not torch.cuda.is_available():
         return False
 

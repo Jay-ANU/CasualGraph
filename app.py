@@ -37,8 +37,12 @@ _APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).strip()
 _JWT_SECRET = os.getenv("JWT_SECRET", _DEFAULT_JWT_SECRET).strip() or _DEFAULT_JWT_SECRET
 _JWT_ALGORITHM = "HS256"
 _TOKEN_MINUTES = 60 * 24  # 1 day
-_DB_PATH = os.path.join(os.path.dirname(__file__), "auth.db")
-_FEEDBACK_DB_PATH = os.path.join(os.path.dirname(__file__), "backend", "causalgraph.db")
+_DB_PATH = os.getenv("AUTH_DB_PATH", os.path.join(os.path.dirname(__file__), "auth.db"))
+_FEEDBACK_DB_PATH = os.getenv(
+    "CAUSALGRAPH_DB_PATH",
+    os.path.join(os.path.dirname(__file__), "backend", "causalgraph.db"),
+)
+_CORS_ALLOW_ORIGINS_RAW = os.getenv("CORS_ALLOW_ORIGINS") or os.getenv("CORS_ALLOWED_ORIGINS", "")
 _security = HTTPBearer(auto_error=False)
 _CLEANUP_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 _ENTITY_TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9&.-]*")
@@ -132,6 +136,14 @@ def _validate_startup_security_config(*, app_env: Optional[str] = None, jwt_secr
         raise RuntimeError("JWT_SECRET must be at least 32 characters when APP_ENV=production/staging.")
 
 
+def _validate_startup_cors_config(*, app_env: Optional[str] = None, cors_allow_origins_raw: Optional[str] = None) -> None:
+    if not _is_production_like_env(app_env):
+        return
+    raw = _CORS_ALLOW_ORIGINS_RAW if cors_allow_origins_raw is None else str(cors_allow_origins_raw)
+    if not raw.strip():
+        raise RuntimeError("CORS_ALLOW_ORIGINS must be set when APP_ENV=production/staging.")
+
+
 def _parse_cors_origins(raw: Optional[str]) -> List[str]:
     origins = [item.strip() for item in str(raw or "").split(",") if item.strip()]
     if origins:
@@ -144,7 +156,7 @@ def _parse_cors_origins(raw: Optional[str]) -> List[str]:
     ]
 
 
-_CORS_ALLOW_ORIGINS = _parse_cors_origins(os.getenv("CORS_ALLOW_ORIGINS", ""))
+_CORS_ALLOW_ORIGINS = _parse_cors_origins(_CORS_ALLOW_ORIGINS_RAW)
 _CORS_ALLOW_ORIGIN_REGEX = os.getenv(
     "CORS_ALLOW_ORIGIN_REGEX",
     r"https://.*\.ngrok-free\.app|https://.*\.ngrok\.app",
@@ -157,6 +169,7 @@ async def _get_db():
 
 
 async def _init_auth_db():
+    Path(_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -416,7 +429,16 @@ async def _consume_admin_invite(code: str, user_id: str, db: aiosqlite.Connectio
 from ai_service.extractor import extract_esg
 from ai_service.schemas import EsgExtractionRequest, EsgExtractionResponse
 from chat_memory_service import RedisUnavailableError, chat_memory_service
-from configs.settings import CHUNK_DIR, EMBEDDING_FALLBACK_DIM, GRAPH_DIR, NEO4J_AUTO_SYNC, VECTOR_DIR, VECTOR_STORE_PROVIDER, neo4j_configured
+from configs.settings import (
+    CHUNK_DIR,
+    EMBEDDING_FALLBACK_DIM,
+    GRAPH_DIR,
+    INGESTION_ENABLED,
+    NEO4J_AUTO_SYNC,
+    VECTOR_DIR,
+    VECTOR_STORE_PROVIDER,
+    neo4j_configured,
+)
 import document_registry
 from graph.causal_reasoning import CausalReasoner
 from graph.neo4j_store import assert_neo4j_ready, get_neo4j_store, neo4j_sdk_available
@@ -491,6 +513,7 @@ app.mount("/kg-static", StaticFiles(directory=str(_KG_VIEW_STATIC)), name="kg-st
 @app.on_event("startup")
 async def startup():
     _validate_startup_security_config()
+    _validate_startup_cors_config()
     await _init_auth_db()
     await _init_feedback_db()
     init_admin_db()
@@ -1472,6 +1495,16 @@ async def health() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
 
 
+@app.get("/healthz")
+async def healthz() -> JSONResponse:
+    return JSONResponse(content={"status": "ok"})
+
+
+def _ensure_ingestion_enabled() -> None:
+    if not INGESTION_ENABLED:
+        raise HTTPException(status_code=503, detail="Document ingestion is disabled in this deployment.")
+
+
 @app.get("/kg-view", response_class=HTMLResponse)
 async def kg_view(current_user: dict = Depends(require_admin)) -> HTMLResponse:
     if not _KG_VIEW_TEMPLATE.exists():
@@ -1819,6 +1852,7 @@ async def rag_ask_stream(request: RagAskRequest, current_user: Optional[dict] = 
 
 @app.post("/pipeline/pdf")
 async def pipeline_pdf(request: PipelinePdfRequest, current_user: dict = Depends(get_current_user)):
+    _ensure_ingestion_enabled()
     try:
         result = run_pdf_pipeline(request.pdf_path, request.name)
         return JSONResponse(content=result)
@@ -1864,6 +1898,7 @@ async def upload_document(
     file: Optional[UploadFile] = File(default=None),
     current_user: dict = Depends(get_current_user),
 ):
+    _ensure_ingestion_enabled()
     try:
         file_bytes = await file.read() if file is not None else None
         is_admin = _is_admin_user(current_user)
@@ -1899,6 +1934,7 @@ async def upload_document_async(
     file: Optional[UploadFile] = File(default=None),
     current_user: dict = Depends(get_current_user),
 ):
+    _ensure_ingestion_enabled()
     try:
         assert_neo4j_ready()
         file_bytes = await file.read() if file is not None else None
@@ -2070,6 +2106,7 @@ async def delete_document(document_id: str, current_user: dict = Depends(get_cur
 
 @app.post("/documents/ingest-text")
 async def ingest_text_document(request: ManualDocumentRequest, current_user: dict = Depends(get_current_user)):
+    _ensure_ingestion_enabled()
     try:
         is_admin = _is_admin_user(current_user)
         result = ingest_uploaded_document(
@@ -2092,6 +2129,7 @@ async def ingest_text_document(request: ManualDocumentRequest, current_user: dic
 
 @app.post("/documents/rebuild-graph")
 async def rebuild_graph(request: RebuildDocumentGraphRequest, current_user: dict = Depends(get_current_user)):
+    _ensure_ingestion_enabled()
     try:
         result = rebuild_document_graph(request.model_dump())
         return JSONResponse(content=result)

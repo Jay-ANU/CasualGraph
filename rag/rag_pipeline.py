@@ -8,9 +8,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Iterator, List, Optional
 import traceback
 
-import torch
-
-from ai_service.model_loader import get_model_and_tokenizer
 from configs.settings import (
     RAG_ALLOW_SPECULATION,
     RAG_ANSWER_MODE,
@@ -601,6 +598,9 @@ def answer_question(
 
     try:
         if answer is None and answer_mode in {"auto", "local_qlora"}:
+            import torch
+            from ai_service.model_loader import get_model_and_tokenizer
+
             model, tokenizer = get_model_and_tokenizer()
             inputs = tokenizer(prompt, return_tensors="pt")
             model_device = next(model.parameters()).device
@@ -849,6 +849,9 @@ def stream_answer_question(
 
     try:
         if answer is None and answer_mode in {"auto", "local_qlora"}:
+            import torch
+            from ai_service.model_loader import get_model_and_tokenizer
+
             context = (
                 "\n\n".join(f"[{item['chunk_id']}] {item['text']}" for item in prepared["sources"])
                 if prepared["sources"]
