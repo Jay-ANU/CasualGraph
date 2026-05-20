@@ -236,6 +236,33 @@ def test_regular_user_explicit_document_ids_drop_other_private_docs():
     assert context["filters"]["owner_user_id"] == "user-1"
 
 
+def test_contextual_query_history_entity_overrides_conflicting_selected_document():
+    request = RagAskRequest(
+        question="What if I just want you to predict the impacts?",
+        top_k=3,
+        document_ids=["coca-doc"],
+        preferred_document_id="coca-doc",
+        history=[
+            {
+                "role": "user",
+                "content": "What would be impacts of Apple's financial performance based on its strategy?",
+            }
+        ],
+    )
+    user = {"id": "user-1", "role": "user"}
+    entries = [
+        {"document_id": "apple-doc", "title": "Apple ESG strategy report", "document_group": "global_kb", "visibility_scope": "global", "owner_user_id": ""},
+        {"document_id": "coca-doc", "title": "Coca-Cola sustainability update", "document_group": "global_kb", "visibility_scope": "global", "owner_user_id": ""},
+    ]
+
+    with patch("app._retrievable_registry_entries", return_value=entries):
+        context = _resolve_rag_request_context(request, current_user=user)
+
+    assert context["error_response"] is None
+    assert context["filters"]["document_ids"] == ["apple-doc"]
+    assert context["filters"]["preferred_document_id"] is None
+
+
 def test_regular_user_inaccessible_preferred_document_is_rejected():
     request = RagAskRequest(question="Summarise this report", top_k=3, preferred_document_id="other-doc")
     user = {"id": "user-1", "role": "user"}

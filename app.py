@@ -907,6 +907,21 @@ def _scope_document_ids_for_query(question: str, entries: List[Dict[str, Any]]) 
     return phrase_matched_ids or alias_matched_ids or fallback_matched_ids, query_terms
 
 
+def _question_with_recent_user_context(question: str, history: Optional[List[Dict[str, Any]]]) -> str:
+    recent_user_turns: List[str] = []
+    for item in reversed(history or []):
+        if str(item.get("role") or "").strip().lower() != "user":
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        recent_user_turns.append(content)
+        if len(recent_user_turns) >= 2:
+            break
+    parts = [*reversed(recent_user_turns), str(question or "").strip()]
+    return "\n".join(part for part in parts if part)
+
+
 def _no_accessible_documents_response() -> Dict[str, Any]:
     return {"error_response": JSONResponse(
         status_code=403,
@@ -919,10 +934,32 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
     preferred_document_id = str(request.preferred_document_id or "").strip() or None
     entity_scope_miss = False
     entity_scope_terms: List[str] = []
+    history = request.history
+    memory_backend = "disabled"
+    if request.session_id and current_user:
+        try:
+            history = chat_memory_service.get_recent_history(
+                user_id=str(current_user["id"]),
+                session_id=str(request.session_id),
+            )
+            memory_backend = "redis"
+        except RedisUnavailableError:
+            memory_backend = "disabled"
+    scope_question = _question_with_recent_user_context(request.question, history)
     if current_user and not _is_admin_user(current_user):
         retrievable_entries = _retrievable_registry_entries(current_user)
         allowed_ids = {str(entry.get("document_id") or "").strip() for entry in retrievable_entries if str(entry.get("document_id") or "").strip()}
         broad_retrievable_scope = False
+        if effective_document_ids or preferred_document_id:
+            scoped_ids, scoped_terms = _scope_document_ids_for_query(scope_question, retrievable_entries)
+            scoped_allowed_ids = sorted(set(scoped_ids) & allowed_ids)
+            requested_ids = set(effective_document_ids)
+            if preferred_document_id:
+                requested_ids.add(preferred_document_id)
+            if scoped_allowed_ids and requested_ids and requested_ids.isdisjoint(scoped_allowed_ids):
+                effective_document_ids = scoped_allowed_ids
+                preferred_document_id = None
+                entity_scope_terms = scoped_terms
         if preferred_document_id:
             if preferred_document_id not in allowed_ids:
                 return _no_accessible_documents_response()
@@ -931,7 +968,7 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
         if effective_document_ids:
             effective_document_ids = [doc_id for doc_id in effective_document_ids if doc_id in allowed_ids]
         else:
-            scoped_ids, entity_scope_terms = _scope_document_ids_for_query(request.question, retrievable_entries)
+            scoped_ids, entity_scope_terms = _scope_document_ids_for_query(scope_question, retrievable_entries)
             if scoped_ids:
                 effective_document_ids = sorted(set(scoped_ids) & allowed_ids)
             elif entity_scope_terms and not preferred_document_id:
@@ -958,7 +995,7 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
             if not entity_scope_miss and not broad_retrievable_scope:
                 return _no_accessible_documents_response()
     elif current_user and _is_admin_user(current_user) and not effective_document_ids and not preferred_document_id:
-        scoped_ids, entity_scope_terms = _scope_document_ids_for_query(request.question, _retrievable_registry_entries(current_user))
+        scoped_ids, entity_scope_terms = _scope_document_ids_for_query(scope_question, _retrievable_registry_entries(current_user))
         if scoped_ids:
             effective_document_ids = scoped_ids
         elif entity_scope_terms:
@@ -975,7 +1012,7 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
             if not effective_document_ids:
                 return _no_accessible_documents_response()
         else:
-            scoped_ids, entity_scope_terms = _scope_document_ids_for_query(request.question, public_entries)
+            scoped_ids, entity_scope_terms = _scope_document_ids_for_query(scope_question, public_entries)
             if scoped_ids:
                 effective_document_ids = scoped_ids
             elif entity_scope_terms:
@@ -999,18 +1036,6 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
     if entity_scope_miss:
         filters["entity_scope_miss"] = True
         filters["entity_scope_terms"] = entity_scope_terms
-
-    history = request.history
-    memory_backend = "disabled"
-    if request.session_id and current_user:
-        try:
-            history = chat_memory_service.get_recent_history(
-                user_id=str(current_user["id"]),
-                session_id=str(request.session_id),
-            )
-            memory_backend = "redis"
-        except RedisUnavailableError:
-            memory_backend = "disabled"
 
     return {
         "filters": filters,
