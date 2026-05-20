@@ -186,6 +186,12 @@ _EMAIL_CODE_TTL_SECONDS = max(60, int(os.getenv("EMAIL_CODE_TTL_SECONDS", "600")
 _EMAIL_CODE_RESEND_COOLDOWN_SECONDS = max(15, int(os.getenv("EMAIL_CODE_RESEND_COOLDOWN_SECONDS", "60")))
 _EMAIL_CODE_MAX_ATTEMPTS = max(1, int(os.getenv("EMAIL_CODE_MAX_ATTEMPTS", "5")))
 _EMAIL_CODE_LENGTH = max(4, int(os.getenv("EMAIL_CODE_LENGTH", "6")))
+_RAG_RATE_LIMIT_ENABLED = _env_flag("RAG_RATE_LIMIT_ENABLED", "true")
+_RAG_FREE_DAILY_POINTS = max(1, int(os.getenv("RAG_FREE_DAILY_POINTS", "30")))
+_RAG_FLASH_POINT_COST = max(1, int(os.getenv("RAG_FLASH_POINT_COST", "1")))
+_RAG_DEEP_POINT_COST = max(1, int(os.getenv("RAG_DEEP_POINT_COST", "5")))
+_RAG_MIN_SECONDS_BETWEEN_REQUESTS = max(0, int(os.getenv("RAG_MIN_SECONDS_BETWEEN_REQUESTS", "20")))
+_RAG_ANONYMOUS_ENABLED = _env_flag("RAG_ANONYMOUS_ENABLED", "false")
 
 
 async def _get_db():
@@ -230,10 +236,23 @@ async def _init_auth_db():
                 last_sent_at TEXT NOT NULL
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS rag_rate_usage (
+                user_id TEXT NOT NULL,
+                usage_date TEXT NOT NULL,
+                points_used INTEGER NOT NULL DEFAULT 0,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                flash_count INTEGER NOT NULL DEFAULT 0,
+                deep_count INTEGER NOT NULL DEFAULT 0,
+                last_request_at TEXT,
+                PRIMARY KEY (user_id, usage_date)
+            )
+        """)
         await db.execute("CREATE INDEX IF NOT EXISTS admin_invite_codes_expires_at_idx ON admin_invite_codes(expires_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS admin_invite_codes_used_at_idx ON admin_invite_codes(used_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS email_verification_codes_email_purpose_idx ON email_verification_codes(email, purpose, created_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS email_verification_codes_expires_at_idx ON email_verification_codes(expires_at)")
+        await db.execute("CREATE INDEX IF NOT EXISTS rag_rate_usage_date_idx ON rag_rate_usage(usage_date)")
         await _ensure_column(db, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
         await db.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR lower(role) NOT IN ('admin', 'user')")
         admin_emails = sorted(_admin_email_set())
@@ -324,6 +343,115 @@ def _hash_email_code(email: str, code: str) -> str:
 def _check_email_code(email: str, code: str, hashed: str) -> bool:
     payload = f"{_normalize_email(email)}:{str(code).strip()}".encode()
     return bcrypt.checkpw(payload, hashed.encode())
+
+
+def _rag_usage_date() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _rag_point_cost(reasoning_mode: Optional[str]) -> int:
+    mode = str(reasoning_mode or "flash").strip().lower()
+    return _RAG_DEEP_POINT_COST if mode == "deep" else _RAG_FLASH_POINT_COST
+
+
+def _rag_limit_error(status_code: int, message: str, **extra: Any) -> HTTPException:
+    detail = {"error": "rag_rate_limited", "message": message, **extra}
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+async def _enforce_rag_rate_limit(
+    db: aiosqlite.Connection,
+    current_user: Optional[Dict[str, Any]],
+    reasoning_mode: Optional[str],
+) -> Dict[str, Any]:
+    if not _RAG_RATE_LIMIT_ENABLED:
+        return {"bypassed": True, "reason": "disabled"}
+    if _is_admin_user(current_user):
+        return {"bypassed": True, "reason": "admin"}
+    if not current_user:
+        if not _RAG_ANONYMOUS_ENABLED:
+            raise _rag_limit_error(401, "Please sign in to use the AI agent.")
+        user_id = "anonymous"
+    else:
+        user_id = str(current_user.get("id") or "").strip()
+    if not user_id:
+        raise _rag_limit_error(401, "Please sign in to use the AI agent.")
+
+    mode = "deep" if str(reasoning_mode or "flash").strip().lower() == "deep" else "flash"
+    cost = _rag_point_cost(mode)
+    usage_date = _rag_usage_date()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+
+    cursor = await db.execute(
+        """
+        SELECT points_used, request_count, flash_count, deep_count, last_request_at
+        FROM rag_rate_usage
+        WHERE user_id = ? AND usage_date = ?
+        """,
+        (user_id, usage_date),
+    )
+    row = await cursor.fetchone()
+    points_used = int(row[0] or 0) if row else 0
+    request_count = int(row[1] or 0) if row else 0
+    flash_count = int(row[2] or 0) if row else 0
+    deep_count = int(row[3] or 0) if row else 0
+    last_request_at = str(row[4] or "") if row else ""
+
+    if last_request_at and _RAG_MIN_SECONDS_BETWEEN_REQUESTS > 0:
+        elapsed = (now - _parse_utc_iso(last_request_at)).total_seconds()
+        if elapsed < _RAG_MIN_SECONDS_BETWEEN_REQUESTS:
+            retry_after = max(1, int(_RAG_MIN_SECONDS_BETWEEN_REQUESTS - elapsed))
+            raise _rag_limit_error(
+                429,
+                f"Please wait {retry_after} seconds before sending another message.",
+                retry_after_seconds=retry_after,
+                points_limit=_RAG_FREE_DAILY_POINTS,
+                points_used=points_used,
+                points_remaining=max(0, _RAG_FREE_DAILY_POINTS - points_used),
+            )
+
+    if points_used + cost > _RAG_FREE_DAILY_POINTS:
+        raise _rag_limit_error(
+            429,
+            "Daily message limit reached. Please try again tomorrow.",
+            points_limit=_RAG_FREE_DAILY_POINTS,
+            points_used=points_used,
+            points_remaining=max(0, _RAG_FREE_DAILY_POINTS - points_used),
+            points_required=cost,
+            reset_at=f"{usage_date}T23:59:59+00:00",
+        )
+
+    new_points = points_used + cost
+    new_request_count = request_count + 1
+    new_flash_count = flash_count + (1 if mode == "flash" else 0)
+    new_deep_count = deep_count + (1 if mode == "deep" else 0)
+    await db.execute(
+        """
+        INSERT INTO rag_rate_usage (
+            user_id, usage_date, points_used, request_count, flash_count, deep_count, last_request_at
+        ) VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(user_id, usage_date) DO UPDATE SET
+            points_used = excluded.points_used,
+            request_count = excluded.request_count,
+            flash_count = excluded.flash_count,
+            deep_count = excluded.deep_count,
+            last_request_at = excluded.last_request_at
+        """,
+        (user_id, usage_date, new_points, new_request_count, new_flash_count, new_deep_count, now_iso),
+    )
+    await db.commit()
+    return {
+        "bypassed": False,
+        "mode": mode,
+        "points_cost": cost,
+        "points_limit": _RAG_FREE_DAILY_POINTS,
+        "points_used": new_points,
+        "points_remaining": max(0, _RAG_FREE_DAILY_POINTS - new_points),
+        "request_count": new_request_count,
+        "flash_count": new_flash_count,
+        "deep_count": new_deep_count,
+    }
 
 
 def _make_token(user_id: str, email: str) -> str:
@@ -1975,11 +2103,18 @@ async def extract(request: EsgExtractionRequest):
 
 
 @app.post("/rag/ask")
-async def rag_ask(request: RagAskRequest, current_user: Optional[dict] = Depends(get_optional_current_user)):
+async def rag_ask(
+    request: RagAskRequest,
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
     try:
+        if not current_user:
+            await _enforce_rag_rate_limit(db, current_user, request.reasoning_mode)
         context = _resolve_rag_request_context(request, current_user)
         if context["error_response"] is not None:
             return context["error_response"]
+        quota = await _enforce_rag_rate_limit(db, current_user, request.reasoning_mode) if current_user else None
         result = answer_question(
             request.question,
             top_k=request.top_k,
@@ -1990,9 +2125,13 @@ async def rag_ask(request: RagAskRequest, current_user: Optional[dict] = Depends
             user_id=context["user_id"],
         )
         result["memory_backend"] = context["memory_backend"]
+        if quota and not quota.get("bypassed"):
+            result["quota"] = quota
         if request.session_id:
             result["session_id"] = request.session_id
         return JSONResponse(content=result)
+    except HTTPException:
+        raise
     except FileNotFoundError as exc:
         return JSONResponse(
             status_code=400,
@@ -2051,11 +2190,18 @@ def _build_streaming_response(
 
 
 @app.post("/rag/ask/stream")
-async def rag_ask_stream(request: RagAskRequest, current_user: Optional[dict] = Depends(get_optional_current_user)):
+async def rag_ask_stream(
+    request: RagAskRequest,
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
     try:
+        if not current_user:
+            await _enforce_rag_rate_limit(db, current_user, request.reasoning_mode)
         context = _resolve_rag_request_context(request, current_user)
         if context["error_response"] is not None:
             return context["error_response"]
+        quota = await _enforce_rag_rate_limit(db, current_user, request.reasoning_mode) if current_user else None
 
         def _stream_factory():
             for event in stream_answer_question(
@@ -2070,6 +2216,8 @@ async def rag_ask_stream(request: RagAskRequest, current_user: Optional[dict] = 
                 if event.get("type") == "done":
                     payload = dict(event.get("payload") or {})
                     payload["memory_backend"] = context["memory_backend"]
+                    if quota and not quota.get("bypassed"):
+                        payload["quota"] = quota
                     if request.session_id:
                         payload["session_id"] = request.session_id
                     yield {"type": "done", "payload": payload}
@@ -2093,6 +2241,8 @@ async def rag_ask_stream(request: RagAskRequest, current_user: Optional[dict] = 
                 user_id=context["user_id"],
             )
             result["memory_backend"] = context["memory_backend"]
+            if quota and not quota.get("bypassed"):
+                result["quota"] = quota
             if request.session_id:
                 result["session_id"] = request.session_id
             return result
@@ -2102,6 +2252,8 @@ async def rag_ask_stream(request: RagAskRequest, current_user: Optional[dict] = 
             stream_factory=_stream_factory,
             fallback_factory=_fallback_factory,
         )
+    except HTTPException:
+        raise
     except FileNotFoundError as exc:
         return JSONResponse(
             status_code=400,

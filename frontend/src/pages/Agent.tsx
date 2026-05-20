@@ -453,9 +453,15 @@ const readApiErrorMessage = async (response: Response): Promise<string> => {
   }
 
   try {
-    const payload = JSON.parse(raw) as { message?: string; error?: string };
+    const payload = JSON.parse(raw) as { message?: string; error?: string; detail?: string | { message?: string; error?: string } };
     if (payload?.error === 'no_accessible_documents') {
       return 'No searchable ESG documents are available for this account yet. Upload a report or try again after the global knowledge base is indexed.';
+    }
+    if (typeof payload?.detail === 'string') {
+      return payload.detail;
+    }
+    if (payload?.detail && typeof payload.detail === 'object') {
+      return payload.detail.message || payload.detail.error || fallback;
     }
     return payload?.message || payload?.error || fallback;
   } catch {
