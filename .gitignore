@@ -59,3 +59,8 @@ data/documents/*
 !data/vector_store/.gitkeep
 !data/taxonomy/
 !data/taxonomy/**
+
+# Public GitHub release: Markdown files are opt-in.
+# Keep only the root README unless explicitly requested.
+*.md
+!/README.md
