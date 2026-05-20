@@ -1341,10 +1341,12 @@ def _entry_from_upload(upload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _entry_from_chunk_file(chunks_path: Path) -> Optional[Dict[str, Any]]:
+    if chunks_path.name.startswith("."):
+        return None
     try:
         with chunks_path.open("r", encoding="utf-8") as handle:
             first_line = handle.readline().strip()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     if not first_line:
         return None

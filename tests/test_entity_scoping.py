@@ -190,6 +190,36 @@ def test_collect_orphan_chunk_entries_builds_registry_fallback(tmp_path):
     assert entries[0]["paths"]["graph"].endswith("_graph.json")
 
 
+def test_collect_orphan_chunk_entries_ignores_appledouble_chunk_files(tmp_path):
+    (tmp_path / "._aa_sustainability_report_2022_20260501043104_chunks.jsonl").write_bytes(
+        b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        \x00\x02\x00\x00\x00\xa3"
+    )
+    chunks_path = tmp_path / "aa_sustainability_report_2022_20260501043104_chunks.jsonl"
+    chunks_path.write_text(
+        json.dumps({
+            "chunk_id": "chunk_0",
+            "text": "SUSTAINABILITY REPORT 2022",
+            "document_id": "aa_sustainability_report_2022_20260501043104",
+            "document_title": "aa-sustainability-report-2022",
+            "document_group": "user_upload",
+            "source_type": "uploaded_file",
+            "domain": "general",
+            "source": "aa-sustainability-report-2022.pdf",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "aa_sustainability_report_2022_20260501043104_graph.json").write_text(
+        json.dumps({"nodes": [{"id": "American Airlines", "type": "Company"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "aa_sustainability_report_2022_20260501043104").mkdir()
+
+    with patch("app.CHUNK_DIR", tmp_path), patch("app.GRAPH_DIR", tmp_path), patch("app.VECTOR_DIR", tmp_path):
+        entries = _collect_orphan_chunk_entries(set())
+
+    assert [entry["document_id"] for entry in entries] == ["aa_sustainability_report_2022_20260501043104"]
+
+
 def test_regular_user_explicit_document_ids_drop_other_private_docs():
     request = RagAskRequest(question="Compare selected reports", top_k=3, document_ids=["own-doc", "other-doc", "global-doc"])
     user = {"id": "user-1", "role": "user"}
