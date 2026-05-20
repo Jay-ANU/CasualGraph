@@ -1,5 +1,5 @@
 app = "casualgraph"
-primary_region = "iad"
+primary_region = "syd"
 
 [build]
 
