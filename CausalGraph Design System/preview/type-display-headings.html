@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Type · Display + headings</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background: #fff; color: var(--cg-ink); padding: 20px 24px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--cg-border-soft); }
+  .row:last-child { border-bottom: 0; }
+  .specimen { font-family: var(--cg-font-display); color: var(--cg-ink); letter-spacing: -0.03em; font-weight: 600; }
+  .meta { font-family: var(--cg-font-mono); font-size: 10.5px; color: var(--cg-ink-soft); white-space: nowrap; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+</style>
+</head>
+<body>
+  <div class="head"><div class="label">Display &amp; headings</div><div class="note">Manrope · weight 600 · tracking -0.03em</div></div>
+  <div class="row">
+    <div class="specimen" style="font-size:48px;line-height:1.05">Read disclosures as evidence.</div>
+    <div class="meta">Display · 60/52/48 · 1.05</div>
+  </div>
+  <div class="row">
+    <div class="specimen" style="font-size:36px;line-height:1.1">Built for disclosure review</div>
+    <div class="meta">H1 · 40/36 · 1.10</div>
+  </div>
+  <div class="row">
+    <div class="specimen" style="font-size:28px;line-height:1.15">Common use cases</div>
+    <div class="meta">H2 · 32/28 · 1.15</div>
+  </div>
+  <div class="row">
+    <div class="specimen" style="font-size:20px;line-height:1.25;letter-spacing:-0.02em">Disclosure Review</div>
+    <div class="meta">H3 · 22/20 · 1.25</div>
+  </div>
+  <div class="row">
+    <div class="specimen" style="font-size:17px;line-height:1.35;letter-spacing:-0.01em">Active evidence set</div>
+    <div class="meta">H4 · 18/17 · 1.35</div>
+  </div>
+</body>
+</html>

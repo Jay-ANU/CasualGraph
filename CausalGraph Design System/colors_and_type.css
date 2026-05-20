@@ -1,0 +1,348 @@
+/* =========================================================================
+   CausalGraph — colors & type
+   The single source of visual truth. Import this in any HTML you build.
+   ========================================================================= */
+
+@import url('fonts/fonts.css');
+
+:root {
+  /* ---------- Color foundations ---------- */
+  /* Surface — translucent panels over a soft, slate-tinted background */
+  --cg-bg:                #f7f8fa;
+  --cg-bg-strong:         #eef2f7;
+  --cg-surface:           rgba(255, 255, 255, 0.86);
+  --cg-surface-strong:    rgba(255, 255, 255, 0.96);
+  --cg-surface-soft:      rgba(255, 255, 255, 0.62);
+  --cg-surface-tint:      rgba(255, 255, 255, 0.78);
+
+  /* Ink — slate is the brand. No sky-blue, no purple. */
+  --cg-ink:               #0f172a; /* slate-950 ish */
+  --cg-ink-strong:        #020617; /* slate-950 darkest */
+  --cg-ink-muted:         #475569; /* slate-600 */
+  --cg-ink-soft:          #64748b; /* slate-500 */
+  --cg-ink-faint:         #94a3b8; /* slate-400 */
+
+  /* Borders */
+  --cg-border:            #e2e8f0; /* slate-200 */
+  --cg-border-strong:     #cbd5e1; /* slate-300 */
+  --cg-border-soft:       #f1f5f9; /* slate-100 */
+
+  /* Slate ramp (canonical scale for swatches & icon backgrounds) */
+  --cg-slate-50:          #f8fafc;
+  --cg-slate-100:         #f1f5f9;
+  --cg-slate-200:         #e2e8f0;
+  --cg-slate-300:         #cbd5e1;
+  --cg-slate-400:         #94a3b8;
+  --cg-slate-500:         #64748b;
+  --cg-slate-600:         #475569;
+  --cg-slate-700:         #334155;
+  --cg-slate-800:         #1e293b;
+  --cg-slate-900:         #0f172a;
+  --cg-slate-950:         #020617;
+
+  /* Accents — used SPARINGLY. The system is monochrome by default. */
+  --cg-accent:            #020617; /* the "primary" is just deep slate */
+  --cg-accent-hover:      #1e293b;
+
+  /* ESG domain tags — these come from the graph viewer. Muted, not saturated. */
+  --cg-domain-environmental:    #047857; /* emerald-700 */
+  --cg-domain-environmental-bg: #ecfdf5; /* emerald-50 */
+  --cg-domain-social:           #1d4ed8; /* blue-700 */
+  --cg-domain-social-bg:        #eff6ff; /* blue-50 */
+  --cg-domain-governance:       #7c2d12; /* orange-900 */
+  --cg-domain-governance-bg:    #fff7ed; /* orange-50 */
+  --cg-domain-general:          #475569; /* slate-600 */
+  --cg-domain-general-bg:       #f1f5f9; /* slate-100 */
+  --cg-domain-ai:               #6d28d9; /* violet-700 — used only on the AI domain pill */
+  --cg-domain-ai-bg:            #f5f3ff; /* violet-50 */
+
+  /* Semantic states (status banners, upload toasts, eval outcomes) */
+  --cg-success:        #047857;
+  --cg-success-bg:     #ecfdf5;
+  --cg-success-border: #a7f3d0;
+  --cg-warn:           #92400e;
+  --cg-warn-bg:        #fffbeb;
+  --cg-warn-border:    #fcd34d;
+  --cg-danger:         #b91c1c;
+  --cg-danger-bg:      #fef2f2;
+  --cg-danger-border:  #fecaca;
+  --cg-info:           #1e40af;
+  --cg-info-bg:        #eff6ff;
+  --cg-info-border:    #bfdbfe;
+
+  /* Confidence ramp (for graph edges / extracted relationships) */
+  --cg-conf-low:    #94a3b8; /* < 0.6 */
+  --cg-conf-mid:    #475569; /* 0.6–0.8 */
+  --cg-conf-high:   #0f172a; /* > 0.8 */
+
+  /* Shadows + elevation */
+  --cg-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --cg-shadow-sm: 0 2px 6px rgba(15, 23, 42, 0.06);
+  --cg-shadow-md: 0 8px 24px rgba(15, 23, 42, 0.06);
+  --cg-shadow-lg: 0 18px 50px rgba(15, 23, 42, 0.08);
+  --cg-shadow-xl: 0 32px 80px rgba(15, 23, 42, 0.10);
+  --cg-ring-focus: 0 0 0 3px rgba(15, 23, 42, 0.15);
+
+  /* Radii — the brand is soft-rectangular. Pills are reserved for chips. */
+  --cg-radius-xs:  6px;
+  --cg-radius-sm:  8px;
+  --cg-radius-md:  12px;
+  --cg-radius-lg:  14px;   /* default panel radius */
+  --cg-radius-xl:  20px;
+  --cg-radius-pill: 9999px;
+
+  /* Spacing — 4px base */
+  --cg-space-1:  4px;
+  --cg-space-2:  8px;
+  --cg-space-3:  12px;
+  --cg-space-4:  16px;
+  --cg-space-5:  20px;
+  --cg-space-6:  24px;
+  --cg-space-8:  32px;
+  --cg-space-10: 40px;
+  --cg-space-12: 48px;
+  --cg-space-16: 64px;
+  --cg-space-20: 80px;
+
+  /* Layout */
+  --cg-content-max:   1600px;
+  --cg-navbar-height: 72px;
+
+  /* Backdrop blur intensity */
+  --cg-blur-sm: 12px;
+  --cg-blur-md: 18px;
+  --cg-blur-lg: 24px;
+
+  /* ---------- Type foundations ---------- */
+  --cg-font-sans:     'IBM Plex Sans', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+  --cg-font-display:  'Manrope', 'IBM Plex Sans', 'Avenir Next', sans-serif;
+  --cg-font-mono:     'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --cg-tracking-tight: -0.03em;   /* used on all headings */
+  --cg-tracking-wide:  0.14em;    /* uppercase eyebrows / labels */
+  --cg-tracking-wider: 0.22em;    /* logotype eyebrow "ESG INTELLIGENCE" */
+
+  /* Text scale — analyst-grade, dense */
+  --cg-fs-display: 60px;  --cg-lh-display: 1.05;
+  --cg-fs-h1:      40px;  --cg-lh-h1:      1.10;
+  --cg-fs-h2:      32px;  --cg-lh-h2:      1.15;
+  --cg-fs-h3:      22px;  --cg-lh-h3:      1.25;
+  --cg-fs-h4:      18px;  --cg-lh-h4:      1.35;
+  --cg-fs-body:    15px;  --cg-lh-body:    1.55;
+  --cg-fs-small:   13px;  --cg-lh-small:   1.55;
+  --cg-fs-eyebrow: 11px;  --cg-lh-eyebrow: 1.2;
+  --cg-fs-mono:    13px;  --cg-lh-mono:    1.5;
+
+  /* Texture — the "grid" backdrop used on hero sections */
+  --cg-grid-line: rgba(15, 23, 42, 0.05);
+  --cg-grid-step: 24px;
+}
+
+/* =========================================================================
+   Semantic element defaults — opt in by adding `class="cg"` on a wrapper,
+   or use these utility classes directly on elements.
+   ========================================================================= */
+
+.cg {
+  font-family: var(--cg-font-sans);
+  color: var(--cg-ink);
+  background: var(--cg-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.cg h1, .cg-h1 {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-h1);
+  line-height: var(--cg-lh-h1);
+  letter-spacing: var(--cg-tracking-tight);
+  font-weight: 600;
+  color: var(--cg-ink);
+  margin: 0;
+}
+
+.cg h2, .cg-h2 {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-h2);
+  line-height: var(--cg-lh-h2);
+  letter-spacing: var(--cg-tracking-tight);
+  font-weight: 600;
+  color: var(--cg-ink);
+  margin: 0;
+}
+
+.cg h3, .cg-h3 {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-h3);
+  line-height: var(--cg-lh-h3);
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  color: var(--cg-ink);
+  margin: 0;
+}
+
+.cg h4, .cg-h4 {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-h4);
+  line-height: var(--cg-lh-h4);
+  letter-spacing: -0.01em;
+  font-weight: 600;
+  color: var(--cg-ink);
+  margin: 0;
+}
+
+.cg p, .cg-p {
+  font-family: var(--cg-font-sans);
+  font-size: var(--cg-fs-body);
+  line-height: var(--cg-lh-body);
+  color: var(--cg-ink-muted);
+  margin: 0;
+}
+
+.cg-display {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-display);
+  line-height: var(--cg-lh-display);
+  letter-spacing: var(--cg-tracking-tight);
+  font-weight: 600;
+  color: var(--cg-ink);
+}
+
+.cg-eyebrow {
+  font-family: var(--cg-font-sans);
+  font-size: var(--cg-fs-eyebrow);
+  line-height: var(--cg-lh-eyebrow);
+  text-transform: uppercase;
+  letter-spacing: var(--cg-tracking-wide);
+  font-weight: 600;
+  color: var(--cg-ink-soft);
+}
+
+.cg-eyebrow-wide {
+  font-family: var(--cg-font-sans);
+  font-size: var(--cg-fs-eyebrow);
+  text-transform: uppercase;
+  letter-spacing: var(--cg-tracking-wider);
+  font-weight: 600;
+  color: var(--cg-ink-soft);
+}
+
+.cg-small {
+  font-family: var(--cg-font-sans);
+  font-size: var(--cg-fs-small);
+  line-height: var(--cg-lh-small);
+  color: var(--cg-ink-muted);
+}
+
+.cg-mono {
+  font-family: var(--cg-font-mono);
+  font-size: var(--cg-fs-mono);
+  line-height: var(--cg-lh-mono);
+  color: var(--cg-ink);
+}
+
+/* Body wrapper: replicates the codebase's app-grid + radial backdrop */
+.cg-app-bg {
+  background:
+    radial-gradient(circle at 14% 8%, rgba(15, 23, 42, 0.10), transparent 30%),
+    radial-gradient(circle at 88% 6%, rgba(15, 23, 42, 0.08), transparent 26%),
+    linear-gradient(180deg, #ffffff 0%, var(--cg-bg) 42%, var(--cg-bg-strong) 100%);
+  min-height: 100vh;
+}
+
+.cg-grid {
+  background-image:
+    linear-gradient(var(--cg-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--cg-grid-line) 1px, transparent 1px);
+  background-size: var(--cg-grid-step) var(--cg-grid-step);
+}
+
+.cg-hero {
+  background:
+    linear-gradient(135deg, rgba(15, 23, 42, 0.10), rgba(255, 255, 255, 0.72) 38%),
+    radial-gradient(circle at 88% 18%, rgba(15, 23, 42, 0.14), transparent 34%),
+    rgba(255, 255, 255, 0.78);
+  border-bottom: 1px solid var(--cg-border);
+}
+
+/* Panels */
+.cg-panel {
+  background: var(--cg-surface);
+  border: 1px solid var(--cg-border);
+  box-shadow: var(--cg-shadow-lg);
+  border-radius: var(--cg-radius-lg);
+  backdrop-filter: blur(var(--cg-blur-md));
+  -webkit-backdrop-filter: blur(var(--cg-blur-md));
+}
+
+.cg-panel-strong {
+  background: var(--cg-surface-strong);
+  border: 1px solid var(--cg-border);
+  box-shadow: var(--cg-shadow-lg);
+  border-radius: var(--cg-radius-lg);
+  backdrop-filter: blur(var(--cg-blur-md));
+  -webkit-backdrop-filter: blur(var(--cg-blur-md));
+}
+
+/* Buttons */
+.cg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--cg-radius-md);
+  padding: 12px 20px;
+  font-family: var(--cg-font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  background: var(--cg-accent);
+  color: #ffffff;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.05s ease;
+}
+.cg-btn:hover { background: var(--cg-accent-hover); }
+.cg-btn:active { transform: translateY(0.5px); }
+
+.cg-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--cg-radius-md);
+  padding: 12px 20px;
+  font-family: var(--cg-font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid var(--cg-border);
+  background: var(--cg-surface-tint);
+  color: var(--cg-ink);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.cg-btn-secondary:hover { background: rgba(255,255,255,0.92); }
+
+/* Chips & pills */
+.cg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--cg-radius-pill);
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--cg-border);
+  background: var(--cg-surface-tint);
+  color: var(--cg-ink-muted);
+}
+
+.cg-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--cg-radius-xs);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--cg-slate-100);
+  color: var(--cg-slate-700);
+}

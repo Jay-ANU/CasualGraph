@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Color · Slate ramp</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background: #fff; color: var(--cg-ink); padding: 18px 22px; }
+  .row { display: grid; grid-template-columns: repeat(11, 1fr); gap: 0; border: 1px solid var(--cg-border); border-radius: var(--cg-radius-md); overflow: hidden; }
+  .swatch { aspect-ratio: 1 / 1.15; display: flex; flex-direction: column; justify-content: space-between; padding: 8px 8px; }
+  .swatch .step { font-family: var(--cg-font-mono); font-size: 10px; font-weight: 600; }
+  .swatch .hex { font-family: var(--cg-font-mono); font-size: 9.5px; opacity: 0.85; letter-spacing: -0.01em; }
+  .meta { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+</style>
+</head>
+<body>
+  <div class="meta">
+    <div class="label">Slate ramp</div>
+    <div class="note">--cg-slate-50 → 950 · the brand's monochrome backbone</div>
+  </div>
+  <div class="row">
+    <div class="swatch" style="background:#f8fafc;color:#0f172a"><span class="step">50</span><span class="hex">#F8FAFC</span></div>
+    <div class="swatch" style="background:#f1f5f9;color:#0f172a"><span class="step">100</span><span class="hex">#F1F5F9</span></div>
+    <div class="swatch" style="background:#e2e8f0;color:#0f172a"><span class="step">200</span><span class="hex">#E2E8F0</span></div>
+    <div class="swatch" style="background:#cbd5e1;color:#0f172a"><span class="step">300</span><span class="hex">#CBD5E1</span></div>
+    <div class="swatch" style="background:#94a3b8;color:#0f172a"><span class="step">400</span><span class="hex">#94A3B8</span></div>
+    <div class="swatch" style="background:#64748b;color:#fff"><span class="step">500</span><span class="hex">#64748B</span></div>
+    <div class="swatch" style="background:#475569;color:#fff"><span class="step">600</span><span class="hex">#475569</span></div>
+    <div class="swatch" style="background:#334155;color:#fff"><span class="step">700</span><span class="hex">#334155</span></div>
+    <div class="swatch" style="background:#1e293b;color:#fff"><span class="step">800</span><span class="hex">#1E293B</span></div>
+    <div class="swatch" style="background:#0f172a;color:#fff"><span class="step">900</span><span class="hex">#0F172A</span></div>
+    <div class="swatch" style="background:#020617;color:#fff"><span class="step">950</span><span class="hex">#020617</span></div>
+  </div>
+</body>
+</html>

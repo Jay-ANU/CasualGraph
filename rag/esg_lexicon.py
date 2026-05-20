@@ -1,0 +1,27 @@
+"""Shared ESG terms for retrieval routing."""
+
+ESG_KEYWORDS = {
+    "carbon",
+    "climate",
+    "emission",
+    "emissions",
+    "energy",
+    "esg",
+    "ghg",
+    "governance",
+    "greenhouse",
+    "renewable",
+    "scope",
+    "sustainability",
+    "sustainable",
+    "排放",
+    "碳",
+    "温室",
+    "治理",
+    "可持续",
+    "能源",
+    "气候",
+    "范围一",
+    "范围二",
+    "范围三",
+}

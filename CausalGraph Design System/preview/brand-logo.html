@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Brand · Logo</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background:#fff; color: var(--cg-ink); padding: 18px 22px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .row { display: grid; grid-template-columns: 1fr 1fr 0.6fr; gap: 14px; align-items: stretch; }
+  .cell { display: grid; gap: 6px; }
+  .cap { font-family: var(--cg-font-mono); font-size: 10.5px; color: var(--cg-ink-soft); }
+  .panel { display: flex; align-items: center; justify-content: center; height: 110px; border-radius: 10px; }
+  .light { background: #f7f8fa; border: 1px solid var(--cg-border); }
+  .dark { background: #020617; }
+  .mark { background: linear-gradient(135deg,#fff,#eef2f7); border: 1px solid var(--cg-border); }
+</style>
+</head>
+<body>
+  <div class="head"><div class="label">Logo</div><div class="note">slate-950 mark · 12px radius · ellipses-as-orbits motif</div></div>
+  <div class="row">
+    <div class="cell">
+      <div class="cap">Lockup · light surface</div>
+      <div class="panel light"><img src="../assets/logo.svg" height="40" alt="" /></div>
+    </div>
+    <div class="cell">
+      <div class="cap">Lockup · dark surface</div>
+      <div class="panel dark"><img src="../assets/logo-dark.svg" onerror="this.src='../assets/logo.svg';this.style.filter='invert(1)'" height="40" alt="" /></div>
+    </div>
+    <div class="cell">
+      <div class="cap">Mark</div>
+      <div class="panel mark"><img src="../assets/logo-mark.svg" height="44" alt="" /></div>
+    </div>
+  </div>
+</body>
+</html>

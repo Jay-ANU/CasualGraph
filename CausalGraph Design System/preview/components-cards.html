@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Components · Cards</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<script src="https://unpkg.com/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background:#f7f8fa; color: var(--cg-ink); padding: 20px 22px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background:#fff; border: 1px solid var(--cg-border); border-radius: 14px; padding: 16px 18px; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+  .card .eyebrow { display:inline-flex; align-items:center; gap:6px; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cg-ink-soft); }
+  .card h4 { font-family: var(--cg-font-display); font-size: 16px; font-weight: 600; letter-spacing: -0.02em; margin: 8px 0 6px; }
+  .card p  { font-size: 13px; line-height: 1.5; color: var(--cg-ink-muted); margin: 0; }
+  .meta { display: flex; gap: 10px; align-items: center; margin-top: 12px; font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .ev-card { background:#fff; border:1px solid var(--cg-border); border-radius: 14px; padding: 14px 16px; }
+  .ev-card .src { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .ev-quote { font-size: 13.5px; line-height: 1.6; color: var(--cg-ink); border-left: 3px solid #94a3b8; padding-left: 12px; }
+  i { width: 14px; height: 14px; }
+</style>
+</head>
+<body>
+  <div class="head"><div class="label">Cards</div><div class="note">14px radius · 1px slate-200 border · slate-tinted shadow</div></div>
+  <div class="grid">
+    <div class="card">
+      <span class="eyebrow"><i data-lucide="leaf"></i>Environmental</span>
+      <h4>BHP · scope 1 emissions trajectory</h4>
+      <p>Year-on-year intensity by commodity, with audit links to the 2024 climate transition action plan.</p>
+      <div class="meta"><span>Last sync · 2 hr ago</span><span>·</span><span>4 evidence</span></div>
+    </div>
+    <div class="ev-card">
+      <div class="src"><i data-lucide="file-text"></i> bhp-2024-sustainability.pdf · p.42</div>
+      <div class="ev-quote">"We have committed to a medium-term target to reduce operational greenhouse gas emissions by at least 30% from FY2020 levels by FY2030."</div>
+    </div>
+    <div class="card" style="grid-column: span 2;">
+      <span class="eyebrow"><i data-lucide="network"></i>Reasoning trace</span>
+      <h4>How does the 30% target relate to BHP's scope 3 disclosures?</h4>
+      <p>The graph traversal followed: <span style="font-family:var(--cg-font-mono);background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;">BHP → HAS_TARGET → 30%_FY2030 → APPLIES_TO → operational_emissions</span> — scope 3 sits on a separate edge with no public commitment as of FY2024.</p>
+    </div>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

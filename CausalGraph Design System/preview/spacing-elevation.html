@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Spacing · Elevation</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background:#f7f8fa; color: var(--cg-ink); padding: 24px 26px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; align-items: end; }
+  .cell { display: grid; gap: 8px; justify-items: center; }
+  .tile { width: 100%; height: 60px; background:#fff; border: 1px solid var(--cg-border); border-radius: 14px; }
+  .name { font-family: var(--cg-font-mono); font-size: 10.5px; font-weight: 600; }
+  .meta { font-family: var(--cg-font-mono); font-size: 10px; color: var(--cg-ink-soft); text-align: center; }
+</style>
+</head>
+<body>
+  <div class="head"><div class="label">Elevation · shadow scale</div><div class="note">all shadows are slate-tinted, never pure black</div></div>
+  <div class="row">
+    <div class="cell"><div class="tile" style="box-shadow:0 1px 2px rgba(15,23,42,.04)"></div><div class="name">xs</div><div class="meta">hairline · 0 1 2 / .04</div></div>
+    <div class="cell"><div class="tile" style="box-shadow:0 2px 6px rgba(15,23,42,.06)"></div><div class="name">sm</div><div class="meta">tags · 0 2 6 / .06</div></div>
+    <div class="cell"><div class="tile" style="box-shadow:0 8px 24px rgba(15,23,42,.06)"></div><div class="name">md</div><div class="meta">hover · 0 8 24 / .06</div></div>
+    <div class="cell"><div class="tile" style="box-shadow:0 18px 50px rgba(15,23,42,.08)"></div><div class="name">lg</div><div class="meta">panel · 0 18 50 / .08</div></div>
+    <div class="cell"><div class="tile" style="box-shadow:0 32px 80px rgba(15,23,42,.10)"></div><div class="name">xl</div><div class="meta">floating · 0 32 80 / .10</div></div>
+  </div>
+</body>
+</html>

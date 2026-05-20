@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Color · Confidence ramp</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background: #fff; color: var(--cg-ink); padding: 18px 22px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  svg { display: block; }
+  .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; align-items: end; }
+  .col { display: flex; flex-direction: column; gap: 6px; }
+  .meta { font-family: var(--cg-font-mono); font-size: 10.5px; color: var(--cg-ink-muted); }
+  .meta strong { color: var(--cg-ink); font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="label">Edge confidence ramp</div>
+    <div class="note">stroke darkens + thickens with confidence · never red/green</div>
+  </div>
+  <div class="row">
+    <div class="col">
+      <svg viewBox="0 0 220 56" width="100%" height="56">
+        <circle cx="20" cy="28" r="8" fill="#fff" stroke="#94a3b8" stroke-width="1"/>
+        <line x1="28" y1="28" x2="192" y2="28" stroke="#94a3b8" stroke-width="1"/>
+        <polygon points="192,24 200,28 192,32" fill="#94a3b8"/>
+        <circle cx="200" cy="28" r="8" fill="#fff" stroke="#94a3b8" stroke-width="1"/>
+      </svg>
+      <div class="meta"><strong>Low</strong> · &lt; 0.6 · slate-400 · 1px</div>
+    </div>
+    <div class="col">
+      <svg viewBox="0 0 220 56" width="100%" height="56">
+        <circle cx="20" cy="28" r="8" fill="#fff" stroke="#475569" stroke-width="1.5"/>
+        <line x1="28" y1="28" x2="192" y2="28" stroke="#475569" stroke-width="1.5"/>
+        <polygon points="192,23 200,28 192,33" fill="#475569"/>
+        <circle cx="200" cy="28" r="8" fill="#fff" stroke="#475569" stroke-width="1.5"/>
+      </svg>
+      <div class="meta"><strong>Mid</strong> · 0.6–0.8 · slate-600 · 1.5px</div>
+    </div>
+    <div class="col">
+      <svg viewBox="0 0 220 56" width="100%" height="56">
+        <circle cx="20" cy="28" r="8" fill="#fff" stroke="#0f172a" stroke-width="2"/>
+        <line x1="28" y1="28" x2="192" y2="28" stroke="#0f172a" stroke-width="2"/>
+        <polygon points="190,22 200,28 190,34" fill="#0f172a"/>
+        <circle cx="200" cy="28" r="8" fill="#fff" stroke="#0f172a" stroke-width="2"/>
+      </svg>
+      <div class="meta"><strong>High</strong> · &gt; 0.8 · slate-900 · 2px</div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Color · Semantic states</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background: #fff; color: var(--cg-ink); padding: 18px 22px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .col { display: grid; gap: 8px; }
+  .alert { display: flex; align-items: center; gap: 10px; border: 1px solid; border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 500; }
+  .ok    { background:#ecfdf5; border-color:#a7f3d0; color:#065f46; }
+  .warn  { background:#fffbeb; border-color:#fcd34d; color:#92400e; }
+  .err   { background:#fef2f2; border-color:#fecaca; color:#b91c1c; }
+  .info  { background:#eff6ff; border-color:#bfdbfe; color:#1e40af; }
+  .dot   { width:8px; height:8px; border-radius:99px; background: currentColor; }
+  .name  { font-family: var(--cg-font-mono); font-size: 10.5px; opacity: 0.75; margin-left: auto; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="label">Semantic states</div>
+    <div class="note">success / warn / danger / info · used on banners + toasts only</div>
+  </div>
+  <div class="col">
+    <div class="alert ok"><span class="dot"></span><span>Indexed · 14 reports synced to graph</span><span class="name">success · #047857 / #ECFDF5</span></div>
+    <div class="alert warn"><span class="dot"></span><span>Reused existing index — no new chunks created</span><span class="name">warn · #92400E / #FFFBEB</span></div>
+    <div class="alert err"><span class="dot"></span><span>File too large: 64.2MB. Maximum size is 50MB.</span><span class="name">danger · #B91C1C / #FEF2F2</span></div>
+    <div class="alert info"><span class="dot"></span><span>Neo4j sync available — connect to enable cross-document graph</span><span class="name">info · #1E40AF / #EFF6FF</span></div>
+  </div>
+</body>
+</html>

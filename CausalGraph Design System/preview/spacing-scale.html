@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Spacing · Scale</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background: #fff; color: var(--cg-ink); padding: 18px 22px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .row { display: grid; grid-template-columns: 60px 1fr 130px; gap: 14px; align-items: center; padding: 4px 0; }
+  .name { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink); font-weight: 600; }
+  .bar { height: 14px; background: linear-gradient(90deg,#0f172a,#475569); border-radius: 3px; }
+  .meta { font-family: var(--cg-font-mono); font-size: 10.5px; color: var(--cg-ink-soft); }
+</style>
+</head>
+<body>
+  <div class="head"><div class="label">Spacing scale</div><div class="note">4px base · panel padding defaults to space-6 (24px)</div></div>
+  <div class="row"><div class="name">space-1</div><div class="bar" style="width:4px"></div><div class="meta">4px</div></div>
+  <div class="row"><div class="name">space-2</div><div class="bar" style="width:8px"></div><div class="meta">8px</div></div>
+  <div class="row"><div class="name">space-3</div><div class="bar" style="width:12px"></div><div class="meta">12px</div></div>
+  <div class="row"><div class="name">space-4</div><div class="bar" style="width:16px"></div><div class="meta">16px · grid gap</div></div>
+  <div class="row"><div class="name">space-5</div><div class="bar" style="width:20px"></div><div class="meta">20px</div></div>
+  <div class="row"><div class="name">space-6</div><div class="bar" style="width:24px"></div><div class="meta">24px · panel padding</div></div>
+  <div class="row"><div class="name">space-8</div><div class="bar" style="width:32px"></div><div class="meta">32px</div></div>
+  <div class="row"><div class="name">space-10</div><div class="bar" style="width:40px"></div><div class="meta">40px · section gap</div></div>
+  <div class="row"><div class="name">space-12</div><div class="bar" style="width:48px"></div><div class="meta">48px</div></div>
+  <div class="row"><div class="name">space-16</div><div class="bar" style="width:64px"></div><div class="meta">64px · section vertical</div></div>
+</body>
+</html>

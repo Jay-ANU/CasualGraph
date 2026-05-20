@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>CausalGraph · UI Kit</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="stylesheet" href="../../colors_and_type.css" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  body { font-family: var(--cg-font-sans); color: var(--cg-ink); background: #fff; }
+  /* Codebase classes copied from frontend/src/index.css */
+  .tech-hero {
+    background:
+      radial-gradient(circle at 14% 8%, rgba(15,23,42,.10), transparent 30%),
+      radial-gradient(circle at 88% 6%, rgba(15,23,42,.08), transparent 26%),
+      linear-gradient(180deg,#fff 0%, #f7f8fa 42%, #eef2f7 100%);
+  }
+  .app-grid {
+    background-image:
+      linear-gradient(rgba(15,23,42,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15,23,42,0.05) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .app-panel {
+    border: 1px solid rgba(226, 232, 240, 1);
+    background: rgba(255,255,255,0.86);
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(15,23,42,0.06);
+  }
+  .tech-button {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: #020617; color: #fff;
+    padding: 10px 18px; border-radius: 12px;
+    font-size: 14px; font-weight: 600;
+  }
+  .tech-button-secondary {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.72); color: #0f172a;
+    border: 1px solid #e2e8f0;
+    padding: 10px 18px; border-radius: 12px;
+    font-size: 14px; font-weight: 600;
+  }
+  /* simple prose helper used in messages */
+  .prose p { margin: 0 0 8px; }
+  .prose strong { color: #0f172a; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="components.jsx"></script>
+  <script type="text/babel" src="Navbar.jsx"></script>
+  <script type="text/babel" src="Login.jsx"></script>
+  <script type="text/babel" src="Home.jsx"></script>
+  <script type="text/babel" src="ResearchDesk.jsx"></script>
+  <script type="text/babel" src="GraphEngine.jsx"></script>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    function App() {
+      const [authed, setAuthed] = useState(true);
+      const [page, setPage] = useState('home');
+
+      useEffect(() => { window.lucide && window.lucide.createIcons(); }, [page, authed]);
+
+      const navigate = (id) => {
+        if (id === 'login') { setAuthed(false); setPage('login'); return; }
+        if (!authed && id !== 'home') { setPage('login'); return; }
+        setPage(id);
+      };
+      const signIn = () => { setAuthed(true); setPage('desk'); };
+      const signOut = () => { setAuthed(false); setPage('home'); };
+
+      let content;
+      if (page === 'login') content = <Login onSignIn={signIn} />;
+      else if (page === 'home') content = <Home onNavigate={navigate} />;
+      else if (page === 'desk') content = <ResearchDesk />;
+      else if (page === 'graph') content = <GraphEngine />;
+      else if (page === 'about') content = (
+        <div className="mx-auto max-w-3xl px-6 py-24 text-center">
+          <div className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white/72 px-3 py-2 text-sm font-semibold text-slate-700">
+            <i data-lucide="building-2" className="h-4 w-4"></i> Company
+          </div>
+          <h1 className="mt-6 text-4xl font-semibold tracking-tight text-slate-950">Built by an ESG research team.</h1>
+          <p className="mt-4 text-base leading-7 text-slate-600">
+            CausalGraph turns long-form sustainability disclosures into a queryable evidence graph for analysts who need to cite their work.
+          </p>
+        </div>
+      );
+
+      return (
+        <div className="min-h-screen">
+          {page !== 'login' && <Navbar page={page} onNavigate={navigate} authed={authed} onSignOut={signOut} />}
+          {content}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Type · Body, eyebrow, mono</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background: #fff; color: var(--cg-ink); padding: 20px 24px; }
+  .stack { display: grid; gap: 14px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: baseline; }
+  .meta { font-family: var(--cg-font-mono); font-size: 10.5px; color: var(--cg-ink-soft); white-space: nowrap; }
+  .body { font-family: var(--cg-font-sans); font-size: 15px; line-height: 1.55; color: var(--cg-ink-muted); max-width: 480px; }
+  .small { font-family: var(--cg-font-sans); font-size: 13px; line-height: 1.55; color: var(--cg-ink-muted); }
+  .eyebrow { font-family: var(--cg-font-sans); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.14em; color: var(--cg-ink-soft); }
+  .eyebrow-wide { font-family: var(--cg-font-sans); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.22em; color: var(--cg-ink-soft); }
+  .mono { font-family: var(--cg-font-mono); font-size: 13px; color: var(--cg-ink); }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+</style>
+</head>
+<body>
+  <div class="head"><div class="label">Body, eyebrow, mono</div><div class="note">IBM Plex Sans + IBM Plex Mono · the analyst-grade workhorses</div></div>
+  <div class="stack">
+    <div class="row"><div class="eyebrow">EVIDENCE INFRASTRUCTURE</div><div class="meta">Eyebrow · 11/600 · 0.14em</div></div>
+    <div class="row"><div class="eyebrow-wide">ESG INTELLIGENCE</div><div class="meta">Eyebrow-wide · 11/600 · 0.22em (logotype)</div></div>
+    <div class="row"><div class="body">CausalGraph gives analysts a controlled workspace for report search, scenario reasoning, and graph-based review of climate, governance, and operating-risk disclosures.</div><div class="meta">Body · 15/1.55 · ink-muted</div></div>
+    <div class="row"><div class="small">Every answer can be reviewed against the underlying report snippets.</div><div class="meta">Small · 13/1.55</div></div>
+    <div class="row"><div class="mono">HAS_METRIC · scope_2_market_based_emissions · 0.82</div><div class="meta">Mono · 13/1.5 · graph edges, IDs, evidence</div></div>
+  </div>
+</body>
+</html>

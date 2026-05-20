@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Spacing · Layout in use</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background:#f7f8fa; color: var(--cg-ink); padding: 18px 22px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .frame { position: relative; height: 220px; border: 1px dashed var(--cg-border-strong); border-radius: 10px; padding: 0; overflow: hidden; background: #fff; }
+  .nav { height: 36px; border-bottom: 1px solid var(--cg-border); background: rgba(255,255,255,0.78); display: flex; align-items: center; padding: 0 14px; gap: 10px; backdrop-filter: blur(18px); }
+  .dot { width: 24px; height: 24px; border-radius: 8px; background: #020617; }
+  .word { font-family: var(--cg-font-display); font-size: 13px; font-weight: 600; letter-spacing: -0.02em; }
+  .body-frame { display: grid; grid-template-columns: 200px 1fr; height: calc(100% - 36px); }
+  .side { background: rgba(255,255,255,0.62); border-right: 1px solid var(--cg-border); padding: 14px 12px; }
+  .item { height: 18px; background: var(--cg-slate-100); border-radius: 6px; margin-bottom: 6px; }
+  .item.active { background: #020617; }
+  .main { padding: 18px 18px; }
+  .h { width: 60%; height: 18px; background: var(--cg-slate-200); border-radius: 6px; margin-bottom: 10px; }
+  .p { width: 100%; height: 10px; background: var(--cg-slate-100); border-radius: 4px; margin-bottom: 6px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .card { height: 56px; border: 1px solid var(--cg-border); border-radius: 12px; background: rgba(255,255,255,0.86); }
+  .anno { position: absolute; right: 10px; top: 6px; font-family: var(--cg-font-mono); font-size: 10px; color: var(--cg-ink-soft); background: rgba(255,255,255,.92); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--cg-border); }
+</style>
+</head>
+<body>
+  <div class="head"><div class="label">Layout pattern</div><div class="note">72px navbar · 200–288px sidebar · max-w 1600 · 16px grid gap</div></div>
+  <div class="frame">
+    <div class="nav"><div class="dot"></div><div class="word">CausalGraph</div></div>
+    <div class="anno">navbar 72px → 36px scaled</div>
+    <div class="body-frame">
+      <div class="side">
+        <div class="item active"></div>
+        <div class="item"></div>
+        <div class="item"></div>
+        <div class="item"></div>
+      </div>
+      <div class="main">
+        <div class="h"></div>
+        <div class="p"></div>
+        <div class="p" style="width:75%"></div>
+        <div class="grid3"><div class="card"></div><div class="card"></div><div class="card"></div></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

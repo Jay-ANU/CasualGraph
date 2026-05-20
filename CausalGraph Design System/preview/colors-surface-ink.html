@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Color · Surface & ink</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background:
+    radial-gradient(circle at 14% 8%, rgba(15,23,42,.10), transparent 30%),
+    radial-gradient(circle at 88% 6%, rgba(15,23,42,.08), transparent 26%),
+    linear-gradient(180deg,#fff 0%, #f7f8fa 42%, #eef2f7 100%);
+    color: var(--cg-ink); padding: 18px 22px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .tile { border: 1px solid var(--cg-border); border-radius: var(--cg-radius-md); padding: 14px 16px; backdrop-filter: blur(18px); }
+  .tile .name { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .tile .val { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; margin-top: 4px; }
+  .a { background: rgba(255,255,255,0.86); }
+  .b { background: rgba(255,255,255,0.96); }
+  .c { background: rgba(255,255,255,0.62); }
+  .d { background: rgba(255,255,255,0.78); }
+  .ink-row { display: flex; gap: 10px; margin-top: 14px; align-items: center; }
+  .ink-chip { width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--cg-border); }
+  .ink-meta { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-muted); }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="label">Surface &amp; ink</div>
+    <div class="note">translucent panels over a soft slate backdrop · the brand's signature blur</div>
+  </div>
+  <div class="grid">
+    <div class="tile a"><div class="name">--cg-surface · 86%</div><div class="val">Default panel</div></div>
+    <div class="tile b"><div class="name">--cg-surface-strong · 96%</div><div class="val">Elevated panel</div></div>
+    <div class="tile d"><div class="name">--cg-surface-tint · 78%</div><div class="val">Navbar / chip backing</div></div>
+    <div class="tile c"><div class="name">--cg-surface-soft · 62%</div><div class="val">Sidebar wash</div></div>
+  </div>
+  <div class="ink-row">
+    <div class="ink-chip" style="background:#020617"></div>
+    <div class="ink-chip" style="background:#0f172a"></div>
+    <div class="ink-chip" style="background:#475569"></div>
+    <div class="ink-chip" style="background:#64748b"></div>
+    <div class="ink-chip" style="background:#94a3b8"></div>
+    <div class="ink-meta">ink-strong · ink · ink-muted · ink-soft · ink-faint</div>
+  </div>
+</body>
+</html>

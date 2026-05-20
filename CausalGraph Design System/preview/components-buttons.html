@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Components · Buttons</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<script src="https://unpkg.com/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background:#fff; color: var(--cg-ink); padding: 18px 22px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 0; }
+  .group { padding: 10px 0; border-bottom: 1px solid var(--cg-border-soft); }
+  .group:last-child { border-bottom: 0; }
+  .gname { font-family: var(--cg-font-mono); font-size: 10.5px; color: var(--cg-ink-soft); margin-bottom: 4px; }
+  .btn-primary { display:inline-flex; align-items:center; gap:8px; background:#020617; color:#fff; border:none; padding:10px 18px; border-radius:12px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer; }
+  .btn-primary.hover { background:#1e293b; }
+  .btn-secondary { display:inline-flex; align-items:center; gap:8px; background:rgba(255,255,255,0.68); color:#0f172a; border:1px solid #e2e8f0; padding:10px 18px; border-radius:12px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer; }
+  .btn-ghost { display:inline-flex; align-items:center; gap:8px; background:transparent; color:#475569; border:none; padding:8px 12px; border-radius:8px; font-size:14px; font-weight:500; font-family:inherit; cursor:pointer; }
+  .btn-icon { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:10px; border:1px solid #e2e8f0; background:#fff; color:#475569; }
+  .btn-sm { padding:6px 12px; font-size:13px; border-radius:8px; }
+  i { width:16px; height:16px; }
+</style>
+</head>
+<body>
+  <div class="head"><div class="label">Buttons</div><div class="note">primary slate-950 · secondary translucent · ghost minimal · 12px radius</div></div>
+  <div class="group">
+    <div class="gname">Primary · default / hover / disabled</div>
+    <div class="row">
+      <button class="btn-primary">Open research desk <i data-lucide="arrow-right"></i></button>
+      <button class="btn-primary hover">Open research desk <i data-lucide="arrow-right"></i></button>
+      <button class="btn-primary" style="opacity:0.5;cursor:not-allowed">Open research desk <i data-lucide="arrow-right"></i></button>
+    </div>
+  </div>
+  <div class="group">
+    <div class="gname">Secondary · ghost · icon</div>
+    <div class="row">
+      <button class="btn-secondary">View graph engine</button>
+      <button class="btn-ghost"><i data-lucide="paperclip"></i> Add report</button>
+      <button class="btn-icon"><i data-lucide="play"></i></button>
+      <button class="btn-icon"><i data-lucide="trash-2"></i></button>
+    </div>
+  </div>
+  <div class="group">
+    <div class="gname">Small · used in toolbars and chat header</div>
+    <div class="row">
+      <button class="btn-primary btn-sm">Index this report</button>
+      <button class="btn-secondary btn-sm">New chat</button>
+      <button class="btn-secondary btn-sm"><i data-lucide="download"></i> Export JSON</button>
+    </div>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

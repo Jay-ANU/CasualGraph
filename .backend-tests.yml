@@ -1,0 +1,318 @@
+name: Backend Tests
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    paths:
+      - 'backend/**'
+      - '.backend-tests.yml'
+  pull_request:
+    branches: [ main, master, develop ]
+    paths:
+      - 'backend/**'
+      - '.backend-tests.yml'
+
+jobs:
+  test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+    
+    defaults:
+      run:
+        working-directory: backend
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            backend/venv
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+      
+      - name: Create virtual environment
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          python -m pip install --upgrade pip
+      
+      - name: Install dependencies
+        run: |
+          source venv/bin/activate
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-asyncio httpx pytest-mock
+      
+      - name: Create test configuration
+        run: |
+          cat > pytest.ini << EOF
+          [tool:pytest]
+          testpaths = tests
+          python_files = test_*.py *_test.py
+          python_classes = Test*
+          python_functions = test_*
+          addopts = 
+              --verbose
+              --tb=short
+              --cov=.
+              --cov-report=xml
+              --cov-report=html
+              --cov-report=term-missing
+              --cov-fail-under=70
+          asyncio_mode = auto
+          EOF
+      
+      - name: Create tests directory structure
+        run: |
+          mkdir -p tests/{unit,integration,api}
+          mkdir -p tests/fixtures
+      
+      - name: Create sample test files
+        run: |
+          # Unit tests
+          cat > tests/unit/test_auth.py << 'EOF'
+          import pytest
+          from unittest.mock import Mock, patch
+          import sys
+          import os
+          sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+          
+          from auth import create_access_token, verify_token
+          
+          class TestAuth:
+              def test_create_access_token(self):
+                  """Test token creation"""
+                  token = create_access_token(data={"sub": "test@example.com"})
+                  assert token is not None
+                  assert isinstance(token, str)
+              
+              def test_verify_token(self):
+                  """Test token verification"""
+                  token = create_access_token(data={"sub": "test@example.com"})
+                  payload = verify_token(token)
+                  assert payload is not None
+                  assert payload.get("sub") == "test@example.com"
+          EOF
+          
+          # Integration tests
+          cat > tests/integration/test_database.py << 'EOF'
+          import pytest
+          import sys
+          import os
+          sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+          
+          from database import get_db
+          
+          class TestDatabase:
+              def test_database_connection(self):
+                  """Test database connection"""
+                  db = next(get_db())
+                  assert db is not None
+          EOF
+          
+          # API tests
+          cat > tests/api/test_main.py << 'EOF'
+          import pytest
+          from fastapi.testclient import TestClient
+          import sys
+          import os
+          sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+          
+          from main import app
+          
+          class TestAPI:
+              @pytest.fixture
+              def client(self):
+                  return TestClient(app)
+              
+              def test_health_endpoint(self, client):
+                  """Test health check endpoint"""
+                  response = client.get("/health")
+                  assert response.status_code == 200
+                  assert response.json() == {"status": "healthy"}
+              
+              def test_docs_endpoint(self, client):
+                  """Test API documentation endpoint"""
+                  response = client.get("/docs")
+                  assert response.status_code == 200
+          EOF
+          
+          # Conftest for shared fixtures
+          cat > tests/conftest.py << 'EOF'
+          import pytest
+          import tempfile
+          import os
+          from unittest.mock import Mock
+          
+          @pytest.fixture
+          def temp_db():
+              """Create temporary database for testing"""
+              with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+                  db_path = tmp.name
+              yield db_path
+              if os.path.exists(db_path):
+                  os.unlink(db_path)
+          
+          @pytest.fixture
+          def mock_openai():
+              """Mock OpenAI client for testing"""
+              with pytest.Mock() as mock:
+                  mock.chat.completions.create.return_value = Mock(
+                      choices=[Mock(message=Mock(content="Test response"))]
+                  )
+                  yield mock
+          EOF
+      
+      - name: Run tests
+        run: |
+          source venv/bin/activate
+          pytest --cov=. --cov-report=xml --cov-report=html --cov-report=term-missing
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'test-key' }}
+      
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.9'
+        with:
+          file: backend/coverage.xml
+          flags: backend
+          name: backend-coverage
+          fail_ci_if_error: false
+      
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-python-${{ matrix.python-version }}
+          path: |
+            backend/htmlcov/
+            backend/coverage.xml
+            backend/.coverage
+          retention-days: 30
+      
+      - name: Comment PR with coverage
+        if: github.event_name == 'pull_request' && matrix.python-version == '3.9'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            try {
+              const coveragePath = path.join('backend', 'coverage.xml');
+              if (fs.existsSync(coveragePath)) {
+                const coverage = fs.readFileSync(coveragePath, 'utf8');
+                const match = coverage.match(/line-rate="([^"]+)"/);
+                if (match) {
+                  const percentage = Math.round(parseFloat(match[1]) * 100);
+                  const comment = `## 📊 Test Coverage Report
+                  
+                  **Coverage: ${percentage}%**
+                  
+                  Detailed coverage report is available in the test artifacts.`;
+                  
+                  github.rest.issues.createComment({
+                    issue_number: context.issue.number,
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    body: comment
+                  });
+                }
+              }
+            } catch (error) {
+              console.log('Could not generate coverage comment:', error);
+            }
+
+  lint-and-format:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Install linting tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff black isort mypy
+      
+      - name: Run Ruff (linter)
+        run: |
+          ruff check . --output-format=github
+      
+      - name: Run Black (formatter check)
+        run: |
+          black --check --diff .
+      
+      - name: Run isort (import sorting check)
+        run: |
+          isort --check-only --diff .
+      
+      - name: Run MyPy (type checking)
+        run: |
+          mypy . --ignore-missing-imports || true
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Install security tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit safety
+      
+      - name: Run Bandit (security linter)
+        run: |
+          bandit -r . -f json -o bandit-report.json || true
+      
+      - name: Run Safety (dependency vulnerability check)
+        run: |
+          safety check --json --output safety-report.json || true
+      
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            backend/bandit-report.json
+            backend/safety-report.json
+          retention-days: 30

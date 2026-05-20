@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Color · Domain pills</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background: #fff; color: var(--cg-ink); padding: 18px 22px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .cell { border: 1px solid var(--cg-border); border-radius: var(--cg-radius-md); padding: 12px; }
+  .pill { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; }
+  .swatch-row { display: flex; gap: 4px; margin-top: 10px; }
+  .sw { flex: 1; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.06); }
+  .name { font-family: var(--cg-font-mono); font-size: 10.5px; color: var(--cg-ink-soft); margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="label">Domain pills</div>
+    <div class="note">the only allowed hue accents · used on graph entities</div>
+  </div>
+  <div class="row">
+    <div class="cell">
+      <span class="pill" style="background:#ecfdf5;color:#047857">Environmental</span>
+      <div class="swatch-row"><div class="sw" style="background:#ecfdf5"></div><div class="sw" style="background:#a7f3d0"></div><div class="sw" style="background:#047857"></div></div>
+      <div class="name">env · 50/200/700</div>
+    </div>
+    <div class="cell">
+      <span class="pill" style="background:#eff6ff;color:#1d4ed8">Social</span>
+      <div class="swatch-row"><div class="sw" style="background:#eff6ff"></div><div class="sw" style="background:#bfdbfe"></div><div class="sw" style="background:#1d4ed8"></div></div>
+      <div class="name">soc · 50/200/700</div>
+    </div>
+    <div class="cell">
+      <span class="pill" style="background:#fff7ed;color:#7c2d12">Governance</span>
+      <div class="swatch-row"><div class="sw" style="background:#fff7ed"></div><div class="sw" style="background:#fed7aa"></div><div class="sw" style="background:#7c2d12"></div></div>
+      <div class="name">gov · 50/200/900</div>
+    </div>
+    <div class="cell">
+      <span class="pill" style="background:#f5f3ff;color:#6d28d9">AI</span>
+      <div class="swatch-row"><div class="sw" style="background:#f5f3ff"></div><div class="sw" style="background:#ddd6fe"></div><div class="sw" style="background:#6d28d9"></div></div>
+      <div class="name">ai · 50/200/700</div>
+    </div>
+    <div class="cell">
+      <span class="pill" style="background:#f1f5f9;color:#475569">General</span>
+      <div class="swatch-row"><div class="sw" style="background:#f1f5f9"></div><div class="sw" style="background:#cbd5e1"></div><div class="sw" style="background:#475569"></div></div>
+      <div class="name">gen · 100/300/600</div>
+    </div>
+  </div>
+</body>
+</html>

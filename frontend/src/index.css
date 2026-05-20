@@ -1,0 +1,226 @@
+/* MiniMax-inspired webfont — DM Sans across every surface. */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+/* CausalGraph design-system tokens (canonical --cg-* variables). */
+@import './styles/cg-tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Legacy --app-* aliases — kept so existing components render unchanged
+       while we migrate call sites to --cg-* tokens incrementally. */
+    --app-bg:             var(--cg-canvas);
+    --app-surface:        var(--cg-surface);
+    --app-surface-strong: var(--cg-surface-strong);
+    --app-border:         var(--cg-hairline);
+    --app-ink:            var(--cg-ink);
+    --app-muted:          var(--cg-ink-steel);
+    --app-accent:         var(--cg-accent);
+    --app-accent-strong:  var(--cg-accent-strong);
+    --app-accent-soft:    var(--cg-hairline-soft);
+    --app-shadow:         var(--cg-shadow-md);
+  }
+
+  html {
+    font-family: var(--cg-font-sans);
+  }
+
+  body {
+    @apply antialiased;
+    background: var(--cg-canvas);
+    color: var(--cg-ink);
+    min-height: 100vh;
+    font-family: var(--cg-font-sans);
+    font-size: var(--cg-fs-body);
+    line-height: var(--cg-lh-body);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--cg-font-display);
+    letter-spacing: var(--cg-tracking-tight);
+    color: var(--cg-ink);
+  }
+
+  /* IBM Plex Mono — code, evidence snippets, doc IDs. Opt-in via .font-mono. */
+  code, kbd, samp, pre, .font-mono {
+    font-family: var(--cg-font-mono);
+  }
+}
+
+@layer components {
+  /* ---------- Panels (legacy aliases — point to MiniMax white card) ---------- */
+  .app-panel {
+    background: var(--cg-canvas);
+    border: 1px solid var(--cg-hairline);
+    border-radius: var(--cg-radius-xl);
+    box-shadow: none;
+  }
+
+  .app-panel-strong {
+    background: var(--cg-canvas);
+    border: 1px solid var(--cg-hairline);
+    border-radius: var(--cg-radius-xl);
+    box-shadow: var(--cg-shadow-md);
+  }
+
+  .cg-panel-soft {
+    background: var(--cg-surface-soft);
+    border: 1px solid var(--cg-hairline);
+    border-radius: var(--cg-radius-xl);
+  }
+
+  /* ---------- Metric / chip / grid (legacy aliases) ---------- */
+  .app-metric {
+    @apply rounded-xl p-4;
+    background: var(--cg-surface-soft);
+    border: 1px solid var(--cg-hairline);
+  }
+
+  .app-chip {
+    @apply inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm;
+    font-weight: 500;
+    border: 1px solid var(--cg-hairline);
+    background: var(--cg-canvas);
+    color: var(--cg-ink-charcoal);
+  }
+
+  .app-grid {
+    background-image:
+      linear-gradient(var(--cg-grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--cg-grid-line) 1px, transparent 1px);
+    background-size: var(--cg-grid-step) var(--cg-grid-step);
+  }
+
+  /* ---------- Hero band (legacy alias) ---------- */
+  .tech-hero {
+    background: var(--cg-canvas);
+    border-bottom: 1px solid var(--cg-hairline);
+  }
+
+  /* ---------- Buttons (legacy aliases → MiniMax pill) ---------- */
+  .tech-button {
+    @apply inline-flex items-center justify-center gap-2;
+    border-radius: var(--cg-radius-pill);
+    padding: 11px 24px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    background: var(--cg-accent);
+    color: var(--cg-on-dark);
+    transition: background 0.15s ease, transform 0.05s ease;
+  }
+  .tech-button:hover { background: var(--cg-accent-hover); }
+  .tech-button:active { transform: translateY(0.5px); }
+
+  .tech-button-secondary {
+    @apply inline-flex items-center justify-center gap-2;
+    border-radius: var(--cg-radius-pill);
+    padding: 11px 24px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    background: transparent;
+    border: 1px solid var(--cg-ink);
+    color: var(--cg-ink);
+    transition: background 0.15s ease;
+  }
+  .tech-button-secondary:hover { background: var(--cg-surface-soft); }
+
+  /* ---------- Focus ring (apply on inputs / interactive cards) ---------- */
+  .cg-focus:focus-visible {
+    outline: none;
+    box-shadow: var(--cg-ring-focus);
+  }
+
+  /* ---------- Workspace surfaces ---------- */
+  .cg-workspace {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(247, 248, 250, 0.98) 100%);
+  }
+
+  .cg-sidebar {
+    background: var(--cg-surface-soft);
+    border-color: var(--cg-hairline);
+  }
+
+  .cg-sidebar-card {
+    background: var(--cg-canvas);
+    border: 1px solid var(--cg-hairline);
+    border-radius: var(--cg-radius-md);
+  }
+
+  .cg-tool-panel {
+    background: var(--cg-canvas);
+    border: 1px solid var(--cg-hairline);
+    border-radius: var(--cg-radius-xl);
+    box-shadow: var(--cg-shadow-xs);
+  }
+
+  .cg-tool-panel-soft {
+    background: var(--cg-surface-soft);
+    border: 1px solid var(--cg-hairline-soft);
+    border-radius: var(--cg-radius-xl);
+  }
+
+  .cg-list-row {
+    background: var(--cg-canvas);
+    border: 1px solid var(--cg-hairline);
+    border-radius: var(--cg-radius-md);
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .cg-list-row:hover {
+    border-color: var(--cg-border-strong);
+    box-shadow: var(--cg-shadow-xs);
+  }
+
+  .cg-list-row-active {
+    border-color: var(--cg-ink);
+    background: var(--cg-canvas);
+    box-shadow: inset 3px 0 0 var(--cg-ink);
+  }
+
+  .cg-message-user {
+    background: var(--cg-ink);
+    color: var(--cg-on-dark);
+    border-radius: 16px 16px 4px 16px;
+  }
+
+  .cg-message-assistant {
+    background: transparent;
+    color: var(--cg-ink-charcoal);
+  }
+
+  .cg-agent-composer {
+    background: var(--cg-canvas);
+    border: 1px solid var(--cg-border-strong);
+    border-radius: var(--cg-radius-xl);
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+  }
+
+  .cg-agent-composer:focus-within {
+    border-color: var(--cg-ink);
+    box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06), 0 12px 32px rgba(15, 23, 42, 0.08);
+  }
+
+  .cg-icon-well {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--cg-radius-md);
+    border: 1px solid var(--cg-hairline);
+    background: var(--cg-canvas);
+    color: var(--cg-ink-charcoal);
+  }
+
+  .cg-empty-state {
+    background: var(--cg-surface-soft);
+    border: 1px dashed var(--cg-border-strong);
+    border-radius: var(--cg-radius-xl);
+  }
+}

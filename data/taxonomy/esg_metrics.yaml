@@ -1,0 +1,170 @@
+# Canonical ESG metric taxonomy for structured extraction.
+# This file is the authoritative source — do not duplicate definitions in code.
+# Versioned: bump `taxonomy_version` whenever any metric changes; the extractor
+# stores it on every row so re-runs after schema changes are traceable.
+#
+# Conventions:
+#   canonical_unit:    target unit after normalization (pint-parseable).
+#   aliases:           lowercase substring matches; case-insensitive at runtime.
+#   expected_magnitude: post-normalization sanity bounds; values outside
+#                      attenuate confidence rather than reject outright.
+#   scope_qualifiers:  closed enum; null if the metric has no consolidation choice.
+
+taxonomy_version: "esg-v1.0.0"
+
+metrics:
+  ghg_scope1_emissions:
+    display_name:
+      en: "GHG Scope 1 Emissions"
+      zh: "范围一温室气体排放"
+    canonical_unit: tCO2e
+    category: environmental
+    description: "Direct GHG emissions from owned or controlled sources (combustion, vehicles, fugitive)."
+    framework_refs:
+      - "GHG Protocol Corporate Standard, Scope 1"
+      - "GRI 305-1"
+      - "ISSB S2 paragraph 29(a)(i)"
+      - "TCFD Metrics & Targets recommendation (b)"
+    aliases:
+      - "scope 1 emissions"
+      - "scope 1 ghg emissions"
+      - "scope 1 greenhouse gas emissions"
+      - "direct emissions"
+      - "direct ghg emissions"
+      - "direct greenhouse gas emissions"
+      - "category 1 emissions"
+      - "范围一"
+      - "范围1"
+      - "范围一排放"
+      - "范围1排放"
+      - "直接排放"
+      - "直接温室气体排放"
+    scope_qualifiers: [operational_control, financial_control, equity_share]
+    expected_magnitude: { min: 1, max: 500000000 }
+
+  ghg_scope2_emissions:
+    display_name:
+      en: "GHG Scope 2 Emissions"
+      zh: "范围二温室气体排放"
+    canonical_unit: tCO2e
+    category: environmental
+    description: "Indirect GHG emissions from purchased electricity, heat, steam, or cooling."
+    framework_refs:
+      - "GHG Protocol Scope 2 Guidance"
+      - "GRI 305-2"
+      - "ISSB S2 paragraph 29(a)(ii)"
+      - "TCFD Metrics & Targets recommendation (b)"
+    aliases:
+      - "scope 2 emissions"
+      - "scope 2 ghg emissions"
+      - "indirect emissions from purchased energy"
+      - "purchased electricity emissions"
+      - "范围二"
+      - "范围2"
+      - "范围二排放"
+      - "范围2排放"
+      - "外购电力排放"
+      - "间接排放"
+    scope_qualifiers: [location_based, market_based]
+    expected_magnitude: { min: 1, max: 500000000 }
+
+  ghg_scope3_emissions:
+    display_name:
+      en: "GHG Scope 3 Emissions"
+      zh: "范围三温室气体排放"
+    canonical_unit: tCO2e
+    category: environmental
+    description: "All other indirect GHG emissions in the value chain (15 categories per GHG Protocol)."
+    framework_refs:
+      - "GHG Protocol Corporate Value Chain (Scope 3) Standard"
+      - "GRI 305-3"
+      - "ISSB S2 paragraph 29(a)(iii)"
+    aliases:
+      - "scope 3 emissions"
+      - "scope 3 ghg emissions"
+      - "value chain emissions"
+      - "other indirect emissions"
+      - "范围三"
+      - "范围3"
+      - "范围三排放"
+      - "范围3排放"
+      - "价值链排放"
+      - "其他间接排放"
+    # Scope 3 has 15 sub-categories; v1 captures total only. Sub-category breakdown is v2.
+    scope_qualifiers: null
+    expected_magnitude: { min: 1, max: 5000000000 }
+
+  energy_consumption:
+    display_name:
+      en: "Total Energy Consumption"
+      zh: "能源消耗总量"
+    canonical_unit: MWh
+    category: environmental
+    description: "Total energy consumed within the organization (fuels + purchased electricity/heat/steam/cooling)."
+    framework_refs:
+      - "GRI 302-1"
+      - "ISSB S2 paragraph 29(c)"
+    aliases:
+      - "total energy consumption"
+      - "energy consumption"
+      - "energy use"
+      - "energy usage"
+      - "total energy use"
+      - "能源消耗"
+      - "能源消耗总量"
+      - "能源使用"
+      - "总能耗"
+      - "综合能耗"
+    scope_qualifiers: null
+    expected_magnitude: { min: 10, max: 100000000 }
+
+  water_withdrawal:
+    display_name:
+      en: "Total Water Withdrawal"
+      zh: "总取水量"
+    canonical_unit: m^3
+    category: environmental
+    description: "Total volume of water withdrawn from any source for the organization's use."
+    framework_refs:
+      - "GRI 303-3"
+      - "SASB Water Management"
+    aliases:
+      - "total water withdrawal"
+      - "water withdrawal"
+      - "water withdrawn"
+      - "water intake"
+      - "water consumption"
+      - "总取水量"
+      - "取水量"
+      - "用水量"
+      - "新水使用量"
+      - "总用水量"
+    scope_qualifiers: null
+    expected_magnitude: { min: 100, max: 100000000000 }
+
+  employee_count:
+    display_name:
+      en: "Total Employees"
+      zh: "员工总数"
+    canonical_unit: persons
+    category: social
+    description: "Total number of employees as of the reporting period end (head count, not FTE)."
+    framework_refs:
+      - "GRI 2-7"
+    aliases:
+      - "total employees"
+      - "number of employees"
+      - "employees"
+      - "employee"
+      - "headcount"
+      - "head count"
+      - "total workforce"
+      - "workforce size"
+      - "员工总数"
+      - "员工人数"
+      - "员工"
+      - "总员工数"
+      - "在册员工"
+      - "在职员工"
+    scope_qualifiers: [global, region_specific]
+    expected_magnitude: { min: 1, max: 5000000 }

@@ -1,0 +1,16 @@
+{
+  "short_name": "CausalGraph",
+  "name": "CausalGraph Research Intelligence",
+  "icons": [
+    {
+      "src": "/brand/logo-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#05070D",
+  "background_color": "#F7F8FA"
+}

@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  backend:
+    name: Backend (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install dev tools (pytest, ruff, black)
+        run: |
+          pip install pytest ruff black
+
+      - name: Basic import test
+        run: |
+          python - <<'PY'
+          import sys
+          import uvicorn
+          import fastapi
+          print('Imports OK')
+          PY
+
+      - name: Lint (ruff)
+        run: |
+          ruff --version
+          ruff check . --output-format=github
+
+      - name: Format check (black)
+        run: |
+          black --version
+          black --check .
+
+      - name: Lint (fallback flake8 if available)
+        run: |
+          pip install flake8 || true
+          flake8 . || true
+
+      - name: Run tests (pytest if tests present)
+        run: |
+          if ls -1 test_*.py *_test.py tests 2>/dev/null | grep -q .; then
+            echo "Tests detected, running pytest";
+            pytest -q;
+          else
+            echo "No tests detected, skipping pytest";
+          fi
+
+  frontend:
+    name: Frontend (Node)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Test (Jest/RTL if configured)
+        run: |
+          if npm run | grep -q " test\\b"; then
+            npm test -- --ci --watchAll=false;
+          else
+            echo "No test script, skipping";
+          fi
+
+      - name: Type check (if tsconfig exists)
+        run: |
+          if [ -f tsconfig.json ]; then
+            npm run typecheck || npx tsc -p tsconfig.json --noEmit || true
+          fi
+
+      - name: Lint (eslint if configured)
+        run: |
+          if npm run | grep -q " lint\\b"; then
+            npm run lint;
+          elif [ -f .eslintrc -o -f .eslintrc.js -o -f .eslintrc.cjs -o -f .eslintrc.json -o -f .eslintrc.yaml -o -f .eslintrc.yml ]; then
+            npx eslint . || true;
+          else
+            echo "No ESLint config or script, skipping";
+          fi
+
+      - name: Prettier check (if configured)
+        run: |
+          if [ -f .prettierrc -o -f .prettierrc.js -o -f .prettierrc.cjs -o -f .prettierrc.json -o -f .prettierrc.yaml -o -f .prettierrc.yml ] || jq -e '.prettier' package.json >/dev/null 2>&1; then
+            npx prettier -c . || true;
+          else
+            echo "No Prettier config, skipping";
+          fi
+
+      - name: Upload build artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: |
+            build
+          if-no-files-found: ignore
+
+

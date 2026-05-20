@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Brand · Iconography</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<script src="https://unpkg.com/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background:#fff; color: var(--cg-ink); padding: 18px 22px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 14px; }
+  .cell { display: grid; justify-items: center; gap: 4px; }
+  .ico { width: 36px; height: 36px; border-radius: 8px; background: #f7f8fa; border: 1px solid var(--cg-border); display:flex; align-items:center; justify-content:center; color: #0f172a; }
+  .name { font-family: var(--cg-font-mono); font-size: 9.5px; color: var(--cg-ink-soft); }
+  i { width: 18px; height: 18px; }
+  .grid24 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 16px; }
+  .swatch { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--cg-border-soft); border-radius:10px; background:#f7f8fa; }
+  .swatch .ic { width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#020617; }
+  .swatch .ic i { width: 16px; height: 16px; }
+  .swatch .txt { display: grid; gap: 2px; }
+  .swatch .t1 { font-size: 12px; font-weight: 600; }
+  .swatch .t2 { font-family: var(--cg-font-mono); font-size: 10px; color: var(--cg-ink-soft); }
+</style>
+</head>
+<body>
+  <div class="head"><div class="label">Iconography</div><div class="note">Lucide · 1.5–1.75 stroke · 16/18/20px sizes · slate-900 fill</div></div>
+  <div class="grid">
+    <div class="cell"><div class="ico"><i data-lucide="search"></i></div><div class="name">search</div></div>
+    <div class="cell"><div class="ico"><i data-lucide="message-square"></i></div><div class="name">ask</div></div>
+    <div class="cell"><div class="ico"><i data-lucide="zap"></i></div><div class="name">predict</div></div>
+    <div class="cell"><div class="ico"><i data-lucide="git-branch"></i></div><div class="name">graph</div></div>
+    <div class="cell"><div class="ico"><i data-lucide="file-text"></i></div><div class="name">report</div></div>
+    <div class="cell"><div class="ico"><i data-lucide="paperclip"></i></div><div class="name">attach</div></div>
+    <div class="cell"><div class="ico"><i data-lucide="leaf"></i></div><div class="name">env</div></div>
+    <div class="cell"><div class="ico"><i data-lucide="users"></i></div><div class="name">social</div></div>
+    <div class="cell"><div class="ico"><i data-lucide="building-2"></i></div><div class="name">company</div></div>
+    <div class="cell"><div class="ico"><i data-lucide="shield-check"></i></div><div class="name">audit</div></div>
+  </div>
+  <div class="grid24">
+    <div class="swatch"><div class="ic"><i data-lucide="leaf"></i></div><div class="txt"><div class="t1">Domain · Environmental</div><div class="t2">leaf · scope 1/2/3, biodiversity</div></div></div>
+    <div class="swatch"><div class="ic"><i data-lucide="users"></i></div><div class="txt"><div class="t1">Domain · Social</div><div class="t2">users · workforce, communities</div></div></div>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

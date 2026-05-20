@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESG Knowledge Graph Visualization</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/kg-static/css/style.css?v=fullscreen-2" rel="stylesheet">
+</head>
+<body class="dashboard-body">
+    <nav class="top-nav">
+        <div class="top-nav__brand">
+            <span class="brand-icon"><i class="fas fa-link"></i></span>
+            <span class="brand-text">ESG Knowledge Graph Analytics</span>
+        </div>
+        <div class="top-nav__actions">
+            <a class="nav-action" href="/agent"><i class="fas fa-arrow-left"></i><span>Workspace</span></a>
+            <a class="nav-action" href="#" onclick="resetView()"><i class="fas fa-house"></i><span>Reset</span></a>
+            <a class="nav-action" href="#" onclick="showStats()"><i class="fas fa-chart-column"></i><span>Statistics</span></a>
+        </div>
+    </nav>
+
+    <main class="dashboard-wrapper container-fluid">
+        <div class="row flex-nowrap align-items-stretch">
+            <aside class="col-xl-3 col-lg-4 filters-panel">
+                <div class="filters-card">
+                    <header class="filters-card__header">
+                        <div class="filters-card__title"><i class="fas fa-sliders-h me-2"></i>Data Filtering</div>
+                    </header>
+                    <div id="view-context" class="mb-3 small text-muted"></div>
+
+                    <section class="filter-group">
+                        <div class="filter-group__header">
+                            <span class="filter-group__title">Year</span>
+                            <button class="filter-group__link" type="button" data-filter-group="year-filters" data-filter-action="select">
+                                <span class="filter-link-icon"></span><span class="filter-link-text">Select All</span>
+                            </button>
+                        </div>
+                        <div id="year-filters" class="filter-options"></div>
+                    </section>
+
+                    <section class="filter-group">
+                        <div class="filter-group__header">
+                            <span class="filter-group__title">ESG Domain</span>
+                            <button class="filter-group__link" type="button" data-filter-group="domain-filters" data-filter-action="deselect">
+                                <span class="filter-link-icon is-filled"></span><span class="filter-link-text">Deselect All</span>
+                            </button>
+                        </div>
+                        <div id="domain-filters" class="filter-options"></div>
+                    </section>
+
+                    <section class="filter-group">
+                        <div class="filter-group__header"><span class="filter-group__title">Company</span></div>
+                        <select id="company-select" class="company-select form-select">
+                            <option value="">Select a company</option>
+                        </select>
+                    </section>
+
+                    <section class="filter-group">
+                        <div class="filter-group__header">
+                            <span class="filter-group__title">Max Nodes</span>
+                            <span class="filter-group__hint">Current: <span id="limit-value">1000</span></span>
+                        </div>
+                        <input type="range" class="form-range node-limit-slider" id="node-limit" min="100" max="2000" value="1000" step="100" oninput="updateCurrentFilters()">
+                    </section>
+
+                    <div class="filters-card__footer">
+                        <button class="btn btn-primary w-100" onclick="applyFilters()"><i class="fas fa-magnifying-glass me-2"></i>Apply Filters</button>
+                    </div>
+                </div>
+            </aside>
+
+            <section class="col-xl-9 col-lg-8 main-panel">
+                <div class="card graph-card">
+                    <div class="graph-card__header">
+                        <div class="graph-card__title"><i class="fas fa-diagram-project me-2"></i>Knowledge Graph Visualization</div>
+                        <div class="graph-card__controls">
+                            <button class="graph-control" type="button" title="Fit to Screen" onclick="fitGraph()"><i class="fas fa-compress-arrows-alt"></i></button>
+                            <button class="graph-control" type="button" title="Zoom In" onclick="zoomIn()"><i class="fas fa-plus"></i></button>
+                            <button class="graph-control" type="button" title="Zoom Out" onclick="zoomOut()"><i class="fas fa-minus"></i></button>
+                            <button class="graph-control" type="button" title="Reset Zoom" onclick="resetZoom()"><i class="fas fa-up-right-and-down-left-from-center"></i></button>
+                        </div>
+                    </div>
+                    <div class="graph-card__body">
+                        <div id="graph-container" class="graph-canvas">
+                            <div id="loading" class="graph-loading">
+                                <div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>
+                                <p>Loading knowledge graph...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="info-panels-container">
+                    <div class="card info-panel info-panel--node" id="node-info-panel" style="display: none;">
+                        <div class="info-panel__header"><i class="fas fa-circle-info me-2"></i>Node Information</div>
+                        <div class="card-body" id="node-info-content"></div>
+                    </div>
+                    <div class="card info-panel info-panel--edge" id="edge-info-panel" style="display: none;">
+                        <div class="info-panel__header"><i class="fas fa-link me-2"></i>Relationship Information</div>
+                        <div class="card-body edge-info-panel">
+                            <div class="edge-inspector" id="edge-info-content">
+                                <div class="edge-inspector__column" id="edge-source-content">
+                                    <div class="edge-detail-card edge-detail-card--empty">
+                                        <div class="edge-detail-card__placeholder text-muted">Select an edge to view source node details.</div>
+                                    </div>
+                                </div>
+                                <div class="edge-inspector__column edge-inspector__column--relationship" id="edge-relationship-content">
+                                    <div class="edge-detail-card edge-detail-card--empty">
+                                        <div class="edge-detail-card__placeholder text-muted">Relationship details will appear here.</div>
+                                    </div>
+                                </div>
+                                <div class="edge-inspector__column" id="edge-target-content">
+                                    <div class="edge-detail-card edge-detail-card--empty">
+                                        <div class="edge-detail-card__placeholder text-muted">Select an edge to view target node details.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <div class="modal fade" id="statsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-chart-bar me-2"></i>Graph Statistics</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="stats-content">
+                    <div class="text-center">
+                        <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="/kg-static/js/graph.js?v=fullscreen-2"></script>
+    <script>
+        (function() {
+            const buttons = [];
+
+            function renderButton(button) {
+                const action = button.dataset.filterAction || 'select';
+                button.innerHTML = '';
+                const icon = document.createElement('span');
+                icon.className = 'filter-link-icon';
+                if (action === 'deselect') icon.classList.add('is-filled');
+                const text = document.createElement('span');
+                text.className = 'filter-link-text';
+                text.textContent = action === 'select' ? 'Select All' : 'Deselect All';
+                button.append(icon, text);
+            }
+
+            function syncButtonState(button) {
+                const targetId = button.dataset.filterGroup;
+                const container = document.getElementById(targetId);
+                if (!container) return;
+                const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+                if (!checkboxes.length) return;
+                const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                button.dataset.filterAction = allChecked ? 'deselect' : 'select';
+                renderButton(button);
+            }
+
+            function syncAllButtons() {
+                buttons.forEach(syncButtonState);
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+                window.__filterToggleButtons = Array.from(document.querySelectorAll('[data-filter-group][data-filter-action]'));
+                buttons.push(...window.__filterToggleButtons);
+                window.refreshFilterToggleStates = syncAllButtons;
+
+                buttons.forEach(button => {
+                    syncButtonState(button);
+                    button.addEventListener('click', () => {
+                        const container = document.getElementById(button.dataset.filterGroup);
+                        if (!container) return;
+                        const shouldCheck = button.dataset.filterAction === 'select';
+                        container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                            cb.checked = shouldCheck;
+                            if (typeof updateFilterRowHighlight === 'function') updateFilterRowHighlight(cb);
+                        });
+                        if (typeof updateCurrentFilters === 'function') updateCurrentFilters();
+                        syncButtonState(button);
+                    });
+                });
+            });
+        })();
+    </script>
+</body>
+</html>

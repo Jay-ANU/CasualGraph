@@ -1,0 +1,596 @@
+/* =========================================================================
+   CausalGraph — MiniMax-inspired design tokens.
+
+   Stark black/white canvas + vibrant product-color cards.
+   DM Sans across every surface; pill buttons; 32px gradient cards paired
+   with 16px white cards.
+
+   The legacy --cg-* variables below are kept (with new MiniMax values
+   underneath) so older components that reference them still render — they
+   just adopt the new visual language automatically.
+   ========================================================================= */
+
+:root {
+  /* ===== Brand / accent ============================================= */
+  --cg-brand-coral:        #ff5530;
+  --cg-brand-magenta:      #ea5ec1;
+  --cg-brand-blue:         #1456f0;
+  --cg-brand-blue-mid:     #3b82f6;
+  --cg-brand-blue-deep:    #1d4ed8;
+  --cg-brand-blue-700:     #17437d;
+  --cg-brand-blue-200:     #bfdbfe;
+  --cg-brand-cyan:         #3daeff;
+  --cg-brand-purple:       #a855f7;
+
+  /* ESG domain colors (E/S/G/AI) — used on product-identity cards & badges */
+  --cg-domain-e:                #1ba673;   /* environmental */
+  --cg-domain-e-bg:             #e8ffea;
+  --cg-domain-s:                #1456f0;   /* social */
+  --cg-domain-s-bg:             #dbeafe;
+  --cg-domain-g:                #ff5530;   /* governance */
+  --cg-domain-g-bg:             #fff1ec;
+  --cg-domain-ai:               #a855f7;   /* ai */
+  --cg-domain-ai-bg:            #f5f3ff;
+
+  /* Legacy domain aliases — kept so GraphVisualizer / KnowledgeGraphView still resolve. */
+  --cg-domain-environmental:    var(--cg-domain-e);
+  --cg-domain-environmental-bg: var(--cg-domain-e-bg);
+  --cg-domain-social:           var(--cg-domain-s);
+  --cg-domain-social-bg:        var(--cg-domain-s-bg);
+  --cg-domain-governance:       var(--cg-domain-g);
+  --cg-domain-governance-bg:    var(--cg-domain-g-bg);
+  --cg-domain-general:          #5f5f5f;
+  --cg-domain-general-bg:       #f2f3f5;
+
+  /* ===== Mono anchor =============================================== */
+  --cg-canvas:             #ffffff;
+  --cg-bg:                 #ffffff;
+  --cg-bg-strong:          #f7f8fa;
+  --cg-surface:            #ffffff;
+  --cg-surface-strong:     #ffffff;
+  --cg-surface-soft:       #f7f8fa;
+  --cg-surface-tint:       #f7f8fa;
+  --cg-surface-quiet:      #f2f3f5;
+
+  --cg-ink:                #0a0a0a;
+  --cg-ink-strong:         #000000;
+  --cg-ink-charcoal:       #222222;
+  --cg-ink-slate:          #45515e;
+  --cg-ink-steel:          #5f5f5f;
+  --cg-ink-stone:          #8e8e93;
+  --cg-ink-muted:          #45515e;
+  --cg-ink-soft:           #5f5f5f;
+  --cg-ink-faint:          #a8aab2;
+  --cg-on-dark:            #ffffff;
+
+  /* Legacy slate ramp aliases (cg-slate-* used by older components) */
+  --cg-slate-50:           #f7f8fa;
+  --cg-slate-100:          #f2f3f5;
+  --cg-slate-200:          #e5e7eb;
+  --cg-slate-300:          #cbd5e1;
+  --cg-slate-400:          #a8aab2;
+  --cg-slate-500:          #8e8e93;
+  --cg-slate-600:          #5f5f5f;
+  --cg-slate-700:          #45515e;
+  --cg-slate-800:          #222222;
+  --cg-slate-900:          #0a0a0a;
+  --cg-slate-950:          #000000;
+
+  --cg-border:             #e5e7eb;
+  --cg-border-strong:      #cbd5e1;
+  --cg-border-soft:        #eaecf0;
+  --cg-hairline:           #e5e7eb;
+  --cg-hairline-soft:      #eaecf0;
+
+  /* Accent = primary CTA = near-black */
+  --cg-accent:             #0a0a0a;
+  --cg-accent-hover:       #222222;
+  --cg-accent-strong:      #000000;
+
+  /* ===== Semantic states ========================================== */
+  --cg-success:            #1ba673;
+  --cg-success-bg:         #e8ffea;
+  --cg-success-border:     #b8efc3;
+  --cg-success-text:       #1ba673;
+  --cg-warn:               #92400e;
+  --cg-warn-bg:            #fffbeb;
+  --cg-warn-border:        #fcd34d;
+  --cg-danger:             #d45656;
+  --cg-danger-bg:          #fef2f2;
+  --cg-danger-border:      #fecaca;
+  --cg-info:               #1d4ed8;
+  --cg-info-bg:            #eff6ff;
+  --cg-info-border:        #bfdbfe;
+
+  /* Confidence ramp (graph edges) */
+  --cg-conf-low:           #8e8e93;
+  --cg-conf-mid:           #45515e;
+  --cg-conf-high:          #0a0a0a;
+
+  /* ===== Shadows / elevation ====================================== */
+  /* Flat by default. Reserved levels for sticky / modal. */
+  --cg-shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --cg-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --cg-shadow-md: 0 4px 6px 0 rgba(0, 0, 0, 0.08);
+  --cg-shadow-lg: 0 0 22px 0 rgba(0, 0, 0, 0.08);
+  --cg-shadow-xl: 0 12px 16px -4px rgba(36, 36, 36, 0.08);
+  --cg-ring-focus: 0 0 0 3px rgba(20, 86, 240, 0.18);
+
+  /* ===== Radii ==================================================== */
+  --cg-radius-xs:    4px;
+  --cg-radius-sm:    6px;
+  --cg-radius-md:    8px;
+  --cg-radius-lg:   12px;
+  --cg-radius-xl:   16px;
+  --cg-radius-2xl:  20px;
+  --cg-radius-3xl:  24px;
+  --cg-radius-hero: 32px;   /* vibrant product cards */
+  --cg-radius-pill: 9999px;
+
+  /* ===== Spacing (4 / 8 base) ===================================== */
+  --cg-space-1:   4px;
+  --cg-space-2:   8px;
+  --cg-space-3:  12px;
+  --cg-space-4:  16px;
+  --cg-space-5:  20px;
+  --cg-space-6:  24px;
+  --cg-space-8:  32px;
+  --cg-space-10: 40px;
+  --cg-space-12: 48px;
+  --cg-space-16: 64px;
+  --cg-space-20: 80px;
+  --cg-space-24: 96px;
+
+  /* ===== Layout =================================================== */
+  --cg-content-max:   1280px;
+  --cg-navbar-height: 64px;
+
+  /* ===== Typography =============================================== */
+  --cg-font-sans:    'DM Sans', 'Inter', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
+  --cg-font-display: 'DM Sans', 'Inter', 'Helvetica Neue', sans-serif;
+  --cg-font-mono:    'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* MiniMax type ramp */
+  --cg-fs-hero:     80px;  --cg-lh-hero:     1.10;
+  --cg-fs-display:  56px;  --cg-lh-display:  1.10;
+  --cg-fs-h1:       40px;  --cg-lh-h1:       1.20;
+  --cg-fs-h2:       32px;  --cg-lh-h2:       1.25;
+  --cg-fs-h3:       24px;  --cg-lh-h3:       1.30;
+  --cg-fs-h4:       18px;  --cg-lh-h4:       1.50;   /* repurposed as subtitle */
+  --cg-fs-card:     20px;  --cg-lh-card:     1.40;
+  --cg-fs-subtitle: 18px;  --cg-lh-subtitle: 1.50;
+  --cg-fs-body:     16px;  --cg-lh-body:     1.50;
+  --cg-fs-sm:       14px;  --cg-lh-sm:       1.50;
+  --cg-fs-small:    14px;  --cg-lh-small:    1.50;
+  --cg-fs-caption:  13px;  --cg-lh-caption:  1.70;
+  --cg-fs-micro:    12px;  --cg-lh-micro:    1.50;
+  --cg-fs-eyebrow:  12px;  --cg-lh-eyebrow:  1.50;
+  --cg-fs-mono:     13px;  --cg-lh-mono:     1.50;
+
+  --cg-tracking-tight:   0;
+  --cg-tracking-hero:    0;
+  --cg-tracking-display: 0;
+  --cg-tracking-h1:      0;
+  --cg-tracking-wide:    0.08em;  /* uppercase eyebrows */
+  --cg-tracking-wider:   0.18em;  /* "ESG INTELLIGENCE" */
+
+  /* ===== Misc ===================================================== */
+  --cg-blur-sm: 6px;
+  --cg-blur-md: 12px;
+  --cg-blur-lg: 18px;
+
+  /* Decorative grid (subtle texture on hero band) */
+  --cg-grid-line: rgba(10, 10, 10, 0.05);
+  --cg-grid-step: 32px;
+}
+
+/* =========================================================================
+   Semantic element defaults — opt in by adding `class="cg"` on a wrapper,
+   or use these utility classes directly on elements.
+   ========================================================================= */
+
+.cg {
+  font-family: var(--cg-font-sans);
+  color: var(--cg-ink);
+  background: var(--cg-canvas);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.cg h1, .cg-h1 {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-h1);
+  line-height: var(--cg-lh-h1);
+  letter-spacing: var(--cg-tracking-h1);
+  font-weight: 600;
+  color: var(--cg-ink);
+  margin: 0;
+}
+
+.cg h2, .cg-h2 {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-h2);
+  line-height: var(--cg-lh-h2);
+  letter-spacing: var(--cg-tracking-tight);
+  font-weight: 600;
+  color: var(--cg-ink);
+  margin: 0;
+}
+
+.cg h3, .cg-h3 {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-h3);
+  line-height: var(--cg-lh-h3);
+  letter-spacing: 0;
+  font-weight: 600;
+  color: var(--cg-ink);
+  margin: 0;
+}
+
+.cg h4, .cg-h4 {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-subtitle);
+  line-height: var(--cg-lh-subtitle);
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--cg-ink);
+  margin: 0;
+}
+
+.cg p, .cg-p {
+  font-family: var(--cg-font-sans);
+  font-size: var(--cg-fs-body);
+  line-height: var(--cg-lh-body);
+  color: var(--cg-ink-charcoal);
+  margin: 0;
+}
+
+.cg-hero {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-hero);
+  line-height: var(--cg-lh-hero);
+  letter-spacing: var(--cg-tracking-hero);
+  font-weight: 600;
+  color: var(--cg-ink);
+}
+
+.cg-display {
+  font-family: var(--cg-font-display);
+  font-size: var(--cg-fs-display);
+  line-height: var(--cg-lh-display);
+  letter-spacing: var(--cg-tracking-display);
+  font-weight: 600;
+  color: var(--cg-ink);
+}
+
+.cg-eyebrow {
+  font-family: var(--cg-font-sans);
+  font-size: var(--cg-fs-eyebrow);
+  line-height: var(--cg-lh-eyebrow);
+  text-transform: uppercase;
+  letter-spacing: var(--cg-tracking-wide);
+  font-weight: 600;
+  color: var(--cg-ink-steel);
+}
+
+.cg-eyebrow-wide {
+  font-family: var(--cg-font-sans);
+  font-size: var(--cg-fs-eyebrow);
+  text-transform: uppercase;
+  letter-spacing: var(--cg-tracking-wider);
+  font-weight: 600;
+  color: var(--cg-ink-steel);
+}
+
+.cg-small {
+  font-family: var(--cg-font-sans);
+  font-size: var(--cg-fs-sm);
+  line-height: var(--cg-lh-sm);
+  color: var(--cg-ink-charcoal);
+}
+
+.cg-mono {
+  font-family: var(--cg-font-mono);
+  font-size: var(--cg-fs-mono);
+  line-height: var(--cg-lh-mono);
+  color: var(--cg-ink);
+}
+
+.cg-app-bg {
+  background: var(--cg-canvas);
+  min-height: 100vh;
+}
+
+.cg-grid {
+  background-image:
+    linear-gradient(var(--cg-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--cg-grid-line) 1px, transparent 1px);
+  background-size: var(--cg-grid-step) var(--cg-grid-step);
+}
+
+/* =========================================================================
+   Cards
+   ========================================================================= */
+
+/* Quiet white documentation card — 16px radius */
+.cg-panel,
+.cg-panel-strong {
+  background: var(--cg-canvas);
+  border: 1px solid var(--cg-hairline);
+  border-radius: var(--cg-radius-xl);
+  box-shadow: none;
+}
+
+/* AI product tile (homepage matrix) — 24px radius */
+.cg-tile {
+  background: var(--cg-canvas);
+  border: 1px solid var(--cg-hairline);
+  border-radius: var(--cg-radius-3xl);
+  padding: var(--cg-space-6);
+}
+
+/* Vibrant product cards — 32px radius, brand color background */
+.cg-product-card {
+  border-radius: var(--cg-radius-hero);
+  padding: var(--cg-space-8);
+  color: var(--cg-on-dark);
+}
+.cg-product-card--coral   { background: var(--cg-brand-coral); }
+.cg-product-card--magenta { background: var(--cg-brand-magenta); }
+.cg-product-card--blue    { background: var(--cg-brand-blue); }
+.cg-product-card--purple  { background: var(--cg-brand-purple); }
+.cg-product-card--photo   { background: var(--cg-ink); }
+
+/* =========================================================================
+   Buttons — pill-shaped everywhere
+   ========================================================================= */
+
+.cg-btn,
+.cg-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--cg-radius-pill);
+  padding: 11px 24px;
+  font-family: var(--cg-font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.40;
+  border: 1px solid transparent;
+  background: var(--cg-accent);
+  color: var(--cg-on-dark);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.05s ease, opacity 0.15s ease;
+}
+.cg-btn:hover,
+.cg-btn-primary:hover { background: var(--cg-accent-hover); }
+.cg-btn:active,
+.cg-btn-primary:active { transform: translateY(0.5px); }
+.cg-btn:disabled,
+.cg-btn-primary:disabled {
+  background: var(--cg-hairline);
+  color: var(--cg-ink-faint);
+  cursor: not-allowed;
+}
+
+.cg-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--cg-radius-pill);
+  padding: 11px 24px;
+  font-family: var(--cg-font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.40;
+  border: 1px solid var(--cg-ink);
+  background: transparent;
+  color: var(--cg-ink);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.cg-btn-secondary:hover { background: var(--cg-surface-soft); }
+
+.cg-btn-tertiary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--cg-radius-pill);
+  padding: 11px 24px;
+  font-family: var(--cg-font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.40;
+  border: 1px solid var(--cg-hairline);
+  background: var(--cg-canvas);
+  color: var(--cg-ink);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.cg-btn-tertiary:hover { border-color: var(--cg-ink); }
+
+.cg-btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: var(--cg-ink);
+  font-family: var(--cg-font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 0;
+  border: none;
+  cursor: pointer;
+}
+.cg-btn-link:hover { text-decoration: underline; }
+
+.cg-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--cg-radius-pill);
+  border: 1px solid var(--cg-hairline);
+  background: var(--cg-canvas);
+  color: var(--cg-ink);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.cg-btn-icon:hover { border-color: var(--cg-ink); }
+
+/* =========================================================================
+   Chips / pills / badges
+   ========================================================================= */
+
+.cg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--cg-radius-pill);
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--cg-hairline);
+  background: var(--cg-canvas);
+  color: var(--cg-ink-charcoal);
+}
+
+.cg-pill-tab {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--cg-radius-pill);
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid var(--cg-hairline);
+  background: var(--cg-canvas);
+  color: var(--cg-ink-steel);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.cg-pill-tab:hover { color: var(--cg-ink); }
+.cg-pill-tab--active {
+  background: var(--cg-accent);
+  border-color: var(--cg-accent);
+  color: var(--cg-on-dark);
+}
+
+.cg-badge-success {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--cg-radius-pill);
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--cg-success-bg);
+  color: var(--cg-success-text);
+}
+
+.cg-badge-new {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--cg-radius-pill);
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--cg-brand-coral);
+  color: var(--cg-on-dark);
+}
+
+.cg-badge-beta {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--cg-radius-pill);
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--cg-brand-blue-200);
+  color: var(--cg-brand-blue-deep);
+}
+
+.cg-badge-code {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--cg-radius-sm);
+  padding: 2px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--cg-brand-blue-200);
+  color: var(--cg-brand-blue-deep);
+}
+
+/* Legacy tag — for code that still uses .cg-tag */
+.cg-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--cg-radius-pill);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--cg-surface-soft);
+  color: var(--cg-ink-charcoal);
+}
+
+/* =========================================================================
+   Inputs
+   ========================================================================= */
+
+.cg-input {
+  width: 100%;
+  height: 40px;
+  border-radius: var(--cg-radius-md);
+  padding: 8px 16px;
+  font-family: var(--cg-font-sans);
+  font-size: 16px;
+  background: var(--cg-canvas);
+  color: var(--cg-ink);
+  border: 1px solid var(--cg-hairline);
+  outline: none;
+  transition: border 0.15s ease, box-shadow 0.15s ease;
+}
+.cg-input:focus {
+  border: 2px solid var(--cg-brand-blue-deep);
+  padding: 7px 15px;   /* compensate for thicker border so layout doesn't shift */
+}
+.cg-input--error {
+  border-color: var(--cg-danger);
+}
+
+.cg-search-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  border-radius: var(--cg-radius-md);
+  padding: 8px 16px;
+  background: var(--cg-surface);
+  border: 1px solid var(--cg-hairline);
+  color: var(--cg-ink-steel);
+  font-size: 14px;
+}
+
+/* =========================================================================
+   Promo banner — sticky black strip above nav
+   ========================================================================= */
+
+.cg-promo-banner {
+  background: var(--cg-ink);
+  color: var(--cg-on-dark);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 12px 20px;
+  text-align: center;
+}
+
+/* =========================================================================
+   Focus ring
+   ========================================================================= */
+
+.cg-focus:focus-visible {
+  outline: none;
+  box-shadow: var(--cg-ring-focus);
+}

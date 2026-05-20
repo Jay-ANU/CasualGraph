@@ -1,0 +1,37 @@
+version: 1
+description: >
+  Small RAG smoke-eval set for release checks. These cases are intentionally
+  broad enough to run against local/private corpora plus the global ESG KB.
+  Treat failures as review signals, not as a complete quality benchmark.
+cases:
+  - id: chitchat_greeting
+    question: "Hi"
+    reasoning_mode: flash
+    expected_behavior: chitchat
+    required_answer_terms: ["ESG"]
+    forbidden_answer_terms: ["Pinecone", "Neo4j", "database"]
+    min_sources: 0
+
+  - id: global_apple_strategy
+    question: "I want to know the ESG strategy of Apple."
+    reasoning_mode: flash
+    expected_behavior: answer_or_insufficient_context
+    required_answer_terms: []
+    forbidden_answer_terms: ["Pinecone", "Neo4j", "SQL", "database"]
+    min_sources: 0
+
+  - id: private_report_summary
+    question: "Summarise the selected sustainability report and cite the strongest evidence."
+    reasoning_mode: flash
+    expected_behavior: answer_with_sources
+    required_answer_terms: ["evidence"]
+    forbidden_answer_terms: ["I cannot access your database"]
+    min_sources: 1
+
+  - id: comparative_deep_reasoning
+    question: "Compare climate targets across the accessible reports and explain the main risks."
+    reasoning_mode: deep
+    expected_behavior: answer_with_reasoning
+    required_answer_terms: ["risk"]
+    forbidden_answer_terms: ["Pinecone", "Neo4j", "vector store"]
+    min_sources: 1

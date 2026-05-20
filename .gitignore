@@ -1,0 +1,61 @@
+﻿# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# Env secrets
+.env
+*.env
+!.env.example
+!.env.production.example
+
+# Neo4j docker data
+neo4j_data/
+neo4j_logs/
+
+# Local database files
+auth.db
+backend/*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.bak*
+
+# OS/Editor
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Agent/tool scratch state
+.claude/
+
+# Local ESG QLoRA adapter
+esg_qlora_adapter/*
+!esg_qlora_adapter/README.md
+qlora_model/
+
+# Local embedding models
+models/
+
+# Pipeline outputs
+data/raw/*
+data/processed/*
+data/chunks/*
+data/extractions/*
+data/graph/*
+data/vector_store/*
+data/documents/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/chunks/.gitkeep
+!data/extractions/.gitkeep
+!data/graph/.gitkeep
+!data/vector_store/.gitkeep
+!data/taxonomy/
+!data/taxonomy/**

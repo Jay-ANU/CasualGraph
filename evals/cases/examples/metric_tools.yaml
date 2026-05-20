@@ -1,0 +1,99 @@
+# Eval cases for the metric tool dispatch path.
+#
+# Run with seed data so these are deterministic:
+#     python -m metric_extraction.seed --db ./data/esg_metrics.sqlite
+#     python -m evals.runner \
+#         --pipeline metric_extraction.agent:dispatch \
+#         --cases evals/cases/examples/metric_tools.yaml
+#
+# These cases test the dispatch layer (question → tool call shape), not the
+# accuracy of extracted numbers. Numerical correctness is tested manually
+# against real PDFs.
+
+- id: mt_001_query_basic
+  category: metric_query
+  description: Single-entity, single-year query should call query_metric.
+  question: "What were ABC Corp's Scope 1 emissions in 2023?"
+  assertions:
+    - tool_called: query_metric
+    - tool_arg_contains: { tool: query_metric, contains: "ghg_scope1_emissions" }
+    - tool_arg_contains: { tool: query_metric, contains: "ABC Corp" }
+    - tool_arg_contains: { tool: query_metric, contains: "2023" }
+
+- id: mt_002_query_chinese
+  category: metric_query
+  description: Chinese alias should route to the same metric_id.
+  question: "ABC Corp 2023 年范围一排放是多少?"
+  assertions:
+    - tool_called: query_metric
+    - tool_arg_contains: { tool: query_metric, contains: "ghg_scope1_emissions" }
+    - tool_arg_contains: { tool: query_metric, contains: "2023" }
+
+- id: mt_003_compare_two_entities
+  category: metric_compare
+  description: 'compare A and B on X in Y' should hit compare_metric.
+  question: "Compare ABC Corp and XYZ Industries on Scope 1 emissions in 2023."
+  assertions:
+    - tool_called: compare_metric
+    - tool_arg_contains: { tool: compare_metric, contains: "ghg_scope1_emissions" }
+    - tool_arg_contains: { tool: compare_metric, contains: "ABC Corp" }
+    - tool_arg_contains: { tool: compare_metric, contains: "XYZ Industries" }
+
+- id: mt_004_compare_versus_phrasing
+  category: metric_compare
+  description: 'A vs B' phrasing should also hit compare_metric.
+  question: "ABC Corp vs XYZ Industries: Scope 2 emissions in 2023."
+  assertions:
+    - tool_called: compare_metric
+    - tool_arg_contains: { tool: compare_metric, contains: "ghg_scope2_emissions" }
+
+- id: mt_005_trend_query
+  category: metric_trend
+  description: Year-range with 'trend' keyword should call metric_trend.
+  question: "ABC Corp's Scope 1 emissions trend from 2021 to 2023."
+  assertions:
+    - tool_called: metric_trend
+    - tool_arg_contains: { tool: metric_trend, contains: "ghg_scope1_emissions" }
+    - tool_arg_contains: { tool: metric_trend, contains: "2021" }
+    - tool_arg_contains: { tool: metric_trend, contains: "2023" }
+
+- id: mt_006_list_metrics
+  category: metric_list
+  description: Asking 'what metrics' should hit list_available_metrics.
+  question: "What metrics do you support?"
+  assertions:
+    - tool_called: list_available_metrics
+    - must_contain_any: ["ghg_scope1_emissions", "energy_consumption"]
+
+- id: mt_007_employees
+  category: metric_query
+  description: Non-GHG metric (employees) should still dispatch correctly.
+  question: "How many employees does ABC Corp have in 2023?"
+  assertions:
+    - tool_called: query_metric
+    - tool_arg_contains: { tool: query_metric, contains: "employee_count" }
+
+- id: mt_008_water
+  category: metric_query
+  description: Water withdrawal alias.
+  question: "What was XYZ Industries' total water withdrawal in 2023?"
+  assertions:
+    - tool_called: query_metric
+    - tool_arg_contains: { tool: query_metric, contains: "water_withdrawal" }
+
+- id: mt_009_off_taxonomy_refusal
+  category: metric_query
+  description: Question about unsupported metric should return a refusal message.
+  question: "What is ABC Corp's CEO compensation?"
+  assertions:
+    - regex_match: "(?i)(could not identify|无法|cannot|don't|not.*support)"
+    - tool_not_called: query_metric
+
+- id: mt_010_returns_citations_when_data_seeded
+  category: metric_query
+  description: After running `python -m metric_extraction.seed --db ./data/esg_metrics.sqlite`, this case should return at least one citation. Without seed data the citation list will be empty (still passes dispatch checks).
+  question: "What were ABC Corp's Scope 1 emissions in 2023?"
+  assertions:
+    - tool_called: query_metric
+    # Uncomment after seeding to enforce data-presence:
+    # - min_citations: 1

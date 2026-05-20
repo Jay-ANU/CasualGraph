@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Components · Chat composer</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<script src="https://unpkg.com/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--cg-font-sans); background:#f7f8fa; color: var(--cg-ink); padding: 20px 22px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .label { font-family: var(--cg-font-display); font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+  .note { font-family: var(--cg-font-mono); font-size: 11px; color: var(--cg-ink-soft); }
+  .composer { background:#fff; border:1px solid var(--cg-border); border-radius: 16px; padding: 14px 16px 12px; box-shadow: 0 8px 24px rgba(15,23,42,.06); display: grid; gap: 12px; }
+  .ta { font-family: inherit; font-size: 14px; line-height: 1.55; color: var(--cg-ink); border:none; outline:none; resize:none; width:100%; padding:0; }
+  .ta::placeholder { color: var(--cg-ink-soft); }
+  .toolbar { display: flex; align-items: center; gap: 8px; }
+  .toolbar .left { display: flex; gap: 8px; flex-wrap: wrap; }
+  .toolbar .right { margin-left: auto; display: flex; gap: 8px; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:9999px; border:1px solid #e2e8f0; background:rgba(255,255,255,.72); font-size:13px; font-weight:500; color:#475569; cursor: pointer; }
+  .pill.active { background:#020617; color:#fff; border-color:#020617; }
+  .send { display:inline-flex; align-items:center; gap:8px; background:#020617; color:#fff; border:none; padding:8px 14px; border-radius:10px; font-size:13px; font-weight:600; }
+  .send.disabled { opacity: 0.4; }
+  .attached { display: flex; gap: 6px; flex-wrap: wrap; }
+  .att { display:inline-flex; align-items:center; gap:6px; background:#f1f5f9; color:#334155; padding:4px 10px; border-radius:6px; font-size:12px; font-family: var(--cg-font-mono); }
+  i { width: 14px; height: 14px; }
+</style>
+</head>
+<body>
+  <div class="head"><div class="label">Chat composer</div><div class="note">attach reports · pick mode · mode pills are persistent state</div></div>
+  <div class="composer">
+    <div class="attached">
+      <span class="att"><i data-lucide="file-text"></i> bhp-2024-sustainability.pdf <i data-lucide="x"></i></span>
+      <span class="att"><i data-lucide="file-text"></i> rio-tinto-climate-report-2024.pdf <i data-lucide="x"></i></span>
+    </div>
+    <textarea class="ta" rows="2">Compare BHP and Rio Tinto on scope 1 reduction targets — and show me the source paragraphs.</textarea>
+    <div class="toolbar">
+      <div class="left">
+        <span class="pill"><i data-lucide="paperclip"></i> Attach</span>
+        <span class="pill active"><i data-lucide="message-square"></i> Ask</span>
+        <span class="pill"><i data-lucide="zap"></i> Predict</span>
+        <span class="pill"><i data-lucide="git-branch"></i> Reason on graph</span>
+      </div>
+      <div class="right">
+        <button class="send">Send <i data-lucide="arrow-up"></i></button>
+      </div>
+    </div>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>
