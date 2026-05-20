@@ -1,6 +1,6 @@
 # CausalGraph AI
 
-[GitHub Repository](https://github.com/Jay-ANU/CasualGraph) | [Live App](https://casualgraphai.vercel.app) | [Backend Health](https://casualgraph.fly.dev/healthz)
+[GitHub Repository](https://github.com/Jay-ANU/CasualGraph) | [Live App](https://casualgraphai.vercel.app)
 
 CausalGraph AI is an open-source ESG intelligence application for turning long-form corporate reports into searchable evidence, graph context, and cited agent answers.
 
@@ -93,12 +93,7 @@ cp .env.example .env
 python3 -m uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
-Health checks:
-
-```bash
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/healthz
-```
+The backend listens on `http://127.0.0.1:8000` by default. Keep operational health checks private to local development or platform infrastructure.
 
 For a useful local RAG setup, configure at least one real embedding backend and one answer model in `.env`. The fastest hosted setup is typically:
 
@@ -331,13 +326,6 @@ Local development can omit `REACT_APP_ESG_API_BASE` when the frontend is served 
 
 ## API Surface
 
-### Health
-
-```bash
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/healthz
-```
-
 ### Auth And Admin
 
 ```text
@@ -470,11 +458,7 @@ Deploy:
 flyctl deploy
 ```
 
-Check health:
-
-```bash
-curl https://your-backend.example.com/healthz
-```
+Keep health checks operational but do not publish a public health-check URL in demos, README links, or user-facing materials. The Fly image uses the container-local health check from `Dockerfile`.
 
 If Redis is embedded in the Fly machine, keep a persistent volume mounted at `/data` so Redis AOF data and SQLite files survive restarts.
 
