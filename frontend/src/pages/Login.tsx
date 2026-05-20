@@ -23,6 +23,10 @@ const Login: React.FC = () => {
   const [captchaId, setCaptchaId] = useState('');
   const [captchaImage, setCaptchaImage] = useState('');
   const [captchaCode, setCaptchaCode] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [emailCodeSending, setEmailCodeSending] = useState(false);
+  const [emailCodeSent, setEmailCodeSent] = useState(false);
+  const [emailCodeCooldown, setEmailCodeCooldown] = useState(0);
   const [registerRole, setRegisterRole] = useState<RegisterRole>('user');
   const [adminInviteCode, setAdminInviteCode] = useState('');
 
@@ -46,6 +50,45 @@ const Login: React.FC = () => {
     if (mode === 'register') fetchCaptcha();
   }, [mode, fetchCaptcha]);
 
+  useEffect(() => {
+    if (emailCodeCooldown <= 0) return;
+    const timer = window.setTimeout(() => setEmailCodeCooldown((current) => Math.max(0, current - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [emailCodeCooldown]);
+
+  const handleSendEmailCode = async () => {
+    setError('');
+    if (!email.trim()) {
+      setError('Enter your email first');
+      return;
+    }
+    if (!captchaId || !captchaCode.trim()) {
+      setError('Enter the image captcha before sending the email code');
+      return;
+    }
+    setEmailCodeSending(true);
+    try {
+      const res = await fetch(`${apiBase}/auth/email-code/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          captcha_id: captchaId,
+          captcha_code: captchaCode,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Unable to send email code');
+      setEmailCodeSent(true);
+      setEmailCode('');
+      setEmailCodeCooldown(Number(data.cooldown_seconds || 60));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to send email code');
+    } finally {
+      setEmailCodeSending(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -60,6 +103,7 @@ const Login: React.FC = () => {
             password,
             captcha_id: captchaId,
             captcha_code: captchaCode,
+            email_code: emailCode,
             role: registerRole,
             admin_invite_code: registerRole === 'admin' ? adminInviteCode : undefined,
           };
@@ -196,7 +240,7 @@ const Login: React.FC = () => {
 
             {mode === 'register' && (
               <div>
-                <label className="mb-2 block text-caption font-semibold text-ink">Verification code</label>
+                <label className="mb-2 block text-caption font-semibold text-ink">Image captcha</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -231,6 +275,33 @@ const Login: React.FC = () => {
               </div>
             )}
 
+            {mode === 'register' && (
+              <div>
+                <label className="mb-2 block text-caption font-semibold text-ink">Email verification code</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    required
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={emailCode}
+                    onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
+                    className={`${inputClass} flex-1`}
+                    style={{ borderColor: 'var(--cg-hairline)' }}
+                    placeholder="6 digits"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendEmailCode}
+                    disabled={emailCodeSending || emailCodeCooldown > 0}
+                    className="rounded-md border border-hairline bg-ink px-4 py-2.5 text-caption font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-ink-stone"
+                  >
+                    {emailCodeSending ? 'Sending' : emailCodeCooldown > 0 ? `${emailCodeCooldown}s` : emailCodeSent ? 'Resend' : 'Send code'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {error && (
               <p
                 className="rounded-md px-3 py-2 text-body-sm"
@@ -257,6 +328,9 @@ const Login: React.FC = () => {
                 setMode(mode === 'login' ? 'register' : 'login');
                 setRegisterRole('user');
                 setAdminInviteCode('');
+                setEmailCode('');
+                setEmailCodeSent(false);
+                setEmailCodeCooldown(0);
                 setError('');
               }}
               className="font-semibold text-ink underline-offset-2 hover:underline"

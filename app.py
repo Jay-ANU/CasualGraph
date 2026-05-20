@@ -6,6 +6,7 @@ import os
 import io
 import time
 import base64
+import smtplib
 import random
 import queue
 import secrets
@@ -18,11 +19,14 @@ import bcrypt
 import jwt
 import aiosqlite
 from concurrent.futures import ThreadPoolExecutor
+from email.message import EmailMessage
+from email.utils import formataddr
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from dotenv import load_dotenv
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +34,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # ── Auth config ──────────────────────────────────────────────────────────────
 _DEFAULT_JWT_SECRET = "esg-demo-secret-change-in-prod"
@@ -163,6 +169,25 @@ _CORS_ALLOW_ORIGIN_REGEX = os.getenv(
 ).strip() or None
 
 
+def _env_flag(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+_MAIL_ENABLED = _env_flag("MAIL_ENABLED", "false")
+_MAIL_SMTP_HOST = os.getenv("MAIL_SMTP_HOST", "").strip()
+_MAIL_SMTP_PORT = int(os.getenv("MAIL_SMTP_PORT", "465"))
+_MAIL_SMTP_SSL = _env_flag("MAIL_SMTP_SSL", "true")
+_MAIL_SMTP_STARTTLS = _env_flag("MAIL_SMTP_STARTTLS", "false")
+_MAIL_SMTP_USER = os.getenv("MAIL_SMTP_USER", "").strip()
+_MAIL_SMTP_PASSWORD = os.getenv("MAIL_SMTP_PASSWORD", "").strip()
+_MAIL_FROM = os.getenv("MAIL_FROM", _MAIL_SMTP_USER).strip()
+_MAIL_FROM_NAME = os.getenv("MAIL_FROM_NAME", "CausalGraph AI").strip()
+_EMAIL_CODE_TTL_SECONDS = max(60, int(os.getenv("EMAIL_CODE_TTL_SECONDS", "600")))
+_EMAIL_CODE_RESEND_COOLDOWN_SECONDS = max(15, int(os.getenv("EMAIL_CODE_RESEND_COOLDOWN_SECONDS", "60")))
+_EMAIL_CODE_MAX_ATTEMPTS = max(1, int(os.getenv("EMAIL_CODE_MAX_ATTEMPTS", "5")))
+_EMAIL_CODE_LENGTH = max(4, int(os.getenv("EMAIL_CODE_LENGTH", "6")))
+
+
 async def _get_db():
     async with aiosqlite.connect(_DB_PATH) as db:
         yield db
@@ -192,8 +217,23 @@ async def _init_auth_db():
                 used_by_user_id TEXT
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS email_verification_codes (
+                id TEXT PRIMARY KEY,
+                email TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                code_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                consumed_at TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_sent_at TEXT NOT NULL
+            )
+        """)
         await db.execute("CREATE INDEX IF NOT EXISTS admin_invite_codes_expires_at_idx ON admin_invite_codes(expires_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS admin_invite_codes_used_at_idx ON admin_invite_codes(used_at)")
+        await db.execute("CREATE INDEX IF NOT EXISTS email_verification_codes_email_purpose_idx ON email_verification_codes(email, purpose, created_at)")
+        await db.execute("CREATE INDEX IF NOT EXISTS email_verification_codes_expires_at_idx ON email_verification_codes(expires_at)")
         await _ensure_column(db, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
         await db.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR lower(role) NOT IN ('admin', 'user')")
         admin_emails = sorted(_admin_email_set())
@@ -204,6 +244,7 @@ async def _init_auth_db():
                 tuple(admin_emails),
             )
         await db.execute("DELETE FROM admin_invite_codes WHERE datetime(expires_at) <= datetime('now') OR used_at IS NOT NULL")
+        await db.execute("DELETE FROM email_verification_codes WHERE datetime(expires_at) <= datetime('now') OR consumed_at IS NOT NULL")
         await db.commit()
 
 
@@ -252,12 +293,37 @@ def _utc_in_minutes_iso(minutes: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
 
 
+def _utc_in_seconds_iso(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def _parse_utc_iso(value: str) -> datetime:
+    parsed = datetime.fromisoformat(str(value))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_email(email: str) -> str:
+    return str(email or "").strip().lower()
+
+
 def _hash_pw(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def _check_pw(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
+
+
+def _hash_email_code(email: str, code: str) -> str:
+    payload = f"{_normalize_email(email)}:{str(code).strip()}".encode()
+    return bcrypt.hashpw(payload, bcrypt.gensalt()).decode()
+
+
+def _check_email_code(email: str, code: str, hashed: str) -> bool:
+    payload = f"{_normalize_email(email)}:{str(code).strip()}".encode()
+    return bcrypt.checkpw(payload, hashed.encode())
 
 
 def _make_token(user_id: str, email: str) -> str:
@@ -377,12 +443,163 @@ def _cleanup_captchas():
         _CAPTCHA_STORE.pop(key, None)
 
 
+def _validate_captcha(captcha_id: str, captcha_code: str, *, consume: bool) -> None:
+    _cleanup_captchas()
+    stored = _CAPTCHA_STORE.get(str(captcha_id or ""))
+    if not stored or stored[0] != str(captcha_code or "").strip():
+        raise HTTPException(status_code=400, detail="Invalid or expired captcha")
+    if consume:
+        _CAPTCHA_STORE.pop(str(captcha_id or ""), None)
+
+
+def _generate_email_code() -> str:
+    return "".join(secrets.choice(string.digits) for _ in range(_EMAIL_CODE_LENGTH))
+
+
+async def _assert_email_code_send_allowed(db: aiosqlite.Connection, email: str, purpose: str) -> None:
+    cursor = await db.execute(
+        """
+        SELECT last_sent_at
+        FROM email_verification_codes
+        WHERE email = ? AND purpose = ? AND consumed_at IS NULL
+        ORDER BY datetime(last_sent_at) DESC
+        LIMIT 1
+        """,
+        (_normalize_email(email), purpose),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return
+    elapsed = (datetime.now(timezone.utc) - _parse_utc_iso(row[0])).total_seconds()
+    if elapsed < _EMAIL_CODE_RESEND_COOLDOWN_SECONDS:
+        retry_after = int(_EMAIL_CODE_RESEND_COOLDOWN_SECONDS - elapsed)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Email verification code was sent recently. Try again in {retry_after} seconds.",
+        )
+
+
+async def _store_email_code(db: aiosqlite.Connection, email: str, code: str, purpose: str) -> None:
+    now = _utc_now_iso()
+    await db.execute(
+        """
+        INSERT INTO email_verification_codes (
+            id, email, purpose, code_hash, created_at, expires_at, consumed_at, attempts, last_sent_at
+        ) VALUES (?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            str(uuid.uuid4()),
+            _normalize_email(email),
+            purpose,
+            _hash_email_code(email, code),
+            now,
+            _utc_in_seconds_iso(_EMAIL_CODE_TTL_SECONDS),
+            None,
+            0,
+            now,
+        ),
+    )
+
+
+async def _verify_email_code(db: aiosqlite.Connection, email: str, code: Optional[str], purpose: str) -> None:
+    clean_code = str(code or "").strip()
+    if not clean_code:
+        raise HTTPException(status_code=400, detail="Email verification code is required")
+    cursor = await db.execute(
+        """
+        SELECT id, code_hash, expires_at, attempts
+        FROM email_verification_codes
+        WHERE email = ? AND purpose = ? AND consumed_at IS NULL
+        ORDER BY datetime(created_at) DESC
+        LIMIT 1
+        """,
+        (_normalize_email(email), purpose),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=400, detail="Invalid or expired email verification code")
+    if _parse_utc_iso(row[2]) <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Invalid or expired email verification code")
+    attempts = int(row[3] or 0)
+    if attempts >= _EMAIL_CODE_MAX_ATTEMPTS:
+        raise HTTPException(status_code=400, detail="Email verification code attempt limit exceeded")
+    if not _check_email_code(email, clean_code, row[1]):
+        await db.execute(
+            "UPDATE email_verification_codes SET attempts = attempts + 1 WHERE id = ?",
+            (row[0],),
+        )
+        raise HTTPException(status_code=400, detail="Invalid or expired email verification code")
+    await db.execute(
+        "UPDATE email_verification_codes SET consumed_at = ? WHERE id = ?",
+        (_utc_now_iso(), row[0]),
+    )
+
+
+def _deliver_email_verification_code(*, email: str, code: str) -> None:
+    if not _MAIL_ENABLED:
+        if _is_production_like_env():
+            raise HTTPException(status_code=503, detail="Email delivery is not configured")
+        print(f"[email-verification] MAIL_ENABLED=false; code for {_normalize_email(email)}: {code}")
+        return
+
+    missing = [
+        name
+        for name, value in {
+            "MAIL_SMTP_HOST": _MAIL_SMTP_HOST,
+            "MAIL_SMTP_USER": _MAIL_SMTP_USER,
+            "MAIL_SMTP_PASSWORD": _MAIL_SMTP_PASSWORD,
+            "MAIL_FROM": _MAIL_FROM,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise HTTPException(status_code=503, detail=f"Email delivery is missing configuration: {', '.join(missing)}")
+
+    message = EmailMessage()
+    message["Subject"] = "Your CausalGraph AI verification code"
+    message["From"] = formataddr((_MAIL_FROM_NAME, _MAIL_FROM))
+    message["To"] = _normalize_email(email)
+    message.set_content(
+        "\n".join(
+            [
+                "Your CausalGraph AI verification code is:",
+                "",
+                code,
+                "",
+                f"This code expires in {int(_EMAIL_CODE_TTL_SECONDS / 60)} minutes.",
+                "If you did not request this code, you can ignore this email.",
+            ]
+        )
+    )
+
+    try:
+        if _MAIL_SMTP_SSL:
+            with smtplib.SMTP_SSL(_MAIL_SMTP_HOST, _MAIL_SMTP_PORT, timeout=15) as smtp:
+                smtp.login(_MAIL_SMTP_USER, _MAIL_SMTP_PASSWORD)
+                smtp.send_message(message)
+        else:
+            with smtplib.SMTP(_MAIL_SMTP_HOST, _MAIL_SMTP_PORT, timeout=15) as smtp:
+                if _MAIL_SMTP_STARTTLS:
+                    smtp.starttls()
+                smtp.login(_MAIL_SMTP_USER, _MAIL_SMTP_PASSWORD)
+                smtp.send_message(message)
+    except smtplib.SMTPException as exc:
+        raise HTTPException(status_code=502, detail="Email delivery failed") from exc
+
+
+class EmailCodeSendRequest(BaseModel):
+    email: str
+    captcha_id: str
+    captcha_code: str
+
+
 class RegisterRequest(BaseModel):
     email: str
     username: str
     password: str
     captcha_id: str
     captcha_code: str
+    email_code: Optional[str] = None
     role: str = "user"
     admin_invite_code: Optional[str] = None
 
@@ -532,30 +749,50 @@ async def get_captcha():
     return {"captcha_id": captcha_id, "image": f"data:image/png;base64,{img_b64}"}
 
 
-@app.post("/auth/register")
-async def register(req: RegisterRequest, db: aiosqlite.Connection = Depends(_get_db)):
-    _cleanup_captchas()
-    stored = _CAPTCHA_STORE.pop(req.captcha_id, None)
-    if not stored or stored[0] != req.captcha_code.strip():
-        raise HTTPException(status_code=400, detail="Invalid or expired captcha")
-    cursor = await db.execute("SELECT id FROM users WHERE email = ?", (req.email,))
+@app.post("/auth/email-code/send")
+async def send_email_code(req: EmailCodeSendRequest, db: aiosqlite.Connection = Depends(_get_db)):
+    _validate_captcha(req.captcha_id, req.captcha_code, consume=False)
+    email = _normalize_email(req.email)
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email address is required")
+    cursor = await db.execute("SELECT id FROM users WHERE email = ?", (email,))
     if await cursor.fetchone():
         raise HTTPException(status_code=400, detail="Email already registered")
+    await _assert_email_code_send_allowed(db, email, "register")
+    code = _generate_email_code()
+    await _store_email_code(db, email, code, "register")
+    _deliver_email_verification_code(email=email, code=code)
+    await db.commit()
+    return {
+        "sent": True,
+        "ttl_seconds": _EMAIL_CODE_TTL_SECONDS,
+        "cooldown_seconds": _EMAIL_CODE_RESEND_COOLDOWN_SECONDS,
+    }
+
+
+@app.post("/auth/register")
+async def register(req: RegisterRequest, db: aiosqlite.Connection = Depends(_get_db)):
+    _validate_captcha(req.captcha_id, req.captcha_code, consume=True)
+    email = _normalize_email(req.email)
+    cursor = await db.execute("SELECT id FROM users WHERE email = ?", (email,))
+    if await cursor.fetchone():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    await _verify_email_code(db, email, req.email_code, "register")
     user_id = str(uuid.uuid4())
     role = _normalize_role(req.role)
     if role == "admin":
         await _consume_admin_invite(req.admin_invite_code or "", user_id, db)
     await db.execute(
         "INSERT INTO users (id, email, username, password_hash, role, created_at) VALUES (?,?,?,?,?,?)",
-        (user_id, req.email, req.username, _hash_pw(req.password), role, _utc_now_iso()),
+        (user_id, email, req.username, _hash_pw(req.password), role, _utc_now_iso()),
     )
     await db.commit()
-    token = _make_token(user_id, req.email)
+    token = _make_token(user_id, email)
     return {
         "token": token,
         "user": {
             "id": user_id,
-            "email": req.email,
+            "email": email,
             "username": req.username,
             "role": role,
             "created_at": _utc_now_iso(),
