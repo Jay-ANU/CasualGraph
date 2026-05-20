@@ -1,253 +1,132 @@
-# COMP8715 CasualGraphAI
+# CausalGraph AI
 
-This repository now contains a complete Python-first ESG report analysis workflow built around:
+[GitHub Repository](https://github.com/Jay-ANU/CasualGraph) | [Live App](https://casualgraphai.vercel.app) | [Backend Health](https://casualgraph.fly.dev/healthz)
 
-- PDF parsing and text chunking
-- local vector retrieval for RAG
-- a QLoRA fine-tuned ESG extraction model
-- optional OpenAI/Claude-backed answer generation for higher-quality responses
-- lightweight knowledge graph JSON generation
-- optional Neo4j persistence for a real graph database backend
-- a FastAPI service for extraction, RAG, and PDF pipeline execution
+CausalGraph AI is an open-source ESG intelligence application for turning long-form corporate reports into searchable evidence, graph context, and cited agent answers.
 
-Historical experiment folders and raw training datasets have been removed from
-the main repository so the GitHub version focuses on the production app and the
-active ingestion/RAG pipeline.
+The project combines a React frontend, a FastAPI backend, retrieval-augmented generation, optional graph persistence, short-term Redis chat memory, and configurable model providers. It is designed to run locally for development and on production platforms such as Vercel, Fly.io, Pinecone, Redis, and Neo4j Aura.
 
-## What This System Does
+This repository contains the application code and configuration templates. It does not include private API keys, uploaded reports, runtime databases, hosted vector indexes, Neo4j data, or large model weights.
 
-1. Read an ESG PDF report
-2. Clean the extracted text
-3. Split the report into chunks
-4. Build a local vector index
-5. Run the fine-tuned QLoRA model to extract `entities` and `relations`
-6. Save extraction results as JSONL
-7. Convert extractions into a graph JSON
-8. Optionally sync documents, chunks, entities, and relationships into Neo4j
-9. Answer questions with retrieval-augmented generation
+## Core Features
 
-## Directory Structure
+- ESG report ingestion: upload PDFs, DOCX files, or plain text and convert them into cleaned, overlapping chunks.
+- Retrieval-augmented chat: answer questions from retrieved report evidence instead of unconstrained model memory.
+- Streaming responses: `/rag/ask/stream` supports incremental frontend rendering for the agent page.
+- Citations: responses can include retrieved chunk references, source metadata, and graph-backed evidence.
+- Flash / Deep reasoning tiers: fast OpenAI-backed answers for normal questions, optional Anthropic-backed deep mode for heavier multi-hop reasoning.
+- Contextual follow-ups: Redis-backed sessions preserve short-term chat state, selected document context, and recent messages.
+- Entity-aware document scoping: follow-up questions can use prior conversation entities to avoid retrieving from the wrong company or report.
+- ESG extraction: local QLoRA extraction, remote DeepSeek extraction, or heuristic fallback depending on environment configuration.
+- Knowledge graph generation: extracted entities and relations are converted into graph JSON and can be synchronized into Neo4j.
+- Graph APIs: inspect Neo4j status, entity neighborhoods, causal forward/backward chains, and shortest paths.
+- Hybrid retrieval controls: vector search, BM25 fusion, multi-query expansion, HyDE, reranking, graph context, and decomposition are all environment-controlled.
+- Admin and audit surfaces: login, admin allowlists, upload monitoring, feedback capture, notification hooks, and trace logging.
+- Production deployment support: Vercel frontend, Fly.io backend, persistent Fly volume, optional embedded Redis, and external Pinecone / Neo4j services.
+
+## Architecture
 
 ```text
-project/
-├── app.py
-├── requirements.txt
-├── README.md
+React frontend
+  |
+  | REACT_APP_ESG_API_BASE
+  v
+FastAPI backend (app.py)
+  |
+  |-- Auth, admin, feedback, document APIs
+  |-- PDF/text ingestion and async job tracking
+  |-- RAG ask / stream endpoints
+  |-- ESG extraction pipeline
+  |-- Graph and causal reasoning APIs
+  |
+  |-- SQLite files for auth / feedback / local metadata
+  |-- Redis for short-term chat memory
+  |-- Local FAISS or Pinecone for vector search
+  |-- Neo4j for optional graph persistence
+  |-- OpenAI / Anthropic / DeepSeek / DeepInfra for model-backed work
+```
+
+The maintained public deployment currently uses:
+
+- Frontend: Vercel, `https://casualgraphai.vercel.app`
+- Backend: Fly.io, `https://casualgraph.fly.dev`
+- Backend region: Sydney (`syd`)
+- Persistent backend storage: Fly volume mounted at `/data`
+- Redis: optional Redis server started inside the backend container when `REDIS_ENABLED=true`
+- Embeddings: local model or DeepInfra, depending on deployment configuration
+- Vector store: local store or Pinecone
+- Graph store: local JSON or Neo4j
+
+## Repository Layout
+
+```text
+.
+├── app.py                         # Main FastAPI application
+├── requirements.txt               # Python backend dependencies
+├── Dockerfile                     # Fly.io backend image
+├── fly.toml                       # Fly.io backend app config
+├── docker-compose.yml             # Local Neo4j helper
 ├── configs/
-│   └── settings.py
-├── data/
-│   ├── raw/
-│   ├── processed/
-│   ├── chunks/
-│   ├── extractions/
-│   ├── graph/
-│   └── vector_store/
-├── ai_service/
-│   ├── __init__.py
-│   ├── model_loader.py
-│   ├── extractor.py
-│   ├── schemas.py
-│   └── utils.py
-├── document_processing/
-│   ├── __init__.py
-│   ├── pdf_parser.py
-│   ├── text_cleaner.py
-│   └── chunker.py
-├── rag/
-│   ├── __init__.py
-│   ├── embeddings.py
-│   ├── vector_store.py
-│   ├── retriever.py
-│   └── rag_pipeline.py
-├── graph/
-│   ├── __init__.py
-│   ├── graph_builder.py
-│   ├── neo4j_store.py
-│   ├── graph_store.py
-│   └── graph_utils.py
-├── scripts/
-│   ├── run_pdf_pipeline.py
-│   ├── batch_extract.py
-│   ├── build_vector_index.py
-│   └── build_graph.py
-└── esg_qlora_adapter/
-    ├── adapter_config.json
-    ├── adapter_model.safetensors
-    └── ...
+│   └── settings.py                # Runtime configuration loader
+├── ai_service/                    # ESG extraction model clients and schemas
+├── document_processing/           # PDF parsing, cleaning, chunking
+├── graph/                         # Graph building, Neo4j sync, causal reasoning
+├── rag/                           # Embeddings, vector stores, retrieval, answering
+├── scripts/                       # Pipeline and deployment helper scripts
+├── backend/                       # Legacy MVP services and SQLite-backed modules
+├── frontend/                      # React application
+├── data/                          # Runtime data directories, mostly gitignored
+├── models/                        # Optional local embedding models, gitignored
+├── esg_qlora_adapter/             # Optional local adapter weights, gitignored
+└── qlora_model/                   # Optional local training outputs, gitignored
 ```
 
-## Adapter Placement
+## Quick Start
 
-Preferred adapter location:
-
-```text
-esg_qlora_adapter/
-├── adapter_config.json
-├── adapter_model.safetensors
-└── ...
-```
-
-The loader also auto-detects your existing training output here:
-
-```text
-qlora_model/esg-qwen2.5-7b-qlora/
-├── adapter_config.json
-├── adapter_model.safetensors
-└── ...
-```
-
-and, if needed, the latest `checkpoint-*` directory under it.
-
-You can override detection explicitly with:
+### 1. Backend
 
 ```bash
-export ESG_ADAPTER_PATH=/absolute/path/to/your/adapter
-```
-
-If the base Qwen model is already stored locally, point the loader to it explicitly:
-
-```bash
-export ESG_BASE_MODEL_PATH=/absolute/path/to/Qwen2.5-7B-Instruct
-export HF_LOCAL_FILES_ONLY=true
-```
-
-By default, the root pipeline now prefers fast local-only loading. If you explicitly want Hugging Face downloads, enable them:
-
-```bash
-export ESG_MODEL_ALLOW_DOWNLOAD=true
-export ESG_EMBEDDING_ALLOW_DOWNLOAD=true
-```
-
-The repository must not store the base model weights. The code loads:
-
-- base model: `Qwen/Qwen2.5-7B-Instruct`
-- adapter: auto-detected local adapter directory
-
-## Install Dependencies
-
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-## Environment File
-
-You can keep runtime configuration in a local `.env` file. Start by copying:
-
-```bash
 cp .env.example .env
+python3 -m uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
-Do not commit real secrets such as Pinecone API keys or model paths.
-
-## OpenAI-Backed QA
-
-The root `8000` pipeline can now answer questions in three tiers:
-
-1. `OpenAI API` if `OPENAI_API_KEY` is configured
-2. local `Qwen + QLoRA` model
-3. extractive fallback when neither model path is available
-
-Recommended `.env` snippet:
+Health checks:
 
 ```bash
-OPENAI_API_KEY=your_openai_api_key
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/healthz
+```
+
+For a useful local RAG setup, configure at least one real embedding backend and one answer model in `.env`. The fastest hosted setup is typically:
+
+```bash
+EMBEDDING_BACKEND=deepinfra
+DEEPINFRA_API_KEY=your_deepinfra_key
+OPENAI_API_KEY=your_openai_key
 OPENAI_MODEL=gpt-4
-OPENAI_TEMPERATURE=0.1
-OPENAI_MAX_TOKENS=700
-OPENAI_TIMEOUT=60
+VECTOR_STORE_PROVIDER=local
 ```
 
-When OpenAI is configured, `/rag/ask` still uses Pinecone/local retrieval first and only uses the API for final grounded answer generation. The response now includes a `backend` field such as `openai`, `local_qlora`, or `extractive_fallback`.
-
-## DeepSeek Extraction Fallback
-
-The ESG extraction pipeline now runs in three tiers:
-
-1. local `Qwen + QLoRA`
-2. remote `DeepSeek` API, if configured
-3. heuristic extraction fallback
-
-Recommended `.env` snippet:
+### 2. Frontend
 
 ```bash
-DEEPSEEK_API_KEY=your_deepseek_api_key
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-flash
-DEEPSEEK_TIMEOUT=60
+cd frontend
+npm install
+REACT_APP_ESG_API_BASE=http://127.0.0.1:8000 npm start
 ```
 
-The current implementation uses DeepSeek's OpenAI-compatible chat completion API. If you need a different DeepSeek endpoint path or model name, adjust only the `.env` values or the small client in `ai_service/remote_extractor.py`.
+The React app starts on `http://localhost:3000` by default. In production, set `REACT_APP_ESG_API_BASE` to the deployed backend URL before building.
 
-## Vector Store Provider
-
-The project now supports two vector-store modes:
-
-- `local`: default, using local FAISS or numpy/pickle fallback
-- `pinecone`: remote Pinecone index, while keeping the existing local embedding pipeline
-
-The default embedding model is now:
-
-- `BAAI/bge-m3`
-
-If a local copy exists under `./models/BAAI_bge-m3`, the project will automatically prefer that path.
-The current local setup can use the SentenceTransformers ONNX backend when the downloaded model contains `onnx/model.onnx`.
-
-If you use Pinecone with this default embedding model, create a dense index with:
-
-- dimension: `1024`
-- metric: `cosine`
-
-To switch to Pinecone, set:
+### 3. Optional Local Neo4j
 
 ```bash
-export VECTOR_STORE_PROVIDER=pinecone
-export PINECONE_API_KEY=your_api_key
-export PINECONE_INDEX_NAME=your_index_name
+docker compose up -d neo4j
 ```
 
-If Pinecone gave you a dedicated index host, you can use it instead of `PINECONE_INDEX_NAME`:
-
-```bash
-export PINECONE_INDEX_HOST=your_index_host
-```
-
-Optional:
-
-```bash
-export PINECONE_NAMESPACE=esg-demo
-```
-
-Recommended `.env` example for Pinecone:
-
-```bash
-VECTOR_STORE_PROVIDER=pinecone
-PINECONE_API_KEY=your_api_key
-PINECONE_INDEX_NAME=your_index_name
-PINECONE_NAMESPACE=esg-demo
-PINECONE_METRIC=cosine
-```
-
-Use `PINECONE_INDEX_HOST` if Pinecone provided a dedicated host for your index.
-If your current Pinecone index was created for the old `384`-dimensional embedding setup, recreate it before switching to `bge-m3`.
-
-## Neo4j Graph Store
-
-The graph layer now supports two persistence modes:
-
-- JSON graph files under `data/graph/`
-- optional Neo4j sync for a real graph database
-
-When Neo4j is configured, the root pipeline now syncs:
-
-- `(:Document)` nodes
-- `(:Chunk)` nodes
-- `(:Entity)` nodes
-- `(:Document)-[:HAS_CHUNK]->(:Chunk)`
-- `(:Document)-[:HAS_ENTITY]->(:Entity)`
-- `(:Entity)-[:MENTIONED_IN]->(:Chunk)`
-- `(:Entity)-[:RELATIONSHIP {relation_type, evidence, confidence, ...}]->(:Entity)`
-
-Recommended `.env` example for Neo4j:
+Then use:
 
 ```bash
 NEO4J_URI=bolt://localhost:7687
@@ -257,197 +136,382 @@ NEO4J_DATABASE=neo4j
 NEO4J_AUTO_SYNC=true
 ```
 
-The repository already contains a local Neo4j `docker-compose.yml` for MVP use.
+## Runtime Configuration
 
-## Start the API
+Configuration is read from environment variables and from a local `.env` file through `configs/settings.py`. Copy `.env.example` first, then fill in only the providers you use.
+
+Never commit `.env`, API keys, database files, report uploads, local vector stores, Redis dumps, model weights, or Pinecone / Neo4j credentials.
+
+### Core App And Security
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `APP_ENV` | Production | Use `development`, `staging`, or `production`. Production and staging enforce a strong JWT secret. |
+| `JWT_SECRET` | Production | Secret used to sign auth tokens. Must be non-default and at least 32 characters in production or staging. |
+| `AUTH_DB_PATH` | Optional | SQLite auth database path. Useful on Fly when pointing to `/data/auth.db`. |
+| `CAUSALGRAPH_DB_PATH` | Optional | SQLite feedback/admin database path. Useful on Fly when pointing to `/data/causalgraph.db`. |
+| `DATA_DIR` | Optional | Runtime data root. Defaults to `data`; production can use `/data`. |
+| `CORS_ALLOW_ORIGINS` | Production | Comma-separated frontend origins, for example `https://casualgraphai.vercel.app`. |
+| `CORS_ALLOW_ORIGIN_REGEX` | Optional | Regex for temporary tunnel origins during demos. |
+| `ADMIN_EMAILS` | Optional | Comma-separated admin allowlist for `/admin`. |
+| `MOCK_MODE` | Optional | Set `false` to use real provider calls when keys are present. |
+
+### Document Ingestion
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `INGESTION_ENABLED` | `true` | Enables document ingestion endpoints. |
+| `CHUNK_SIZE` | `1500` | Target chunk size for report text. |
+| `CHUNK_OVERLAP` | `150` | Overlap between adjacent chunks. |
+| `EXTRACTION_CACHE_ENABLED` | `true` | Caches repeated extraction work. |
+| `EXTRACTION_CACHE_PATH` | `./data/extraction_cache.sqlite` | SQLite cache path for extraction results. |
+| `EXTRACTION_MAX_WORKERS` | `10` in example | Parallel extraction workers. Keep low for local QLoRA; raise for remote APIs if rate limits allow. |
+| `INGESTION_JOB_MAX_WORKERS` | `4` | Concurrent async ingestion jobs. |
+| `INGESTION_MAX_QUEUED_JOBS` | `16` | Maximum queued ingestion jobs. |
+| `INGESTION_AUDIT_THROTTLE_SECONDS` | `2.0` | Throttles ingestion audit updates. |
+| `DOCUMENT_DEDUP_ENABLED` | `true` | Prevents duplicated document registry entries when supported. |
+
+### Model And Extraction Backends
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | empty | Enables OpenAI-backed answer generation. |
+| `OPENAI_MODEL` | `gpt-4` | Model used by the normal RAG answer path unless overridden. |
+| `OPENAI_BASE_URL` | empty | Optional OpenAI-compatible base URL. |
+| `OPENAI_TEMPERATURE` | `0.1` | Default answer temperature. |
+| `OPENAI_MAX_TOKENS` | `700` | Max answer tokens for normal RAG. |
+| `OPENAI_TIMEOUT` | `60` | Provider timeout in seconds. |
+| `RAG_FLASH_MODEL` | `gpt-5.4-mini` | Fast agent model for CausalGraph-Flash. |
+| `ANTHROPIC_API_KEY` | empty | Enables CausalGraph-Deep. Without it, Deep falls back to Flash behavior. |
+| `ANTHROPIC_BASE_URL` | empty | Optional Anthropic-compatible base URL. |
+| `RAG_DEEP_MODEL` | `claude-opus-4-7` | Deep reasoning model. Override for cost or availability. |
+| `RAG_DEEP_MAX_TOKENS` | `2000` | Max tokens for deep answers. |
+| `RAG_DEEP_TEMPERATURE` | `0.2` | Deep answer temperature. |
+| `RAG_DEEP_TIMEOUT` | `90` | Deep provider timeout in seconds. |
+| `ESG_EXTRACTION_BACKEND` | `remote` | Extraction backend policy. Use remote APIs for deployment; local adapters for offline experiments. |
+| `DEEPSEEK_API_KEY` | empty | Enables DeepSeek-backed ESG extraction fallback. |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek OpenAI-compatible endpoint. |
+| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | General DeepSeek model setting. |
+| `DEEPSEEK_EXTRACTION_MODEL` | `deepseek-v4-flash` | Model used for extraction calls. |
+| `DEEPSEEK_EXTRACTION_MAX_TOKENS` | `8000` | Extraction output token cap. |
+| `ESG_BASE_MODEL_PATH` | `Qwen/Qwen2.5-7B-Instruct` | Local or Hugging Face base model path for QLoRA extraction. |
+| `ESG_ADAPTER_PATH` | auto-detected | Local QLoRA adapter directory. |
+| `HF_LOCAL_FILES_ONLY` | `true` in example | Prevents unexpected Hugging Face downloads. |
+| `ESG_MODEL_ALLOW_DOWNLOAD` | `false` | Explicit opt-in for model downloads. |
+
+### Embeddings And Vector Stores
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `EMBEDDING_BACKEND` | `local` | `local` or `deepinfra`. Use `deepinfra` for lightweight hosted deployments. |
+| `ESG_EMBEDDING_MODEL_PATH` | empty | Local embedding model path. If empty, the code looks for `models/BAAI_bge-m3`. |
+| `ESG_EMBEDDING_LOCAL_FILES_ONLY` | `false` | Restrict local embedding loading to cached files. |
+| `ESG_EMBEDDING_ALLOW_DOWNLOAD` | `false` | Explicit opt-in for embedding model downloads. |
+| `DEEPINFRA_API_KEY` | empty | Required when `EMBEDDING_BACKEND=deepinfra`. |
+| `DEEPINFRA_BASE_URL` | `https://api.deepinfra.com/v1/openai` | OpenAI-compatible DeepInfra base URL. |
+| `DEEPINFRA_EMBEDDING_MODEL` | `BAAI/bge-m3` | Hosted embedding model. Expected dimension is 1024. |
+| `VECTOR_STORE_PROVIDER` | `local` | `local` or `pinecone`. |
+| `PINECONE_API_KEY` | empty | Required for Pinecone. |
+| `PINECONE_INDEX_NAME` | empty | Pinecone index name. |
+| `PINECONE_INDEX_HOST` | empty | Optional dedicated Pinecone host. Use this when Pinecone provides one. |
+| `PINECONE_NAMESPACE` | `esg-demo` in example | Namespace for indexed report chunks. |
+| `PINECONE_METRIC` | `cosine` | Create Pinecone indexes with cosine metric for `bge-m3`. |
+| `PINECONE_UPSERT_BATCH_SIZE` | `50` | Vector upsert batch size. |
+| `PINECONE_QUERY_TOP_K_CAP` | `20` | Safety cap for Pinecone query size. |
+
+For `BAAI/bge-m3`, create a Pinecone dense index with:
+
+- Dimension: `1024`
+- Metric: `cosine`
+
+### Retrieval And Answer Behavior
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `RAG_ANSWER_MODE` | `auto` | Answer mode policy. |
+| `RAG_ALLOW_SPECULATION` | `false` | When false, the agent should refuse unsupported answers instead of inventing. |
+| `RAG_USE_GRAPH_CONTEXT` | `true` | Adds graph context when available. |
+| `RAG_GRAPH_CONTEXT_HOPS` | `2` | Graph expansion depth. |
+| `RAG_GRAPH_CONTEXT_LIMIT` | `10` | Max graph records included. |
+| `RAG_GRAPH_CONTEXT_MAX_TRIPLES` | `25` | Max graph triples in prompt context. |
+| `RAG_PREDICTION_ENABLED` | `true` | Enables prediction-style answers when the user explicitly asks for inference. |
+| `RAG_PREDICTION_MODEL` | `OPENAI_MODEL` | Model for prediction answers. |
+| `RAG_PREDICTION_MAX_TOKENS` | `1500` | Prediction token cap. |
+| `RAG_PREDICTION_TEMPERATURE` | `0.2` | Prediction temperature. |
+| `RAG_MULTI_QUERY_ENABLED` | `false` | Generates multiple retrieval queries. |
+| `RAG_MULTI_QUERY_N` | `3` | Number of generated retrieval queries. |
+| `RAG_HYBRID_ENABLED` | `false` | Enables vector + BM25 fusion. |
+| `RAG_HYBRID_BM25_WEIGHT` | `0.4` | BM25 weight for hybrid retrieval. |
+| `RAG_HYBRID_FUSION` | `rrf` | Fusion strategy. |
+| `RAG_RRF_K` | `60` | Reciprocal rank fusion constant. |
+| `RAG_RRF_VECTOR_WEIGHT` | `1.0` | Vector score weight. |
+| `RAG_RRF_BM25_WEIGHT` | `1.0` | BM25 score weight. |
+| `RAG_RRF_TERM_BOOST` | `0.01` | Term match boost. |
+| `RAG_RRF_DIVERSITY_PENALTY` | `0.0` | Reduces repeated chunks from dominating results. |
+| `RERANKER_ENABLED` | `false` | Enables reranking. |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | Reranker model name. |
+| `RERANKER_TOP_K_BEFORE` | `20` | Candidate count before reranking. |
+| `RERANKER_TOP_K_AFTER` | `5` | Candidate count after reranking. |
+| `HYDE_ENABLED` | `false` | Enables hypothetical document expansion. |
+| `HYDE_MODEL` | `gpt-5.4-mini` | Model used for HyDE text. |
+| `HYDE_MAX_TOKENS` | `200` | HyDE generation cap. |
+| `HYDE_MIN_CHARS` | `50` | Minimum query length before HyDE applies. |
+| `RAG_DECOMPOSE_ENABLED` | `false` | Decomposes complex questions into subquestions. |
+| `RAG_DECOMPOSE_MAX_SUBQ` | `3` | Max subquestions. |
+| `RAG_ROUTER_ENABLED` | `true` | Enables route selection between chat, retrieval, prediction, and refusal paths. |
+| `RAG_ROUTER_LLM_ENABLED` | `false` | Uses an LLM for routing when enabled. |
+| `RAG_CHITCHAT_ENABLED` | `true` | Allows lightweight non-RAG conversation where appropriate. |
+
+### Redis Short-Term Memory
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `REDIS_ENABLED` | `false` | Enables Redis-backed chat sessions and follow-up memory. |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string. |
+| `REDIS_PASSWORD` | empty | Required by `scripts/fly_start.sh` when starting embedded Redis on Fly. |
+| `REDIS_CHAT_SESSION_TTL_SECONDS` | `604800` | Session TTL. Minimum enforced value is one hour. |
+| `REDIS_CHAT_MAX_MESSAGES` | `20` | Max stored messages per session. |
+| `REDIS_CHAT_HISTORY_LIMIT` | `8` | Recent messages included for contextual follow-up rewriting. |
+
+For Fly deployments using the bundled Redis startup script, set:
 
 ```bash
-uvicorn app:app --host 0.0.0.0 --port 8000
+REDIS_ENABLED=true
+REDIS_PASSWORD=your_strong_redis_password
+REDIS_URL=redis://:your_strong_redis_password@127.0.0.1:6379/0
+DATA_DIR=/data
+AUTH_DB_PATH=/data/auth.db
+CAUSALGRAPH_DB_PATH=/data/causalgraph.db
 ```
 
-If you are using a local `.env`, load it into the shell first:
+### Neo4j Graph Store
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NEO4J_URI` | empty | Bolt or Aura URI, for example `bolt://localhost:7687` or `neo4j+s://...`. |
+| `NEO4J_USER` | `neo4j` | Neo4j username. |
+| `NEO4J_PASSWORD` | empty | Neo4j password. |
+| `NEO4J_DATABASE` | `ESG` in example | Database name. Match the actual Neo4j database. |
+| `NEO4J_AUTO_SYNC` | `true` | Automatically sync extracted graph data after ingestion. |
+
+When Neo4j is configured, CausalGraph writes:
+
+- `(:Document)` nodes
+- `(:Chunk)` nodes
+- `(:Entity)` nodes
+- `(:Document)-[:HAS_CHUNK]->(:Chunk)`
+- `(:Document)-[:HAS_ENTITY]->(:Entity)`
+- `(:Entity)-[:MENTIONED_IN]->(:Chunk)`
+- `(:Entity)-[:RELATIONSHIP]->(:Entity)` edges with evidence and confidence metadata
+
+### Metrics, Tracing, Notifications
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `TRACE_ENABLED` | `false` | Writes workflow traces as JSONL. |
+| `TRACE_PATH` | `./data/traces.jsonl` | Trace output path. |
+| `ESG_METRICS_EXTRACTION_ENABLED` | `false` | Enables structured ESG metric extraction during ingestion. |
+| `ESG_METRICS_DB_PATH` | `./data/esg_metrics.sqlite` | Metrics database path. |
+| `ESG_METRICS_TAXONOMY_PATH` | `./data/taxonomy/esg_metrics.yaml` | Metric taxonomy file. |
+| `ESG_METRICS_MIN_CONFIDENCE` | `0.5` | Minimum confidence for stored metric rows. |
+| `NOTIFICATIONS_ENABLED` | `false` | Enables notification hooks. |
+| `NOTIFICATIONS_DB_PATH` | `backend/notifications.db` | Notification state database. |
+| `NOTIFICATIONS_DEDUP_WINDOW_MINUTES` | `60` | Notification deduplication window. |
+| `NOTIFICATIONS_DAILY_EMAIL_CAP` | `8` | Daily email cap. |
+| `NOTIFICATIONS_SMTP_URL` | empty | SMTP URL. |
+| `NOTIFICATIONS_ADMIN_EMAILS` | empty | Notification recipients. |
+
+### Frontend Configuration
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `REACT_APP_ESG_API_BASE` | Production | Backend API base URL used by the React app. Example: `https://casualgraph.fly.dev`. |
+
+Local development can omit `REACT_APP_ESG_API_BASE` when the frontend is served from localhost because the app falls back to `http://127.0.0.1:8000` or the matching local host.
+
+## API Surface
+
+### Health
 
 ```bash
-set -a
-source .env
-set +a
-python3 -m uvicorn app:app --host 127.0.0.1 --port 8000
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/healthz
 ```
 
-Pinecone startup example:
+### Auth And Admin
 
-```bash
-set -a
-source .env
-set +a
-python3 -m uvicorn app:app --host 127.0.0.1 --port 8000
+```text
+GET    /auth/captcha
+POST   /auth/register
+POST   /auth/login
+GET    /auth/me
+GET    /admin/overview
+GET    /admin/uploads
+POST   /admin/invite-codes
+DELETE /admin/uploads/{job_id}
 ```
 
-## API Endpoints
+### Chat Sessions
 
-### Health Check
-
-```bash
-curl http://localhost:8000/health
+```text
+GET    /chat/sessions
+POST   /chat/sessions
+GET    /chat/sessions/{session_id}
+POST   /chat/sessions/{session_id}/messages
+DELETE /chat/sessions/{session_id}
 ```
 
-### ESG Extraction
-
-```bash
-curl -X POST http://localhost:8000/extract \
-  -H "Content-Type: application/json" \
-  -d '{"text":"NVIDIA achieved 100% renewable electricity in FY25."}'
-```
-
-### RAG Question Answering
-
-This requires an already-built vector index.
-
-```bash
-curl -X POST http://localhost:8000/rag/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question":"What did NVIDIA achieve in renewable electricity in FY25?","top_k":5}'
-```
-
-### Upload And Rebuild Active Index
-
-This endpoint ingests a manual text payload or uploaded file, rebuilds the active vector store, runs extraction, returns graph-ready JSON for the frontend, and auto-syncs into Neo4j when configured.
-
-```bash
-curl -X POST http://localhost:8000/documents/upload \
-  -F "title=My ESG Report" \
-  -F "domain=general" \
-  -F "content=NVIDIA reported a 14% reduction in scope 2 market-based emissions."
-```
-
-### PDF Pipeline
-
-```bash
-curl -X POST http://localhost:8000/pipeline/pdf \
-  -H "Content-Type: application/json" \
-  -d '{"pdf_path":"data/raw/report.pdf","name":"nvidia_2025"}'
-```
-
-## Run the Full PDF Pipeline
-
-```bash
-python scripts/run_pdf_pipeline.py --pdf data/raw/report.pdf --name nvidia_2025
-```
-
-If Neo4j is configured, this command also writes the resulting document graph into Neo4j.
-
-## Neo4j API Endpoints
-
-### Neo4j Status And Stats
-
-```bash
-curl http://localhost:8000/graph/neo4j/status
-```
-
-### Neo4j Entity Lookup
-
-```bash
-curl "http://localhost:8000/graph/neo4j/entity/NVIDIA?limit=20"
-```
-
-### Neo4j Subgraph
-
-```bash
-curl "http://localhost:8000/graph/neo4j/subgraph?entity=NVIDIA&hops=2&limit=50"
-```
-
-### Question-To-Subgraph Lookup
-
-```bash
-curl -X POST http://localhost:8000/graph/neo4j/question \
-  -H "Content-Type: application/json" \
-  -d '{"question":"What climate risks and emissions metrics are related to NVIDIA?","hops":2,"limit":10}'
-```
-
-This performs:
-
-1. `parse_pdf`
-2. `clean_text`
-3. `chunk_text`
-4. save `data/processed/nvidia_2025.txt`
-5. save `data/chunks/nvidia_2025_chunks.jsonl`
-6. build vector store at `data/vector_store/nvidia_2025`
-7. run QLoRA extraction on each chunk
-8. save `data/extractions/nvidia_2025_extractions.jsonl`
-9. build graph JSON
-10. save `data/graph/nvidia_2025_graph.json`
-
-## Batch ESG Extraction
-
-```bash
-python scripts/batch_extract.py \
-  --input data/chunks/nvidia_2025_chunks.jsonl \
-  --output data/extractions/nvidia_2025_extractions.jsonl
-```
-
-## Build Vector Index Separately
-
-```bash
-python scripts/build_vector_index.py \
-  --chunks data/chunks/nvidia_2025_chunks.jsonl \
-  --output data/vector_store/nvidia_2025
-```
-
-## Build Graph JSON Separately
-
-```bash
-python scripts/build_graph.py \
-  --input data/extractions/nvidia_2025_extractions.jsonl \
-  --output data/graph/nvidia_2025_graph.json
-```
-
-## How the Components Fit Together
-
-### Extraction
-
-- `ai_service/model_loader.py` loads the QLoRA model once
-- `ai_service/extractor.py` runs the extraction prompt
-- `ai_service/utils.py` normalizes imperfect model output into valid JSON
-
-### Document Processing
-
-- `document_processing/pdf_parser.py` reads PDF text
-- `document_processing/text_cleaner.py` removes noisy repeated boilerplate
-- `document_processing/chunker.py` builds overlapping chunks
+These endpoints use Redis when `REDIS_ENABLED=true`. Without Redis, the backend returns a disabled memory backend response rather than silently pretending memory exists.
 
 ### RAG
 
-- `rag/embeddings.py` prefers `BAAI/bge-m3`
-- when a local `models/BAAI_bge-m3` directory contains `onnx/model.onnx`, the embedding layer automatically uses the ONNX backend
-- if the embedding model is not cached locally, it falls back to a deterministic local hash embedding so the pipeline can still run offline
-- `rag/vector_store.py` supports both local storage and Pinecone
-- in local mode, it prefers FAISS persistence and falls back to a pickle-based in-memory index when FAISS is unavailable
-- in Pinecone mode, it reuses the current embedding pipeline and upserts chunk vectors plus metadata into your Pinecone index
-- `rag/retriever.py` returns top-k chunks
-- `rag/rag_pipeline.py` answers questions from retrieved evidence and falls back to an extractive answer when the QA model cannot be loaded
+```bash
+curl -X POST http://127.0.0.1:8000/rag/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What did the report say about renewable electricity?","top_k":5}'
+```
 
-### Knowledge Graph
+Streaming:
 
-- `graph/graph_builder.py` converts extraction JSONL into nodes and edges
-- `graph/graph_store.py` saves graph JSON
-- `graph/graph_utils.py` handles normalization and deduplication
+```text
+POST /rag/ask/stream
+```
 
-## Current Limitations
+### Documents
 
-- The QLoRA model is used for ESG extraction and also reused in the simple RAG answer path. That is acceptable for MVP use, but a dedicated QA model would be better.
-- The local offline fallback embeddings are intended for demos and development. For better retrieval quality, cache the sentence-transformer locally or point `ESG_EMBEDDING_MODEL_PATH` to a local embedding model directory.
-- The graph layer currently saves JSON, not Neo4j or a graph database.
-- PDF parsing is text-only and does not include OCR.
-- If GPU memory is insufficient, run extraction offline on Colab or another machine, then import the resulting JSONL files.
+```bash
+curl -X POST http://127.0.0.1:8000/documents/upload \
+  -F "title=Example ESG Report" \
+  -F "domain=general" \
+  -F "content=The company reported a reduction in market-based Scope 2 emissions."
+```
 
-## Existing Backend Note
+Other document endpoints:
 
-The repository still contains the existing `backend/` FastAPI MVP, and it now supports calling the root-level local extraction service as a fallback/upgrade path for chunk ingestion. That part has not been removed.
+```text
+GET    /documents
+POST   /documents/upload
+POST   /documents/upload-async
+GET    /documents/jobs/{job_id}
+GET    /documents/{document_id}
+DELETE /documents/{document_id}
+POST   /documents/ingest-text
+POST   /documents/rebuild-graph
+```
 
-## TODO
+### Extraction And Pipeline
 
-- Add a dedicated ESG QA prompt/model for RAG answers
-- Add graph-aware QA routing at the root-level API
-- Add graph visualization
-- Add Neo4j persistence as an optional store
-- Add asynchronous long-running pipeline jobs for large reports
+```text
+POST /extract
+POST /pipeline/pdf
+```
+
+Run the full PDF pipeline locally:
+
+```bash
+python scripts/run_pdf_pipeline.py --pdf data/raw/report.pdf --name example_report
+```
+
+### Graph And Causal APIs
+
+```text
+GET  /kg-view
+GET  /kg-api/filters
+GET  /kg-api/graph
+GET  /kg-api/stats
+GET  /graph/neo4j/status
+GET  /graph/neo4j/entity/{entity_name}
+GET  /graph/neo4j/subgraph
+POST /graph/neo4j/question
+GET  /graph/causal/backward
+GET  /graph/causal/forward
+GET  /graph/causal/path
+```
+
+## Deployment Guide
+
+### Frontend On Vercel
+
+Set the frontend project root to `frontend/`.
+
+Recommended Vercel settings:
+
+```text
+Build Command: npm run build
+Output Directory: build
+Install Command: npm install
+Environment: REACT_APP_ESG_API_BASE=https://your-backend.example.com
+```
+
+`frontend/vercel.json` rewrites all routes to `index.html` so React Router works on refresh.
+
+### Backend On Fly.io
+
+The GitHub deployment uses `Dockerfile`, `fly.toml`, and `scripts/fly_start.sh`.
+
+Important production secrets:
+
+```bash
+flyctl secrets set APP_ENV=production
+flyctl secrets set JWT_SECRET=your_32_plus_character_secret
+flyctl secrets set CORS_ALLOW_ORIGINS=https://your-frontend.example.com
+flyctl secrets set DATA_DIR=/data
+flyctl secrets set AUTH_DB_PATH=/data/auth.db
+flyctl secrets set CAUSALGRAPH_DB_PATH=/data/causalgraph.db
+flyctl secrets set OPENAI_API_KEY=...
+flyctl secrets set DEEPINFRA_API_KEY=...
+flyctl secrets set REDIS_ENABLED=true
+flyctl secrets set REDIS_PASSWORD=...
+```
+
+Deploy:
+
+```bash
+flyctl deploy
+```
+
+Check health:
+
+```bash
+curl https://your-backend.example.com/healthz
+```
+
+If Redis is embedded in the Fly machine, keep a persistent volume mounted at `/data` so Redis AOF data and SQLite files survive restarts.
+
+## Data And Security Notes
+
+- `.env`, `*.env`, SQLite databases, uploaded reports, vector stores, local model weights, Redis files, and Neo4j data are intentionally gitignored.
+- Public GitHub releases should include only source code, configuration examples, and documentation that is safe to share.
+- Do not put provider keys in README examples, screenshots, issue comments, commits, or Fly/Vercel build logs.
+- Use a strong `JWT_SECRET` before setting `APP_ENV=production` or `APP_ENV=staging`.
+- Use explicit `CORS_ALLOW_ORIGINS` in production.
+- Hosted vector stores and graph stores should be treated as production data systems, not as files to commit back to GitHub.
+
+## Troubleshooting
+
+### The frontend returns HTML instead of an API response
+
+`REACT_APP_ESG_API_BASE` probably points to the frontend instead of the backend. Set it to the FastAPI origin, for example `https://casualgraph.fly.dev`.
+
+### RAG says there is not enough information
+
+Check that documents were ingested, that a real embedding backend is active, and that the selected document/session context matches the company being asked about.
+
+### Pinecone queries return no results
+
+Confirm that the embedding dimension matches the index. `BAAI/bge-m3` and DeepInfra `BAAI/bge-m3` use 1024-dimensional vectors.
+
+### Redis memory is disabled
+
+Set `REDIS_ENABLED=true` and provide a reachable `REDIS_URL`. On Fly with embedded Redis, also set `REDIS_PASSWORD`.
+
+### Neo4j is configured but graph answers are empty
+
+Verify `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `NEO4J_DATABASE`, and `NEO4J_AUTO_SYNC=true`, then rebuild or re-ingest the document graph.
+
+## Open-Source Release Checklist
+
+- Add or confirm the intended `LICENSE` file before accepting external reuse or contributions.
+- Keep only safe public documentation in GitHub. This project intentionally keeps non-README Markdown files out of the public release unless explicitly needed.
+- Rotate any API key that was ever pasted into chat, logs, screenshots, shell history, or deployment output.
+- Keep `.env.example` current whenever runtime settings change.
