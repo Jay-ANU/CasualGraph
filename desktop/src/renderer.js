@@ -1,12 +1,10 @@
 const DEFAULT_API_BASE = "https://casualgraph.fly.dev";
-const API_BASE_KEY = "causalgraph.pet.apiBase";
 const TOKEN_KEY = "causalgraph.pet.token";
 const USER_KEY = "causalgraph.pet.user";
 const HISTORY_KEY = "causalgraph.pet.history";
 const WEB_APP_URL = "https://casualgraphai.vercel.app";
 
 const elements = {
-  apiBaseInput: document.getElementById("apiBaseInput"),
   signedOutView: document.getElementById("signedOutView"),
   signedInView: document.getElementById("signedInView"),
   emailInput: document.getElementById("emailInput"),
@@ -53,7 +51,7 @@ function saveJson(key, value) {
 }
 
 function apiBase() {
-  return (elements.apiBaseInput.value || DEFAULT_API_BASE).trim().replace(/\/+$/, "");
+  return DEFAULT_API_BASE;
 }
 
 function setBusy(nextBusy, label) {
@@ -325,6 +323,7 @@ async function summarizeScreenshot() {
     }
   });
   addMessage("assistant", data.summary || "No screenshot summary returned.");
+  elements.screenshotPanel.classList.add("hidden");
   setStatus("Ready");
 }
 
@@ -348,9 +347,6 @@ function wait(milliseconds) {
 }
 
 function bindEvents() {
-  elements.apiBaseInput.addEventListener("change", () => {
-    localStorage.setItem(API_BASE_KEY, apiBase());
-  });
   elements.loginButton.addEventListener("click", handleLogin);
   elements.logoutButton.addEventListener("click", handleLogout);
   elements.passwordInput.addEventListener("keydown", (event) => {
@@ -402,7 +398,6 @@ function bindEvents() {
 }
 
 function init() {
-  elements.apiBaseInput.value = localStorage.getItem(API_BASE_KEY) || DEFAULT_API_BASE;
   renderAuth();
   renderMessages();
   bindEvents();

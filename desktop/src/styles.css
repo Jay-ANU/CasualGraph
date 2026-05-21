@@ -45,12 +45,12 @@ button {
 }
 
 .shell {
-  display: grid;
-  grid-template-rows: auto auto auto auto auto auto 1fr;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   height: calc(100vh - 16px);
   margin: 8px;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid rgba(216, 221, 231, 0.92);
   border-radius: 22px;
   background: var(--paper);
@@ -62,7 +62,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 42px;
+  min-height: 34px;
   -webkit-app-region: drag;
 }
 
@@ -75,9 +75,9 @@ button {
 .mark {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 12px;
   color: #fff;
   background: #111827;
   font-size: 13px;
@@ -98,7 +98,7 @@ p {
 }
 
 h1 {
-  font-size: 17px;
+  font-size: 15px;
   line-height: 1.2;
 }
 
@@ -111,8 +111,8 @@ h1 {
 .icon-button {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--muted);
@@ -121,16 +121,6 @@ h1 {
   line-height: 1;
 }
 
-.api-panel {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.api-panel input,
 .field-row input,
 .composer input,
 .screenshot-panel textarea {
@@ -143,27 +133,21 @@ h1 {
   outline: 0;
 }
 
-.api-panel input {
-  height: 30px;
-  padding: 0 9px;
-  font-size: 12px;
-}
-
 .auth-panel {
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--soft);
-  padding: 10px;
+  padding: 4px 6px;
 }
 
 .field-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .field-row input {
-  height: 34px;
+  height: 30px;
   padding: 0 10px;
   font-size: 13px;
 }
@@ -173,9 +157,16 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 32px;
+  min-height: 24px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
+}
+
+.signed-in span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .drop-zone {
@@ -184,13 +175,13 @@ h1 {
   grid-template-areas:
     "face title"
     "face text";
-  gap: 4px 12px;
+  gap: 2px 8px;
   align-items: center;
-  min-height: 92px;
+  min-height: 54px;
   border: 1px dashed #9fb7c5;
-  border-radius: 18px;
-  padding: 12px;
-  background: linear-gradient(135deg, #eefaf7, #f6f8fb);
+  border-radius: 12px;
+  padding: 8px;
+  background: #f6fbfa;
   transition:
     border-color 140ms ease,
     transform 140ms ease,
@@ -205,32 +196,32 @@ h1 {
 
 .drop-zone strong {
   grid-area: title;
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .drop-zone p {
   grid-area: text;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 .pet-face {
   grid-area: face;
   position: relative;
-  width: 58px;
-  height: 58px;
-  border-radius: 21px;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
   background: #111827;
 }
 
 .pet-face::before {
   content: "";
   position: absolute;
-  left: 15px;
-  right: 15px;
-  bottom: 15px;
-  height: 8px;
+  left: 9px;
+  right: 9px;
+  bottom: 9px;
+  height: 5px;
   border: 2px solid #fff;
   border-top: 0;
   border-radius: 0 0 999px 999px;
@@ -238,25 +229,25 @@ h1 {
 
 .pet-face span {
   position: absolute;
-  top: 18px;
-  width: 7px;
-  height: 7px;
+  top: 11px;
+  width: 5px;
+  height: 5px;
   border-radius: 999px;
   background: #fff;
 }
 
 .pet-face span:first-child {
-  left: 17px;
+  left: 10px;
 }
 
 .pet-face span:last-child {
-  right: 17px;
+  right: 10px;
 }
 
 .status-panel {
   display: grid;
-  gap: 7px;
-  min-height: 34px;
+  gap: 4px;
+  min-height: 18px;
 }
 
 .status-line {
@@ -264,7 +255,7 @@ h1 {
   align-items: center;
   gap: 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .status-dot {
@@ -283,7 +274,7 @@ h1 {
 }
 
 .progress-track {
-  height: 6px;
+  height: 4px;
   overflow: hidden;
   border-radius: 999px;
   background: #e5e7eb;
@@ -301,14 +292,14 @@ h1 {
 .tools {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px;
 }
 
 .primary-button,
 .secondary-button,
 .text-button {
-  min-height: 34px;
-  border-radius: 10px;
+  min-height: 30px;
+  border-radius: 9px;
   font-weight: 700;
 }
 
@@ -328,18 +319,24 @@ h1 {
 }
 
 .text-button {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(8, 114, 98, 0.18);
+  border-radius: 999px;
   color: var(--accent-dark);
-  background: transparent;
+  background: #fff;
 }
 
 .screenshot-panel {
   display: grid;
-  gap: 8px;
+  grid-template-columns: 64px 1fr auto;
+  gap: 6px;
+  align-items: stretch;
 }
 
 .screenshot-panel img {
   width: 100%;
-  max-height: 104px;
+  height: 58px;
   object-fit: cover;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -348,16 +345,26 @@ h1 {
 
 .screenshot-panel textarea {
   resize: none;
-  min-height: 54px;
-  padding: 9px 10px;
-  font-size: 13px;
-  line-height: 1.35;
+  height: 58px;
+  min-height: 58px;
+  padding: 7px 8px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.screenshot-panel button {
+  width: 82px;
+  min-height: 58px;
+  padding: 0 8px;
+  font-size: 12px;
 }
 
 .chat-panel {
   display: grid;
   grid-template-rows: 1fr auto;
+  flex: 1 1 auto;
   min-height: 0;
+  min-height: 180px;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: #fff;
@@ -369,7 +376,7 @@ h1 {
   flex-direction: column;
   gap: 8px;
   min-height: 0;
-  padding: 10px;
+  padding: 8px;
   overflow-y: auto;
 }
 
@@ -405,13 +412,13 @@ h1 {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
-  padding: 8px;
+  padding: 6px;
   border-top: 1px solid var(--line);
 }
 
 .composer input {
-  height: 36px;
-  padding: 0 10px;
+  height: 34px;
+  padding: 0 9px;
   font-size: 13px;
 }
 
@@ -424,11 +431,12 @@ h1 {
 }
 
 @media (max-height: 520px) {
-  .shell {
-    grid-template-rows: auto auto auto auto auto 1fr;
+  .screenshot-panel {
+    grid-template-columns: 52px 1fr auto;
   }
 
-  .screenshot-panel {
+  .drop-zone p,
+  .eyebrow {
     display: none;
   }
 }
