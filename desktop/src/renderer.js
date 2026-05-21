@@ -2,6 +2,7 @@ const DEFAULT_API_BASE = "https://casualgraph.fly.dev";
 const TOKEN_KEY = "causalgraph.pet.token";
 const USER_KEY = "causalgraph.pet.user";
 const HISTORY_KEY = "causalgraph.pet.history";
+const TIER_KEY = "causalgraph.pet.tier";
 const WEB_APP_URL = "https://casualgraphai.vercel.app";
 
 const elements = {
@@ -17,6 +18,8 @@ const elements = {
   statusText: document.getElementById("statusText"),
   progressTrack: document.getElementById("progressTrack"),
   progressBar: document.getElementById("progressBar"),
+  tierFlashButton: document.getElementById("tierFlashButton"),
+  tierDeepButton: document.getElementById("tierDeepButton"),
   captureButton: document.getElementById("captureButton"),
   openWebButton: document.getElementById("openWebButton"),
   screenshotPanel: document.getElementById("screenshotPanel"),
@@ -35,6 +38,7 @@ let token = localStorage.getItem(TOKEN_KEY) || "";
 let currentUser = readJson(USER_KEY, null);
 let messages = readJson(HISTORY_KEY, []);
 let currentScreenshot = null;
+let tier = normalizeTier(localStorage.getItem(TIER_KEY));
 let busy = false;
 
 function readJson(key, fallback) {
@@ -52,6 +56,23 @@ function saveJson(key, value) {
 
 function apiBase() {
   return DEFAULT_API_BASE;
+}
+
+function normalizeTier(value) {
+  return String(value || "").toLowerCase() === "deep" ? "deep" : "flash";
+}
+
+function setTier(nextTier) {
+  tier = normalizeTier(nextTier);
+  localStorage.setItem(TIER_KEY, tier);
+  renderTier();
+}
+
+function renderTier() {
+  elements.tierFlashButton.classList.toggle("active", tier === "flash");
+  elements.tierDeepButton.classList.toggle("active", tier === "deep");
+  elements.tierFlashButton.setAttribute("aria-pressed", String(tier === "flash"));
+  elements.tierDeepButton.setAttribute("aria-pressed", String(tier === "deep"));
 }
 
 function setBusy(nextBusy, label) {
@@ -279,7 +300,7 @@ async function sendChat(question) {
       question: trimmed,
       top_k: 5,
       history,
-      reasoning_mode: "flash"
+      reasoning_mode: tier
     }
   });
   addMessage("assistant", data.answer || "No answer returned.");
@@ -314,12 +335,13 @@ async function summarizeScreenshot() {
   }
   const prompt = elements.screenshotPrompt.value.trim() || "Summarize this screen.";
   addMessage("user", "Summarize my current screen.");
-  setBusy(true, "Summarizing screenshot");
+  setBusy(true, `Summarizing with ${tier === "deep" ? "Deep" : "Flash"}`);
   const data = await apiRequest("/desktop/screenshot/summarize", {
     method: "POST",
     json: {
       image_data_url: currentScreenshot,
-      prompt
+      prompt,
+      reasoning_mode: tier
     }
   });
   addMessage("assistant", data.summary || "No screenshot summary returned.");
@@ -347,6 +369,8 @@ function wait(milliseconds) {
 }
 
 function bindEvents() {
+  elements.tierFlashButton.addEventListener("click", () => setTier("flash"));
+  elements.tierDeepButton.addEventListener("click", () => setTier("deep"));
   elements.loginButton.addEventListener("click", handleLogin);
   elements.logoutButton.addEventListener("click", handleLogout);
   elements.passwordInput.addEventListener("keydown", (event) => {
@@ -398,6 +422,7 @@ function bindEvents() {
 }
 
 function init() {
+  renderTier();
   renderAuth();
   renderMessages();
   bindEvents();

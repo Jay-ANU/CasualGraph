@@ -193,11 +193,6 @@ _RAG_FLASH_POINT_COST = max(1, int(os.getenv("RAG_FLASH_POINT_COST", "1")))
 _RAG_DEEP_POINT_COST = max(1, int(os.getenv("RAG_DEEP_POINT_COST", "5")))
 _RAG_MIN_SECONDS_BETWEEN_REQUESTS = max(0, int(os.getenv("RAG_MIN_SECONDS_BETWEEN_REQUESTS", "20")))
 _RAG_ANONYMOUS_ENABLED = _env_flag("RAG_ANONYMOUS_ENABLED", "false")
-_DESKTOP_SCREENSHOT_SUMMARY_MODEL = os.getenv(
-    "DESKTOP_SCREENSHOT_SUMMARY_MODEL",
-    os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-).strip() or "gpt-4o-mini"
-_DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS = max(128, int(os.getenv("DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS", "700")))
 _DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES = max(256_000, int(os.getenv("DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES", "6000000")))
 
 
@@ -811,6 +806,12 @@ from configs.settings import (
     GRAPH_DIR,
     INGESTION_ENABLED,
     NEO4J_AUTO_SYNC,
+    OPENAI_MAX_TOKENS,
+    OPENAI_TEMPERATURE,
+    RAG_DEEP_MAX_TOKENS,
+    RAG_DEEP_MODEL,
+    RAG_DEEP_TEMPERATURE,
+    RAG_FLASH_MODEL,
     VECTOR_DIR,
     VECTOR_STORE_PROVIDER,
     neo4j_configured,
@@ -838,6 +839,7 @@ from pipeline_runtime import (
     summarize_registered_document,
 )
 from rag.bm25_index import warm_bm25_index
+from rag.anthropic_client import get_anthropic_client
 from rag.embeddings import embedding_backend_is_real, get_embedding_backend, get_embedding_model
 from rag.openai_client import get_openai_client
 from rag.openai_compat import chat_token_kwargs
@@ -1227,6 +1229,7 @@ class DesktopScreenshotSummaryRequest(BaseModel):
         default="Summarize the visible information and point out anything that needs attention.",
         max_length=1200,
     )
+    reasoning_mode: Optional[str] = "flash"
 
 
 def _validate_desktop_image_data_url(value: str) -> str:
@@ -1255,6 +1258,23 @@ def _validate_desktop_image_data_url(value: str) -> str:
     return f"data:{normalized_mime};base64,{base64.b64encode(raw).decode('ascii')}"
 
 
+def _desktop_reasoning_mode(value: Optional[str]) -> str:
+    return "deep" if str(value or "").strip().lower() == "deep" else "flash"
+
+
+def _split_desktop_image_data_url(value: str) -> Tuple[str, str]:
+    header, encoded = str(value).split(",", 1)
+    media_type = header.removeprefix("data:").split(";", 1)[0]
+    return media_type, encoded
+
+
+_DESKTOP_SCREENSHOT_SYSTEM_PROMPT = (
+    "You summarize user-initiated desktop screenshots for a research assistant. "
+    "Focus on visible facts, UI state, errors, documents, and actionable next steps. "
+    "Do not invent hidden context."
+)
+
+
 def _extract_chat_completion_text(response: Any) -> str:
     choice = response.choices[0]
     content = getattr(getattr(choice, "message", None), "content", "")
@@ -1265,6 +1285,69 @@ def _extract_chat_completion_text(response: Any) -> str:
                 parts.append(str(item.get("text") or ""))
         return "\n".join(parts).strip()
     return str(content or "").strip()
+
+
+def _extract_anthropic_message_text(response: Any) -> str:
+    parts: List[str] = []
+    for block in getattr(response, "content", []) or []:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(str(text))
+    return "".join(parts).strip()
+
+
+def _summarize_desktop_screenshot_flash(image_data_url: str, prompt: str) -> Optional[str]:
+    client = get_openai_client()
+    if client is None:
+        return None
+    response = client.chat.completions.create(
+        model=RAG_FLASH_MODEL,
+        messages=[
+            {"role": "system", "content": _DESKTOP_SCREENSHOT_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}},
+                ],
+            },
+        ],
+        temperature=OPENAI_TEMPERATURE,
+        **chat_token_kwargs(RAG_FLASH_MODEL, OPENAI_MAX_TOKENS),
+    )
+    return _extract_chat_completion_text(response)
+
+
+def _summarize_desktop_screenshot_deep(image_data_url: str, prompt: str) -> Optional[str]:
+    client = get_anthropic_client()
+    if client is None:
+        return None
+    media_type, image_data = _split_desktop_image_data_url(image_data_url)
+    kwargs: Dict[str, Any] = {
+        "model": RAG_DEEP_MODEL,
+        "max_tokens": RAG_DEEP_MAX_TOKENS,
+        "system": _DESKTOP_SCREENSHOT_SYSTEM_PROMPT,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": image_data,
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    if not RAG_DEEP_MODEL.startswith("claude-opus-4"):
+        kwargs["temperature"] = RAG_DEEP_TEMPERATURE
+    response = client.messages.create(**kwargs)
+    return _extract_anthropic_message_text(response)
 
 
 def _normalize_entity_token(value: str) -> str:
@@ -2424,47 +2507,51 @@ async def desktop_screenshot_summarize(
 ):
     image_data_url = _validate_desktop_image_data_url(request.image_data_url)
     prompt = str(request.prompt or "").strip() or "Summarize this screen."
-    client = get_openai_client()
-    if client is None:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": "openai_unavailable",
-                "message": "Screenshot summary requires OPENAI_API_KEY to be configured.",
-            },
-        )
+    mode = _desktop_reasoning_mode(request.reasoning_mode)
 
     try:
-        quota = await _enforce_rag_rate_limit(db, current_user, "deep")
-        response = client.chat.completions.create(
-            model=_DESKTOP_SCREENSHOT_SUMMARY_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You summarize user-initiated desktop screenshots for a research assistant. "
-                        "Focus on visible facts, UI state, errors, documents, and actionable next steps. "
-                        "Do not invent hidden context."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}},
-                    ],
-                },
-            ],
-            temperature=0.2,
-            **chat_token_kwargs(_DESKTOP_SCREENSHOT_SUMMARY_MODEL, _DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS),
-        )
-        summary = _extract_chat_completion_text(response)
+        quota = await _enforce_rag_rate_limit(db, current_user, mode)
+        summary: Optional[str] = None
+        backend = "openai_flash"
+        model = RAG_FLASH_MODEL
+        fallback_to_flash = False
+
+        if mode == "deep":
+            try:
+                summary = _summarize_desktop_screenshot_deep(image_data_url, prompt)
+            except Exception as exc:
+                print(f"[desktop] Deep screenshot summary failed: {type(exc).__name__}: {exc}")
+                summary = None
+            if summary:
+                backend = "claude_deep"
+                model = RAG_DEEP_MODEL
+            else:
+                fallback_to_flash = True
+
+        if not summary:
+            try:
+                summary = _summarize_desktop_screenshot_flash(image_data_url, prompt)
+            except Exception as exc:
+                print(f"[desktop] Flash screenshot summary failed: {type(exc).__name__}: {exc}")
+                summary = None
+
         if not summary:
             return JSONResponse(
-                status_code=502,
-                content={"error": "empty_screenshot_summary", "message": "The model returned an empty summary."},
+                status_code=503,
+                content={
+                    "error": "screenshot_summary_unavailable",
+                    "message": "Screenshot summary requires the selected Flash/Deep model backend to be configured.",
+                    "reasoning_mode": mode,
+                },
             )
-        payload = {"summary": summary, "model": _DESKTOP_SCREENSHOT_SUMMARY_MODEL}
+        payload = {
+            "summary": summary,
+            "model": model,
+            "backend": backend,
+            "reasoning_mode": mode,
+        }
+        if fallback_to_flash:
+            payload["fallback_to_flash"] = True
         if quota and not quota.get("bypassed"):
             payload["quota"] = quota
         return JSONResponse(content=payload)
