@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, CheckCircle2, Clock3, Database, Edit3, RefreshCw, Save, Shield, Ticket, Trash2, UploadCloud, X, XCircle } from 'lucide-react';
+import { AlertTriangle, BarChart3, CheckCircle2, Clock3, Database, Edit3, RefreshCw, Save, Shield, Ticket, Trash2, UploadCloud, UserCheck, UserPlus, X, XCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 interface UploadAudit {
@@ -47,6 +47,13 @@ interface AdminOverview {
   };
   daily: Array<{ date: string; uploads: number }>;
   recent_uploads: UploadAudit[];
+}
+
+interface RagUnlimitedUser {
+  email: string;
+  note?: string;
+  created_by_user_id?: string;
+  created_at: string;
 }
 
 const apiBase = () => {
@@ -106,6 +113,7 @@ const Admin: React.FC = () => {
   const { token, user } = useAuth();
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [uploads, setUploads] = useState<UploadAudit[]>([]);
+  const [ragUnlimitedUsers, setRagUnlimitedUsers] = useState<RagUnlimitedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
@@ -114,6 +122,9 @@ const Admin: React.FC = () => {
   const [inviteCode, setInviteCode] = useState('');
   const [inviteExpiresAt, setInviteExpiresAt] = useState('');
   const [creatingInvite, setCreatingInvite] = useState(false);
+  const [unlimitedEmail, setUnlimitedEmail] = useState('');
+  const [unlimitedNote, setUnlimitedNote] = useState('');
+  const [savingUnlimitedUser, setSavingUnlimitedUser] = useState(false);
   const base = useMemo(apiBase, []);
 
   const loadAdminData = useCallback(async () => {
@@ -121,16 +132,20 @@ const Admin: React.FC = () => {
     setError('');
     try {
       const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-      const [overviewRes, uploadsRes] = await Promise.all([
+      const [overviewRes, uploadsRes, unlimitedUsersRes] = await Promise.all([
         fetch(`${base}/admin/overview?days=14`, { headers }),
         fetch(`${base}/admin/uploads?limit=100`, { headers }),
+        fetch(`${base}/admin/rag-unlimited-users`, { headers }),
       ]);
       const overviewPayload = await overviewRes.json();
       const uploadsPayload = await uploadsRes.json();
+      const unlimitedUsersPayload = await unlimitedUsersRes.json();
       if (!overviewRes.ok) throw new Error(overviewPayload.detail || overviewPayload.message || 'Unable to load admin overview');
       if (!uploadsRes.ok) throw new Error(uploadsPayload.detail || uploadsPayload.message || 'Unable to load upload logs');
+      if (!unlimitedUsersRes.ok) throw new Error(unlimitedUsersPayload.detail || unlimitedUsersPayload.message || 'Unable to load exclusive users');
       setOverview(overviewPayload);
       setUploads(Array.isArray(uploadsPayload.uploads) ? uploadsPayload.uploads : []);
+      setRagUnlimitedUsers(Array.isArray(unlimitedUsersPayload.users) ? unlimitedUsersPayload.users : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load admin data');
     } finally {
@@ -209,6 +224,52 @@ const Admin: React.FC = () => {
       await loadAdminData();
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to delete upload');
+    }
+  };
+
+  const addUnlimitedUser = async () => {
+    setSavingUnlimitedUser(true);
+    setActionMessage('');
+    try {
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      };
+      const response = await fetch(`${base}/admin/rag-unlimited-users`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ email: unlimitedEmail, note: unlimitedNote }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to add exclusive user');
+      setUnlimitedEmail('');
+      setUnlimitedNote('');
+      setActionMessage(`${payload?.user?.email || 'User'} now bypasses RAG usage limits.`);
+      await loadAdminData();
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Unable to add exclusive user');
+    } finally {
+      setSavingUnlimitedUser(false);
+    }
+  };
+
+  const deleteUnlimitedUser = async (email: string) => {
+    if (!window.confirm(`Remove unlimited RAG access for ${email}?`)) {
+      return;
+    }
+    setActionMessage('');
+    try {
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await fetch(`${base}/admin/rag-unlimited-users/${encodeURIComponent(email)}`, {
+        method: 'DELETE',
+        headers,
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to remove exclusive user');
+      setActionMessage(`${email} now uses the standard RAG limits.`);
+      await loadAdminData();
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Unable to remove exclusive user');
     }
   };
 
@@ -350,6 +411,80 @@ const Admin: React.FC = () => {
               <p className="mt-1 text-xs text-ink-steel">Expires at: {formatDateTime(inviteExpiresAt)}</p>
             </div>
           )}
+        </section>
+
+        <section className="mt-4 rounded-2xl border border-hairline bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-ink">Exclusive AI users</h2>
+              <p className="text-sm text-ink-steel">Accounts listed here bypass Flash and Deep usage limits without receiving admin permissions.</p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto] lg:min-w-[620px]">
+              <input
+                value={unlimitedEmail}
+                onChange={event => setUnlimitedEmail(event.target.value)}
+                className="rounded-full border border-hairline bg-canvas px-4 py-2 text-sm text-ink outline-none transition focus:border-ink"
+                placeholder="user@example.com"
+                type="email"
+              />
+              <input
+                value={unlimitedNote}
+                onChange={event => setUnlimitedNote(event.target.value)}
+                className="rounded-full border border-hairline bg-canvas px-4 py-2 text-sm text-ink outline-none transition focus:border-ink"
+                placeholder="note"
+              />
+              <button
+                onClick={addUnlimitedUser}
+                disabled={savingUnlimitedUser || !unlimitedEmail.trim()}
+                className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink-charcoal disabled:opacity-50"
+              >
+                <UserPlus className="h-4 w-4" />
+                {savingUnlimitedUser ? 'Adding...' : 'Add'}
+              </button>
+            </div>
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full divide-y divide-hairline-soft text-left text-sm">
+              <thead className="bg-surface text-xs uppercase tracking-[0.12em] text-ink-steel">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Email</th>
+                  <th className="px-4 py-3 font-semibold">Note</th>
+                  <th className="px-4 py-3 font-semibold">Added at</th>
+                  <th className="px-4 py-3 font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-hairline-soft">
+                {ragUnlimitedUsers.map(item => (
+                  <tr key={item.email} className="hover:bg-surface">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 font-semibold text-ink">
+                        <UserCheck className="h-4 w-4 text-emerald-600" />
+                        {item.email}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-ink-charcoal">{item.note || '-'}</td>
+                    <td className="px-4 py-3 text-ink-charcoal">{formatDateTime(item.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => deleteUnlimitedUser(item.email)}
+                        className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-canvas px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:border-red-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!loading && ragUnlimitedUsers.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-ink-steel">
+                      No exclusive AI users yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section className="mt-4 rounded-2xl border border-hairline bg-white shadow-sm">

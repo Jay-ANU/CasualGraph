@@ -24,6 +24,7 @@ from email.utils import formataddr
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional, Tuple
+from urllib.parse import unquote
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from dotenv import load_dotenv
@@ -248,11 +249,20 @@ async def _init_auth_db():
                 PRIMARY KEY (user_id, usage_date)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS rag_unlimited_users (
+                email TEXT PRIMARY KEY,
+                note TEXT NOT NULL DEFAULT '',
+                created_by_user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
         await db.execute("CREATE INDEX IF NOT EXISTS admin_invite_codes_expires_at_idx ON admin_invite_codes(expires_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS admin_invite_codes_used_at_idx ON admin_invite_codes(used_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS email_verification_codes_email_purpose_idx ON email_verification_codes(email, purpose, created_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS email_verification_codes_expires_at_idx ON email_verification_codes(expires_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS rag_rate_usage_date_idx ON rag_rate_usage(usage_date)")
+        await db.execute("CREATE INDEX IF NOT EXISTS rag_unlimited_users_created_at_idx ON rag_unlimited_users(created_at)")
         await _ensure_column(db, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
         await db.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR lower(role) NOT IN ('admin', 'user')")
         admin_emails = sorted(_admin_email_set())
@@ -359,6 +369,14 @@ def _rag_limit_error(status_code: int, message: str, **extra: Any) -> HTTPExcept
     return HTTPException(status_code=status_code, detail=detail)
 
 
+async def _is_rag_unlimited_user(db: aiosqlite.Connection, current_user: Optional[Dict[str, Any]]) -> bool:
+    email = _normalize_email(str((current_user or {}).get("email") or ""))
+    if not email:
+        return False
+    cursor = await db.execute("SELECT 1 FROM rag_unlimited_users WHERE email = ?", (email,))
+    return await cursor.fetchone() is not None
+
+
 async def _enforce_rag_rate_limit(
     db: aiosqlite.Connection,
     current_user: Optional[Dict[str, Any]],
@@ -368,6 +386,8 @@ async def _enforce_rag_rate_limit(
         return {"bypassed": True, "reason": "disabled"}
     if _is_admin_user(current_user):
         return {"bypassed": True, "reason": "admin"}
+    if await _is_rag_unlimited_user(db, current_user):
+        return {"bypassed": True, "reason": "unlimited_user"}
     if not current_user:
         if not _RAG_ANONYMOUS_ENABLED:
             raise _rag_limit_error(401, "Please sign in to use the AI agent.")
@@ -741,6 +761,11 @@ class AdminInviteCreateRequest(BaseModel):
     ttl_minutes: int = 5
 
 
+class RagUnlimitedUserRequest(BaseModel):
+    email: str
+    note: Optional[str] = ""
+
+
 async def _consume_admin_invite(code: str, user_id: str, db: aiosqlite.Connection) -> None:
     invite_code = str(code or "").strip()
     if not invite_code:
@@ -997,6 +1022,77 @@ async def create_admin_invite_code(
         "ttl_minutes": ttl_minutes,
         "single_use": True,
     }
+
+
+def _rag_unlimited_user_payload(row: Tuple[Any, ...]) -> Dict[str, Any]:
+    return {
+        "email": row[0],
+        "note": row[1],
+        "created_by_user_id": row[2],
+        "created_at": row[3],
+    }
+
+
+@app.get("/admin/rag-unlimited-users")
+async def list_rag_unlimited_users(
+    current_user: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    cursor = await db.execute(
+        """
+        SELECT email, note, created_by_user_id, created_at
+        FROM rag_unlimited_users
+        ORDER BY lower(email)
+        """
+    )
+    rows = await cursor.fetchall()
+    return {"users": [_rag_unlimited_user_payload(row) for row in rows]}
+
+
+@app.post("/admin/rag-unlimited-users")
+async def add_rag_unlimited_user(
+    request: RagUnlimitedUserRequest,
+    current_user: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    email = _normalize_email(request.email)
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email address is required")
+    note = str(request.note or "").strip()[:240]
+    await db.execute(
+        """
+        INSERT INTO rag_unlimited_users (email, note, created_by_user_id, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(email) DO UPDATE SET
+            note = excluded.note,
+            created_by_user_id = excluded.created_by_user_id,
+            created_at = excluded.created_at
+        """,
+        (email, note, str(current_user.get("id") or ""), _utc_now_iso()),
+    )
+    await db.commit()
+    cursor = await db.execute(
+        """
+        SELECT email, note, created_by_user_id, created_at
+        FROM rag_unlimited_users
+        WHERE email = ?
+        """,
+        (email,),
+    )
+    row = await cursor.fetchone()
+    return {"user": _rag_unlimited_user_payload(row)}
+
+
+@app.delete("/admin/rag-unlimited-users/{email}")
+async def delete_rag_unlimited_user(
+    email: str,
+    current_user: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    normalized_email = _normalize_email(unquote(email))
+    cursor = await db.execute("DELETE FROM rag_unlimited_users WHERE email = ?", (normalized_email,))
+    await db.commit()
+    return {"deleted": cursor.rowcount > 0, "email": normalized_email}
 
 
 class AdminUploadUpdateRequest(BaseModel):
