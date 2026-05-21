@@ -1,0 +1,53 @@
+{
+  "name": "causalgraph-desktop",
+  "version": "0.1.0",
+  "description": "CausalGraph desktop pet companion",
+  "private": true,
+  "main": "src/main.js",
+  "author": "CausalGraph AI",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac zip",
+    "dist:mac:dmg": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg"
+  },
+  "build": {
+    "appId": "ai.causalgraph.pet",
+    "productName": "CausalGraph Pet",
+    "artifactName": "CausalGraph-Pet-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "zip",
+        "dir"
+      ]
+    },
+    "dmg": {
+      "backgroundColor": "#f7f8fa",
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  }
+}

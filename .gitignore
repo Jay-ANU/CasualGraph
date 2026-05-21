@@ -65,3 +65,9 @@ data/documents/*
 # Keep only the root README unless explicitly requested.
 *.md
 !/README.md
+
+# Electron desktop build outputs
+desktop/node_modules/
+desktop/dist/
+desktop/out/
+desktop/.env

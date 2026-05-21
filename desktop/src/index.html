@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CausalGraph Pet</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="titlebar">
+        <div class="brand">
+          <div class="mark">CG</div>
+          <div>
+            <p class="eyebrow">CausalGraph</p>
+            <h1>Desktop Pet</h1>
+          </div>
+        </div>
+        <div class="window-actions">
+          <button id="minimizeButton" class="icon-button" type="button" aria-label="Minimize">-</button>
+          <button id="closeButton" class="icon-button" type="button" aria-label="Close">x</button>
+        </div>
+      </header>
+
+      <section class="api-panel">
+        <label for="apiBaseInput">API</label>
+        <input id="apiBaseInput" autocomplete="off" spellcheck="false" />
+      </section>
+
+      <section id="authPanel" class="auth-panel">
+        <div id="signedOutView">
+          <div class="field-row">
+            <input id="emailInput" type="email" placeholder="Email" autocomplete="email" />
+            <input id="passwordInput" type="password" placeholder="Password" autocomplete="current-password" />
+          </div>
+          <button id="loginButton" class="primary-button" type="button">Sign in</button>
+        </div>
+        <div id="signedInView" class="signed-in hidden">
+          <span id="userLabel"></span>
+          <button id="logoutButton" class="text-button" type="button">Sign out</button>
+        </div>
+      </section>
+
+      <section id="dropZone" class="drop-zone">
+        <div class="pet-face" aria-hidden="true">
+          <span></span>
+          <span></span>
+        </div>
+        <strong>Drop a report here</strong>
+        <p>Files are uploaded to your private knowledge base.</p>
+      </section>
+
+      <section class="status-panel">
+        <div class="status-line">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusText">Ready</span>
+        </div>
+        <div id="progressTrack" class="progress-track hidden">
+          <span id="progressBar"></span>
+        </div>
+      </section>
+
+      <section class="tools">
+        <button id="captureButton" class="secondary-button" type="button">Capture screen</button>
+        <button id="openWebButton" class="secondary-button" type="button">Open web app</button>
+      </section>
+
+      <section id="screenshotPanel" class="screenshot-panel hidden">
+        <img id="screenshotPreview" alt="Latest screenshot preview" />
+        <textarea
+          id="screenshotPrompt"
+          rows="2"
+          placeholder="Ask what to summarize from this screen"
+        ></textarea>
+        <button id="summarizeScreenButton" class="primary-button" type="button">Summarize screenshot</button>
+      </section>
+
+      <section class="chat-panel">
+        <div id="chatLog" class="chat-log"></div>
+        <form id="chatForm" class="composer">
+          <input id="chatInput" autocomplete="off" placeholder="Ask about your reports" />
+          <button id="sendButton" class="primary-button" type="submit">Send</button>
+        </form>
+      </section>
+    </main>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

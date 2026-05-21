@@ -193,6 +193,12 @@ _RAG_FLASH_POINT_COST = max(1, int(os.getenv("RAG_FLASH_POINT_COST", "1")))
 _RAG_DEEP_POINT_COST = max(1, int(os.getenv("RAG_DEEP_POINT_COST", "5")))
 _RAG_MIN_SECONDS_BETWEEN_REQUESTS = max(0, int(os.getenv("RAG_MIN_SECONDS_BETWEEN_REQUESTS", "20")))
 _RAG_ANONYMOUS_ENABLED = _env_flag("RAG_ANONYMOUS_ENABLED", "false")
+_DESKTOP_SCREENSHOT_SUMMARY_MODEL = os.getenv(
+    "DESKTOP_SCREENSHOT_SUMMARY_MODEL",
+    os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+).strip() or "gpt-4o-mini"
+_DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS = max(128, int(os.getenv("DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS", "700")))
+_DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES = max(256_000, int(os.getenv("DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES", "6000000")))
 
 
 async def _get_db():
@@ -833,6 +839,8 @@ from pipeline_runtime import (
 )
 from rag.bm25_index import warm_bm25_index
 from rag.embeddings import embedding_backend_is_real, get_embedding_backend, get_embedding_model
+from rag.openai_client import get_openai_client
+from rag.openai_compat import chat_token_kwargs
 from rag.rag_pipeline import answer_question, stream_answer_question
 from scripts.run_pdf_pipeline import run_pdf_pipeline
 
@@ -1211,6 +1219,50 @@ class RagAskRequest(BaseModel):
     # the schema so older clients don't fail validation; the value is ignored.
     mode: Optional[str] = "ask"
     reasoning_mode: Optional[str] = "flash"
+
+
+class DesktopScreenshotSummaryRequest(BaseModel):
+    image_data_url: str = Field(..., min_length=32)
+    prompt: Optional[str] = Field(
+        default="Summarize the visible information and point out anything that needs attention.",
+        max_length=1200,
+    )
+
+
+def _validate_desktop_image_data_url(value: str) -> str:
+    data_url = str(value or "").strip()
+    if not data_url.startswith("data:image/"):
+        raise HTTPException(status_code=400, detail="Screenshot must be an image data URL")
+    try:
+        header, encoded = data_url.split(",", 1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Screenshot data URL is malformed")
+    header_lower = header.lower()
+    if ";base64" not in header_lower:
+        raise HTTPException(status_code=400, detail="Screenshot image must be base64 encoded")
+    mime = header_lower.removeprefix("data:").split(";", 1)[0]
+    if mime not in {"image/png", "image/jpeg", "image/jpg", "image/webp"}:
+        raise HTTPException(status_code=400, detail="Unsupported screenshot image type")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Screenshot image payload is not valid base64")
+    if len(raw) > _DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Screenshot image is too large")
+    normalized_mime = "image/jpeg" if mime == "image/jpg" else mime
+    return f"data:{normalized_mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def _extract_chat_completion_text(response: Any) -> str:
+    choice = response.choices[0]
+    content = getattr(getattr(choice, "message", None), "content", "")
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text") or ""))
+        return "\n".join(parts).strip()
+    return str(content or "").strip()
 
 
 def _normalize_entity_token(value: str) -> str:
@@ -2359,6 +2411,67 @@ async def rag_ask_stream(
         return JSONResponse(
             status_code=500,
             content={"answer": "", "sources": [], "error": "rag_failed", "message": str(exc)},
+        )
+
+
+@app.post("/desktop/screenshot/summarize")
+async def desktop_screenshot_summarize(
+    request: DesktopScreenshotSummaryRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    image_data_url = _validate_desktop_image_data_url(request.image_data_url)
+    prompt = str(request.prompt or "").strip() or "Summarize this screen."
+    client = get_openai_client()
+    if client is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "openai_unavailable",
+                "message": "Screenshot summary requires OPENAI_API_KEY to be configured.",
+            },
+        )
+
+    try:
+        quota = await _enforce_rag_rate_limit(db, current_user, "deep")
+        response = client.chat.completions.create(
+            model=_DESKTOP_SCREENSHOT_SUMMARY_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You summarize user-initiated desktop screenshots for a research assistant. "
+                        "Focus on visible facts, UI state, errors, documents, and actionable next steps. "
+                        "Do not invent hidden context."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}},
+                    ],
+                },
+            ],
+            temperature=0.2,
+            **chat_token_kwargs(_DESKTOP_SCREENSHOT_SUMMARY_MODEL, _DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS),
+        )
+        summary = _extract_chat_completion_text(response)
+        if not summary:
+            return JSONResponse(
+                status_code=502,
+                content={"error": "empty_screenshot_summary", "message": "The model returned an empty summary."},
+            )
+        payload = {"summary": summary, "model": _DESKTOP_SCREENSHOT_SUMMARY_MODEL}
+        if quota and not quota.get("bypassed"):
+            payload["quota"] = quota
+        return JSONResponse(content=payload)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"error": "screenshot_summary_failed", "message": str(exc)},
         )
 
 
