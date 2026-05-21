@@ -56,17 +56,30 @@
         </section>
 
         <section id="workView" class="work-view">
+          <section id="quickStartPanel" class="quick-start-panel" aria-label="Quick start">
+            <button id="primaryCaptureButton" class="quick-action" type="button">
+              <strong>Capture</strong>
+              <span>Summarize the useful work or study content on screen.</span>
+            </button>
+            <button id="primaryUploadButton" class="quick-action" type="button">
+              <strong>Add report</strong>
+              <span>Upload a document and learn it with ESG-focused prompts.</span>
+            </button>
+            <button id="primaryAskButton" class="quick-action" type="button">
+              <strong>Ask</strong>
+              <span>Continue with the current document or knowledge base.</span>
+            </button>
+          </section>
+
           <section id="dropZone" class="drop-zone">
             <div class="pet-face" aria-hidden="true"><span></span><span></span></div>
             <div>
-              <strong>Drop a report</strong>
-              <p>It uploads to your private knowledge base, then I suggest what to ask.</p>
+              <strong>Drop a report here</strong>
+              <p>Only work, academic, ESG, and document evidence will be prioritized.</p>
             </div>
           </section>
 
           <section class="work-actions">
-            <button id="captureButton" class="secondary-button" type="button">Capture screen</button>
-            <button id="uploadButton" class="secondary-button" type="button">Choose file</button>
             <button id="openWebButton" class="secondary-button" type="button">Web app</button>
           </section>
 
@@ -121,7 +134,7 @@
               <button id="tierFlashButton" class="tier-button" type="button">Flash</button>
               <button id="tierDeepButton" class="tier-button" type="button">Deep</button>
             </div>
-            <input id="chatInput" autocomplete="off" placeholder="Ask about the current context" />
+            <input id="chatInput" autocomplete="off" placeholder="Ask to learn this document or ESG context" />
             <button id="sendButton" class="primary-button" type="submit">Send</button>
           </form>
         </section>

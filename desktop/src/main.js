@@ -71,6 +71,10 @@ function buildFileBuffer(filePayload) {
   return Buffer.alloc(0);
 }
 
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 async function handleApiRequest(_event, payload) {
   const request = payload || {};
   const headers = {};
@@ -151,25 +155,43 @@ ipcMain.handle("window:setMode", (event, mode) => {
   return normalized;
 });
 
-ipcMain.handle("screen:capture", async () => {
-  const sources = await desktopCapturer.getSources({
-    types: ["screen"],
-    thumbnailSize: { width: 1440, height: 900 }
-  });
-  const source = sources.find((candidate) => {
-    const thumbnail = candidate && candidate.thumbnail;
-    return thumbnail && !thumbnail.isEmpty() && thumbnail.toDataURL().length > "data:image/png;base64,".length;
-  });
-  if (!source) {
-    throw new Error(
-      "Screen capture returned an empty image. On macOS, enable Screen Recording for CausalGraph Pet in System Settings > Privacy & Security > Screen & System Audio Recording, then restart the app."
-    );
+async function captureScreenWithoutWindow(win) {
+  const shouldRestore = Boolean(win && !win.isDestroyed() && win.isVisible());
+  if (shouldRestore) {
+    win.hide();
+    await wait(180);
   }
-  return {
-    id: source.id,
-    name: source.name,
-    dataUrl: source.thumbnail.toDataURL()
-  };
+
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: { width: 1440, height: 900 }
+    });
+    const source = sources.find((candidate) => {
+      const thumbnail = candidate && candidate.thumbnail;
+      return thumbnail && !thumbnail.isEmpty() && thumbnail.toDataURL().length > "data:image/png;base64,".length;
+    });
+    if (!source) {
+      throw new Error(
+        "Screen capture returned an empty image. On macOS, enable Screen Recording for CausalGraph Pet in System Settings > Privacy & Security > Screen & System Audio Recording, then restart the app."
+      );
+    }
+    return {
+      id: source.id,
+      name: source.name,
+      dataUrl: source.thumbnail.toDataURL()
+    };
+  } finally {
+    if (shouldRestore && win && !win.isDestroyed()) {
+      win.showInactive();
+      win.setAlwaysOnTop(true, "floating");
+    }
+  }
+}
+
+ipcMain.handle("screen:capture", async (event) => {
+  const win = getSenderWindow(event);
+  return captureScreenWithoutWindow(win);
 });
 
 ipcMain.handle("shell:openExternal", async (_event, url) => {

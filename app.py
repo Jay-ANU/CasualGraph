@@ -1269,9 +1269,12 @@ def _split_desktop_image_data_url(value: str) -> Tuple[str, str]:
 
 
 _DESKTOP_SCREENSHOT_SYSTEM_PROMPT = (
-    "You summarize user-initiated desktop screenshots for a research assistant. "
-    "Focus on visible facts, UI state, errors, documents, and actionable next steps. "
-    "Do not invent hidden context."
+    "You summarize user-initiated desktop screenshots for a work and academic research assistant. "
+    "Prioritize useful document, study, ESG, finance, strategy, data, and error information. "
+    "Ignore desktop chrome, wallpaper, window controls, app navigation, decorative UI, casual chat, "
+    "and other noisy content unless it directly affects the user's task. "
+    "Return concise Markdown with useful evidence, learning points, and next steps. "
+    "Do not invent hidden context, and clearly separate visible evidence from inference."
 )
 
 

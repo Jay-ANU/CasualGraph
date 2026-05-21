@@ -4,6 +4,13 @@ const USER_KEY = "causalgraph.pet.user";
 const HISTORY_KEY = "causalgraph.pet.history";
 const TIER_KEY = "causalgraph.pet.tier";
 const WEB_APP_URL = "https://casualgraphai.vercel.app";
+const WORK_ACADEMIC_SCREEN_PROMPT = [
+  "Act as a focused work and academic research assistant.",
+  "Extract only useful work, study, document, ESG, finance, strategy, data, or error information from the screenshot.",
+  "Ignore desktop chrome, wallpaper, window controls, app navigation, casual chat, decorative UI, and unrelated personal/noisy content unless it directly affects the task.",
+  "Prefer concise Markdown with sections: Key information, Useful evidence, Next steps.",
+  "Clearly separate visible evidence from inference."
+].join(" ");
 
 const elements = {
   petView: document.getElementById("petView"),
@@ -25,9 +32,10 @@ const elements = {
   logoutButton: document.getElementById("logoutButton"),
   userLabel: document.getElementById("userLabel"),
   workView: document.getElementById("workView"),
+  primaryCaptureButton: document.getElementById("primaryCaptureButton"),
+  primaryUploadButton: document.getElementById("primaryUploadButton"),
+  primaryAskButton: document.getElementById("primaryAskButton"),
   dropZone: document.getElementById("dropZone"),
-  captureButton: document.getElementById("captureButton"),
-  uploadButton: document.getElementById("uploadButton"),
   openWebButton: document.getElementById("openWebButton"),
   statusDot: document.getElementById("statusDot"),
   statusText: document.getElementById("statusText"),
@@ -118,9 +126,9 @@ function setBusy(nextBusy, label) {
   for (const button of [
     elements.loginButton,
     elements.sendButton,
-    elements.captureButton,
+    elements.primaryCaptureButton,
     elements.petCaptureButton,
-    elements.uploadButton,
+    elements.primaryUploadButton,
     elements.petUploadButton,
     elements.summarizeScreenButton
   ]) {
@@ -168,29 +176,33 @@ function isUsableImageDataUrl(value) {
   return /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(String(value || ""));
 }
 
-function contextSuggestions(context) {
+function studySuggestionsForContext(context) {
   if (!context) {
     return [
-      "What reports are available in my knowledge base?",
-      "Summarize the most important evidence.",
-      "What should I inspect next?"
+      "What can I learn from my available reports?",
+      "Explain the key ESG concepts I should understand.",
+      "Build a study plan from the documents in my knowledge base."
     ];
   }
   if (context.type === "document") {
     return [
-      "Summarize this report.",
-      "What ESG strategy does it describe?",
-      "What causal relationships are supported by the evidence?"
+      "Teach me the main argument of this document.",
+      "Extract the ESG strategy, metrics, risks, and evidence.",
+      "Connect this document to ESG frameworks and general business knowledge."
     ];
   }
   if (context.type === "screenshot") {
     return [
-      "Summarize the visible evidence.",
-      "What should I do next from this screen?",
-      "Turn this into interview talking points."
+      "Extract only the useful work or academic information.",
+      "Explain what I should learn from this screen.",
+      "Turn the useful content into study notes and follow-up questions."
     ];
   }
-  return ["Summarize this context.", "What should I ask next?", "Which evidence is strongest?"];
+  return ["Teach me this context.", "What should I ask next?", "Which evidence is strongest?"];
+}
+
+function contextSuggestions(context) {
+  return studySuggestionsForContext(context);
 }
 
 function setActiveContext(context) {
@@ -299,13 +311,13 @@ function renderMessages() {
   if (!messages.length) {
     const empty = document.createElement("div");
     empty.className = "message system";
-    empty.textContent = "Drop a report, capture the screen, or ask from your knowledge base.";
+    empty.textContent = "Capture a screen, add a report, or ask me to help study your ESG and business evidence.";
     elements.chatLog.appendChild(empty);
   } else {
     for (const message of messages) {
       const node = document.createElement("div");
       node.className = `message ${message.role}`;
-      node.textContent = message.text;
+      appendMarkdownBlock(node, message.text);
       elements.chatLog.appendChild(node);
     }
   }
@@ -328,6 +340,110 @@ function switchToChat(prefill = "") {
 function openFilePicker() {
   setAppMode("work");
   elements.fileInput.click();
+}
+
+function appendInlineMarkdown(parent, text) {
+  const source = String(text || "");
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
+  let cursor = 0;
+  for (const match of source.matchAll(pattern)) {
+    if (match.index > cursor) {
+      parent.appendChild(document.createTextNode(source.slice(cursor, match.index)));
+    }
+    const token = match[0];
+    if (token.startsWith("**")) {
+      const strong = document.createElement("strong");
+      strong.textContent = token.slice(2, -2);
+      parent.appendChild(strong);
+    } else if (token.startsWith("`")) {
+      const code = document.createElement("code");
+      code.textContent = token.slice(1, -1);
+      parent.appendChild(code);
+    } else {
+      const emphasis = document.createElement("em");
+      emphasis.textContent = token.slice(1, -1);
+      parent.appendChild(emphasis);
+    }
+    cursor = match.index + token.length;
+  }
+  if (cursor < source.length) {
+    parent.appendChild(document.createTextNode(source.slice(cursor)));
+  }
+}
+
+function renderMarkdown(markdown) {
+  const fragment = document.createDocumentFragment();
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  let list = null;
+  let codeBlock = null;
+
+  function flushList() {
+    if (list) {
+      fragment.appendChild(list);
+      list = null;
+    }
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      flushList();
+      if (codeBlock) {
+        fragment.appendChild(codeBlock);
+        codeBlock = null;
+      } else {
+        codeBlock = document.createElement("pre");
+      }
+      continue;
+    }
+
+    if (codeBlock) {
+      codeBlock.textContent += `${line}\n`;
+      continue;
+    }
+
+    if (!trimmed) {
+      flushList();
+      continue;
+    }
+
+    const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      flushList();
+      const level = String(Math.min(3, heading[1].length));
+      const node = document.createElement(`h${level}`);
+      appendInlineMarkdown(node, heading[2]);
+      fragment.appendChild(node);
+      continue;
+    }
+
+    const bullet = /^[-*]\s+(.+)$/.exec(trimmed);
+    const numbered = /^\d+\.\s+(.+)$/.exec(trimmed);
+    if (bullet || numbered) {
+      if (!list) {
+        list = document.createElement(numbered ? "ol" : "ul");
+      }
+      const item = document.createElement("li");
+      appendInlineMarkdown(item, (bullet || numbered)[1]);
+      list.appendChild(item);
+      continue;
+    }
+
+    flushList();
+    const paragraph = document.createElement("p");
+    appendInlineMarkdown(paragraph, trimmed);
+    fragment.appendChild(paragraph);
+  }
+
+  flushList();
+  if (codeBlock) {
+    fragment.appendChild(codeBlock);
+  }
+  return fragment;
+}
+
+function appendMarkdownBlock(node, markdown) {
+  node.appendChild(renderMarkdown(markdown));
 }
 
 async function handleLogin() {
@@ -403,7 +519,7 @@ async function uploadFile(file) {
       setActiveContext({
         type: "document",
         title,
-        detail: "Upload was accepted. Ask about it after processing completes.",
+        detail: "Upload was accepted. I will help extract useful ESG, strategy, and study evidence.",
         suggestions: contextSuggestions({ type: "document" })
       });
       setStatus("Upload accepted");
@@ -434,7 +550,7 @@ async function pollUploadJob(jobId, file) {
       setActiveContext({
         type: "document",
         title,
-        detail: "Document is ready in your private knowledge base.",
+        detail: "Document is ready. Use the suggested prompts to learn its ESG, strategy, and evidence structure.",
         documentId,
         suggestions: contextSuggestions({ type: "document" })
       });
@@ -489,13 +605,13 @@ async function captureScreen() {
   setActiveContext({
     type: "screenshot",
     title: capture.name || "Screen capture",
-    detail: "Captured just now. Summarize it, then continue asking from chat.",
+    detail: "Captured without the pet window. I will ignore visual noise and focus on useful work or academic content.",
     preview: currentScreenshot,
     suggestions: contextSuggestions({ type: "screenshot" })
   });
   elements.screenshotPanel.classList.remove("hidden");
   if (!elements.screenshotPrompt.value.trim()) {
-    elements.screenshotPrompt.value = "Summarize the visible information and point out anything that needs attention.";
+    elements.screenshotPrompt.value = "Extract useful work or academic information from this screen.";
   }
   setStatus(`Captured ${capture.name || "screen"}`);
 }
@@ -508,8 +624,9 @@ async function startScreenshotSummary() {
   if (!isUsableImageDataUrl(currentScreenshot)) {
     throw new Error("Capture the screen again before summarizing.");
   }
-  const prompt = elements.screenshotPrompt.value.trim() || "Summarize this screen.";
-  addMessage("user", prompt);
+  const userPrompt = elements.screenshotPrompt.value.trim() || "Extract useful information from this screen.";
+  const prompt = `${WORK_ACADEMIC_SCREEN_PROMPT}\n\nUser task: ${userPrompt}`;
+  addMessage("user", userPrompt);
   setBusy(true, `Summarizing with ${tier === "deep" ? "Deep" : "Flash"}`);
   const data = await apiRequest("/desktop/screenshot/summarize", {
     method: "POST",
@@ -522,7 +639,7 @@ async function startScreenshotSummary() {
   setActiveContext({
     type: "screenshot",
     title: activeContext && activeContext.type === "screenshot" ? activeContext.title : "Screen capture",
-    detail: "Screenshot summary is in chat. Ask follow-ups from the current context.",
+    detail: "Focused summary is in chat. Ask follow-ups to turn it into study notes or ESG analysis.",
     preview: currentScreenshot,
     suggestions: contextSuggestions({ type: "screenshot" })
   });
@@ -590,7 +707,8 @@ function bindEvents() {
   });
 
   elements.petUploadButton.addEventListener("click", openFilePicker);
-  elements.uploadButton.addEventListener("click", openFilePicker);
+  elements.primaryUploadButton.addEventListener("click", openFilePicker);
+  elements.primaryAskButton.addEventListener("click", () => switchToChat());
   elements.fileInput.addEventListener("change", (event) => handleFiles(event.target.files));
 
   for (const target of [document.body, elements.dropZone, elements.petView]) {
@@ -617,7 +735,7 @@ function bindEvents() {
       setBusy(false);
     });
   });
-  elements.captureButton.addEventListener("click", () => {
+  elements.primaryCaptureButton.addEventListener("click", () => {
     captureScreen().catch((error) => {
       setStatus(error.message, "error");
     }).finally(() => {
