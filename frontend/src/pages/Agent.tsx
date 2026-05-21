@@ -1601,6 +1601,7 @@ ${isDuplicate
     setLoadingStepIndex(0);
     try {
       let sessionId = currentSessionId;
+      let sessionIdToActivateAfterFirstTurn = '';
       if (isAuthenticated && !sessionId) {
         setLoadingStepIndex(1);
         try {
@@ -1610,11 +1611,12 @@ ${isDuplicate
             mode: 'ask',
           });
           sessionId = session.id;
-          setCurrentSessionId(sessionId);
+          sessionIdToActivateAfterFirstTurn = sessionId;
         } catch (error) {
           if (isChatMemoryUnavailableError(error)) {
             console.info('Chat memory is unavailable; continuing without persisted chat history.');
             sessionId = '';
+            sessionIdToActivateAfterFirstTurn = '';
             setCurrentSessionId('');
             persistCurrentSessionId('');
             setChatSessionsError('');
@@ -1632,6 +1634,7 @@ ${isDuplicate
           if (isChatMemoryUnavailableError(error)) {
             console.info('Chat memory is unavailable; continuing without persisted chat history.');
             sessionId = '';
+            sessionIdToActivateAfterFirstTurn = '';
             setCurrentSessionId('');
             persistCurrentSessionId('');
             setChatSessionsError('');
@@ -1643,7 +1646,7 @@ ${isDuplicate
               mode: 'ask',
             });
             sessionId = session.id;
-            setCurrentSessionId(sessionId);
+            sessionIdToActivateAfterFirstTurn = sessionId;
             await appendSessionMessage(sessionId, userMessage);
           } else {
             console.error('Failed to persist user message:', error);
@@ -1652,6 +1655,10 @@ ${isDuplicate
       }
 
       await processUserQuery(query, nextHistory, sessionId, (step) => setLoadingStepIndex(step));
+      if (sessionIdToActivateAfterFirstTurn && sessionId === sessionIdToActivateAfterFirstTurn) {
+        setCurrentSessionId(sessionIdToActivateAfterFirstTurn);
+        persistCurrentSessionId(sessionIdToActivateAfterFirstTurn);
+      }
     } finally {
       setIsLoading(false);
     }
