@@ -8,6 +8,7 @@ env
 node_modules
 frontend/node_modules
 frontend/build
+desktop
 
 models
 qlora_model
