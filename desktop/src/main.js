@@ -139,9 +139,14 @@ ipcMain.handle("screen:capture", async () => {
     types: ["screen"],
     thumbnailSize: { width: 1440, height: 900 }
   });
-  const source = sources[0];
+  const source = sources.find((candidate) => {
+    const thumbnail = candidate && candidate.thumbnail;
+    return thumbnail && !thumbnail.isEmpty() && thumbnail.toDataURL().length > "data:image/png;base64,".length;
+  });
   if (!source) {
-    throw new Error("No screen source is available");
+    throw new Error(
+      "Screen capture returned an empty image. On macOS, enable Screen Recording for CausalGraph Pet in System Settings > Privacy & Security > Screen & System Audio Recording, then restart the app."
+    );
   }
   return {
     id: source.id,

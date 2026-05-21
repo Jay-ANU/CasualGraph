@@ -82,6 +82,10 @@ function setProgress(value) {
 
 function extractError(response) {
   const data = response && response.data;
+  if (data && Array.isArray(data.detail)) {
+    const first = data.detail[0] || {};
+    return first.msg || JSON.stringify(data.detail);
+  }
   if (data && data.detail && typeof data.detail === "object") {
     return data.detail.message || data.detail.error || JSON.stringify(data.detail);
   }
@@ -92,6 +96,10 @@ function extractError(response) {
     return data.message || data.error;
   }
   return (response && response.text) || `Request failed with status ${response && response.status}`;
+}
+
+function isUsableImageDataUrl(value) {
+  return /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(String(value || ""));
 }
 
 async function apiRequest(path, options = {}) {
@@ -284,6 +292,11 @@ async function captureScreen() {
   requireAuth();
   setBusy(true, "Capturing screen");
   const capture = await window.desktopAPI.captureScreen();
+  if (!isUsableImageDataUrl(capture && capture.dataUrl)) {
+    currentScreenshot = null;
+    elements.screenshotPreview.removeAttribute("src");
+    throw new Error("Screen capture returned an empty image. Check macOS Screen Recording permission, then restart the app.");
+  }
   currentScreenshot = capture.dataUrl;
   elements.screenshotPreview.src = currentScreenshot;
   elements.screenshotPanel.classList.remove("hidden");
@@ -297,6 +310,9 @@ async function summarizeScreenshot() {
   requireAuth();
   if (!currentScreenshot) {
     await captureScreen();
+  }
+  if (!isUsableImageDataUrl(currentScreenshot)) {
+    throw new Error("Capture the screen again before summarizing.");
   }
   const prompt = elements.screenshotPrompt.value.trim() || "Summarize this screen.";
   addMessage("user", "Summarize my current screen.");

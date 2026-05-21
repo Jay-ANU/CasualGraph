@@ -1222,7 +1222,7 @@ class RagAskRequest(BaseModel):
 
 
 class DesktopScreenshotSummaryRequest(BaseModel):
-    image_data_url: str = Field(..., min_length=32)
+    image_data_url: str
     prompt: Optional[str] = Field(
         default="Summarize the visible information and point out anything that needs attention.",
         max_length=1200,
@@ -1247,6 +1247,8 @@ def _validate_desktop_image_data_url(value: str) -> str:
         raw = base64.b64decode(encoded, validate=True)
     except Exception:
         raise HTTPException(status_code=400, detail="Screenshot image payload is not valid base64")
+    if not raw:
+        raise HTTPException(status_code=400, detail="Screenshot image is empty. Capture the screen again after granting screen recording permission.")
     if len(raw) > _DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail="Screenshot image is too large")
     normalized_mime = "image/jpeg" if mime == "image/jpg" else mime
