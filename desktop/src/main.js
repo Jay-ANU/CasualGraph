@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, desktopCapturer, ipcMain, screen, shell } = require("electron");
 const path = require("path");
 
 const DEFAULT_API_BASE = "https://casualgraph.fly.dev";
@@ -13,8 +13,8 @@ let mainWindow = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: WINDOW_MODES.pet.width,
-    height: WINDOW_MODES.pet.height,
+    width: WINDOW_MODES.dock.width,
+    height: WINDOW_MODES.dock.height,
     minWidth: WINDOW_MODES.dock.minWidth,
     minHeight: WINDOW_MODES.dock.minHeight,
     frame: false,
@@ -32,6 +32,7 @@ function createWindow() {
   });
 
   mainWindow.setAlwaysOnTop(true, "floating");
+  snapDockWindowToEdge(mainWindow, WINDOW_MODES.dock, { preferredEdge: "right", centerVertically: true });
   mainWindow.loadFile(path.join(__dirname, "index.html"));
 }
 
@@ -144,6 +145,44 @@ app.on("window-all-closed", () => {
 
 ipcMain.handle("api:request", handleApiRequest);
 
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function snapDockWindowToEdge(win, target, options = {}) {
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+  const bounds = win.getBounds();
+  const display = screen.getDisplayMatching(bounds);
+  const workArea = display.workArea;
+  const margin = 8;
+  const targetWidth = target.width;
+  const targetHeight = target.height;
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+  const leftEdge = workArea.x + margin;
+  const rightEdge = workArea.x + workArea.width - target.width - margin;
+  const preferredEdge = options.preferredEdge;
+  const x = preferredEdge === "right" || (!preferredEdge && centerX >= workArea.x + workArea.width / 2)
+    ? rightEdge
+    : leftEdge;
+  const unclampedY = options.centerVertically
+    ? workArea.y + (workArea.height - targetHeight) / 2
+    : centerY - targetHeight / 2;
+  const y = clamp(
+    Math.round(unclampedY),
+    workArea.y + margin,
+    workArea.y + workArea.height - targetHeight - margin
+  );
+  win.setBounds({
+    x: Math.round(x),
+    y,
+    width: targetWidth,
+    height: targetHeight
+  }, true);
+}
+
 ipcMain.handle("window:setMode", (event, mode) => {
   const win = getSenderWindow(event);
   const normalized = Object.prototype.hasOwnProperty.call(WINDOW_MODES, mode) ? mode : "work";
@@ -153,6 +192,9 @@ ipcMain.handle("window:setMode", (event, mode) => {
   }
   win.setMinimumSize(target.minWidth, target.minHeight);
   win.setSize(target.width, target.height, true);
+  if (normalized === "dock") {
+    snapDockWindowToEdge(win, target);
+  }
   return normalized;
 });
 

@@ -747,6 +747,11 @@ function wait(milliseconds) {
 }
 
 function bindEvents() {
+  document.addEventListener("dragstart", (event) => {
+    if (event.target instanceof HTMLImageElement) {
+      event.preventDefault();
+    }
+  });
   elements.tierFlashButton.addEventListener("click", () => setTier("flash"));
   elements.tierDeepButton.addEventListener("click", () => setTier("deep"));
   elements.dockButton.addEventListener("click", () => setAppMode("pet"));

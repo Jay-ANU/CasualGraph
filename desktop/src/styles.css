@@ -67,6 +67,11 @@ svg {
   stroke-width: 2;
 }
 
+img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
 .hidden {
   display: none !important;
 }
