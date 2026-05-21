@@ -10,6 +10,7 @@ const WINDOW_MODES = {
 };
 
 let mainWindow = null;
+let currentWindowMode = "dock";
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -31,7 +32,7 @@ function createWindow() {
     }
   });
 
-  mainWindow.setAlwaysOnTop(true, "floating");
+  keepWindowAboveCurrentWorkspace(mainWindow);
   snapDockWindowToEdge(mainWindow, WINDOW_MODES.dock, { preferredEdge: "right", centerVertically: true });
   mainWindow.loadFile(path.join(__dirname, "index.html"));
 }
@@ -130,6 +131,7 @@ async function handleApiRequest(_event, payload) {
 
 app.whenReady().then(() => {
   createWindow();
+  registerDisplayTracking();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -147,6 +149,42 @@ ipcMain.handle("api:request", handleApiRequest);
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
+}
+
+function keepWindowAboveCurrentWorkspace(win) {
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+  if (process.platform === "darwin") {
+    win.setAlwaysOnTop(true, "screen-saver");
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setFullScreenable(false);
+  } else {
+    win.setAlwaysOnTop(true, "floating");
+  }
+  if (typeof win.moveTop === "function") {
+    win.moveTop();
+  }
+}
+
+function reanchorWindowToVisibleWorkArea() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  keepWindowAboveCurrentWorkspace(mainWindow);
+  const target = WINDOW_MODES[currentWindowMode] || WINDOW_MODES.dock;
+  if (currentWindowMode === "dock") {
+    snapDockWindowToEdge(mainWindow, target);
+  } else {
+    positionExpandedWindowInWorkArea(mainWindow, target);
+  }
+}
+
+function registerDisplayTracking() {
+  const reanchorSoon = () => setTimeout(reanchorWindowToVisibleWorkArea, 120);
+  screen.on("display-metrics-changed", reanchorSoon);
+  screen.on("display-added", reanchorSoon);
+  screen.on("display-removed", reanchorSoon);
 }
 
 function snapDockWindowToEdge(win, target, options = {}) {
@@ -183,6 +221,34 @@ function snapDockWindowToEdge(win, target, options = {}) {
   }, true);
 }
 
+function positionExpandedWindowInWorkArea(win, target, previousBounds) {
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+  const display = screen.getDisplayMatching(previousBounds || win.getBounds());
+  const workArea = display.workArea;
+  const margin = 8;
+  const anchorBounds = previousBounds || win.getBounds();
+  const previousCenterX = anchorBounds.x + anchorBounds.width / 2;
+  const previousCenterY = anchorBounds.y + anchorBounds.height / 2;
+  const rightAlignedX = workArea.x + workArea.width - target.width - margin;
+  const leftAlignedX = workArea.x + margin;
+  const x = previousCenterX >= workArea.x + workArea.width / 2
+    ? rightAlignedX
+    : leftAlignedX;
+  const y = clamp(
+    Math.round(previousCenterY - target.height / 2),
+    workArea.y + margin,
+    workArea.y + workArea.height - target.height - margin
+  );
+  win.setBounds({
+    x: Math.round(x),
+    y,
+    width: target.width,
+    height: target.height
+  }, true);
+}
+
 ipcMain.handle("window:setMode", (event, mode) => {
   const win = getSenderWindow(event);
   const normalized = Object.prototype.hasOwnProperty.call(WINDOW_MODES, mode) ? mode : "work";
@@ -190,11 +256,15 @@ ipcMain.handle("window:setMode", (event, mode) => {
   if (!win) {
     return normalized;
   }
+  currentWindowMode = normalized;
+  const previousBounds = win.getBounds();
   win.setMinimumSize(target.minWidth, target.minHeight);
-  win.setSize(target.width, target.height, true);
   if (normalized === "dock") {
     snapDockWindowToEdge(win, target);
+  } else {
+    positionExpandedWindowInWorkArea(win, target, previousBounds);
   }
+  keepWindowAboveCurrentWorkspace(win);
   return normalized;
 });
 
@@ -233,7 +303,8 @@ async function captureScreenWithoutWindow(win) {
   } finally {
     if (shouldRestore && win && !win.isDestroyed()) {
       win.showInactive();
-      win.setAlwaysOnTop(true, "floating");
+      keepWindowAboveCurrentWorkspace(win);
+      reanchorWindowToVisibleWorkArea();
     }
   }
 }

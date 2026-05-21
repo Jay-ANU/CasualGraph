@@ -1,6 +1,6 @@
 # CausalGraph AI
 
-[GitHub Repository](https://github.com/Jay-ANU/CasualGraph) | [Live App](https://casualgraphai.vercel.app)
+[GitHub Repository](https://github.com/Jay-ANU/CasualGraph) | [Live App](https://casualgraphai.vercel.app) | [Download macOS Desktop Beta](https://github.com/Jay-ANU/CasualGraph/releases/latest/download/CausalGraph-Pet-0.1.0-mac-arm64.zip)
 
 CausalGraph AI is an open-source ESG intelligence application for turning long-form corporate reports into searchable evidence, graph context, and cited agent answers.
 
@@ -22,6 +22,7 @@ This repository contains the application code and configuration templates. It do
 - Graph APIs: inspect Neo4j status, entity neighborhoods, causal forward/backward chains, and shortest paths.
 - Hybrid retrieval controls: vector search, BM25 fusion, multi-query expansion, HyDE, reranking, graph context, and decomposition are all environment-controlled.
 - Admin and audit surfaces: login, admin allowlists, upload monitoring, feedback capture, notification hooks, and trace logging.
+- macOS desktop companion: edge-docked assistant window for report drops, screenshot summaries, and follow-up questions without keeping the web app in focus.
 - Production deployment support: Vercel frontend, Fly.io backend, persistent Fly volume, optional embedded Redis, and external Pinecone / Neo4j services.
 
 ## Architecture
@@ -115,7 +116,31 @@ REACT_APP_ESG_API_BASE=http://127.0.0.1:8000 npm start
 
 The React app starts on `http://localhost:3000` by default. In production, set `REACT_APP_ESG_API_BASE` to the deployed backend URL before building.
 
-### 3. Optional Local Neo4j
+### 3. Desktop Companion
+
+The public desktop beta is distributed through GitHub Releases:
+
+- macOS Apple Silicon zip: <https://github.com/Jay-ANU/CasualGraph/releases/latest/download/CausalGraph-Pet-0.1.0-mac-arm64.zip>
+- Release page: <https://github.com/Jay-ANU/CasualGraph/releases/latest>
+
+Local desktop development:
+
+```bash
+cd desktop
+npm install
+npm start
+```
+
+Build a macOS zip:
+
+```bash
+cd desktop
+npm run dist:mac
+```
+
+The current beta is unsigned. On macOS, first launch may require Control-clicking the app in Finder and choosing Open.
+
+### 4. Optional Local Neo4j
 
 ```bash
 docker compose up -d neo4j

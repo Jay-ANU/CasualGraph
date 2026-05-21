@@ -8,15 +8,18 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  Download,
   FileCheck2,
   FileSearch,
   GitBranch,
   Leaf,
+  Monitor,
   Network,
   ShieldCheck,
   Sparkles,
   Users,
 } from 'lucide-react';
+import { desktopMacArm64DownloadUrl, desktopReleaseNotesUrl } from '../config/downloads';
 
 const demoVideoUrl = 'https://www.youtube-nocookie.com/embed/vju2vpjyhsw?rel=0&modestbranding=1';
 
@@ -292,6 +295,10 @@ const Home: React.FC = () => {
               <Link to="/agent" className="cg-btn-primary justify-center sm:min-w-[160px]">
                 {activeShowcase === 2 ? 'Try Agent Now' : 'Open Agent'}
               </Link>
+              <a href={desktopMacArm64DownloadUrl} className="cg-btn-secondary justify-center sm:min-w-[190px]" download>
+                <Download className="h-4 w-4" />
+                Download Desktop
+              </a>
               <Link
                 to={activeShowcase === 1 ? '/agent' : '/agent?tier=deep'}
                 className="cg-btn-primary justify-center sm:min-w-[160px]"
@@ -385,6 +392,61 @@ const Home: React.FC = () => {
                 </motion.div>
               );
             })}
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b border-hairline-soft bg-canvas">
+        <div className="mx-auto grid max-w-page-wide gap-8 px-4 py-14 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:px-8 xl:max-w-page-xl 2xl:max-w-page-2xl">
+          <div>
+            <p className="cg-eyebrow">Desktop companion</p>
+            <h2 className="mt-3 text-heading-lg tracking-normal lg:text-[52px]">
+              Keep CausalGraph on your desktop while you work.
+            </h2>
+            <p className="mt-4 max-w-xl text-[16px] leading-7 text-ink-steel">
+              The macOS companion stays at the screen edge, accepts report drops, captures visible work when you ask, and sends the result back into the same CausalGraph agent workflow.
+            </p>
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+              <a href={desktopMacArm64DownloadUrl} className="cg-btn-primary justify-center" download>
+                <Download className="h-4 w-4" />
+                Download for macOS
+              </a>
+              <a href={desktopReleaseNotesUrl} className="cg-btn-secondary justify-center">
+                Release notes
+              </a>
+            </div>
+            <p className="mt-3 text-[12px] leading-5 text-ink-steel">
+              Beta build for Apple Silicon Macs. Unsigned builds may require opening from Finder with Control-click.
+            </p>
+          </div>
+
+          <div className="cg-tool-panel p-4">
+            <div className="rounded-2xl border border-hairline bg-surface-soft p-5">
+              <div className="mb-8 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-ink text-white">
+                    <Monitor className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="text-[15px] font-semibold text-ink">CausalGraph Pet</div>
+                    <div className="text-[12px] text-ink-steel">macOS desktop assistant</div>
+                  </div>
+                </div>
+                <span className="rounded-full bg-success-bg px-2.5 py-1 text-[11px] font-semibold text-success">Beta</span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  ['Drop', 'Upload reports without leaving your workspace.'],
+                  ['Capture', 'Summarize visible work and continue asking.'],
+                  ['Follow', 'Stay available across macOS Spaces and full-screen apps.'],
+                ].map(([title, body]) => (
+                  <div key={title} className="rounded-xl bg-white p-4">
+                    <h3 className="text-[16px] font-semibold text-ink">{title}</h3>
+                    <p className="mt-2 text-[13px] leading-5 text-ink-steel">{body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </section>
