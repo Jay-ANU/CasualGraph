@@ -21,6 +21,8 @@ const elements = {
   petTitle: document.getElementById("petTitle"),
   petSubtitle: document.getElementById("petSubtitle"),
   panelTitle: document.getElementById("panelTitle"),
+  sourcePill: document.getElementById("sourcePill"),
+  knowledgeBaseLabel: document.getElementById("knowledgeBaseLabel"),
   petModeButton: document.getElementById("petModeButton"),
   closeButton: document.getElementById("closeButton"),
   authPanel: document.getElementById("authPanel"),
@@ -114,7 +116,7 @@ function setAppMode(nextMode) {
   const requestedMode = ["pet", "work", "chat"].includes(nextMode) ? nextMode : "work";
   appMode = !isSignedIn() && requestedMode === "pet" ? "work" : requestedMode;
   document.body.className = `mode-${appMode}`;
-  elements.panelTitle.textContent = appMode === "chat" ? "Ask" : "Desktop Pet";
+  elements.panelTitle.textContent = "CausalGraph";
 
   if (window.desktopAPI && window.desktopAPI.setMode) {
     window.desktopAPI.setMode(appMode).catch(() => {});
@@ -215,6 +217,8 @@ function renderContext() {
   if (!activeContext) {
     elements.contextCard.classList.add("hidden");
     elements.chatContextTitle.textContent = "General knowledge base";
+    elements.sourcePill.textContent = "Sources";
+    elements.knowledgeBaseLabel.textContent = "General knowledge base";
     elements.contextPreview.classList.add("hidden");
     elements.contextPreview.removeAttribute("src");
     return;
@@ -224,6 +228,8 @@ function renderContext() {
   elements.contextTitle.textContent = activeContext.title || "Current context";
   elements.contextDetail.textContent = activeContext.detail || "";
   elements.chatContextTitle.textContent = activeContext.title || "Current context";
+  elements.sourcePill.textContent = activeContext.documentId ? "Current report" : "Screen";
+  elements.knowledgeBaseLabel.textContent = activeContext.title || "Current context";
 
   if (activeContext.preview) {
     elements.contextPreview.src = activeContext.preview;

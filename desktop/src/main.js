@@ -3,7 +3,7 @@ const path = require("path");
 
 const DEFAULT_API_BASE = "https://casualgraph.fly.dev";
 const WINDOW_MODES = {
-  pet: { width: 260, height: 122, minWidth: 240, minHeight: 112 },
+  pet: { width: 360, height: 158, minWidth: 320, minHeight: 138 },
   work: { width: 430, height: 620, minWidth: 360, minHeight: 520 },
   chat: { width: 430, height: 620, minWidth: 360, minHeight: 520 }
 };

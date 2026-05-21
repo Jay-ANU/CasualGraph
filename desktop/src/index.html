@@ -13,27 +13,50 @@
   <body class="mode-pet">
     <main class="shell">
       <section id="petView" class="pet-shell" aria-label="CausalGraph desktop pet">
-        <button id="petExpandButton" class="pet-core" type="button" aria-label="Open CausalGraph Pet">
-          <span class="pet-face" aria-hidden="true"><span></span><span></span></span>
-          <span class="pet-copy">
-            <strong id="petTitle">CausalGraph</strong>
-            <small id="petSubtitle">Drop, capture, ask</small>
-          </span>
-        </button>
-        <div class="pet-actions">
-          <button id="petCaptureButton" class="icon-action" type="button" aria-label="Capture screen">SC</button>
-          <button id="petUploadButton" class="icon-action" type="button" aria-label="Upload file">UP</button>
+        <div class="pet-header">
+          <button id="petExpandButton" class="pet-brand" type="button" aria-label="Open CausalGraph Pet">
+            <span class="mark mark-sm">CG</span>
+            <span id="petTitle">CausalGraph</span>
+          </button>
+          <div class="window-actions pet-window-actions">
+            <button id="petModeButtonGhost" class="icon-button ghost" type="button" aria-hidden="true" tabindex="-1">-</button>
+            <button id="petCloseGhost" class="icon-button ghost" type="button" aria-hidden="true" tabindex="-1">x</button>
+          </div>
         </div>
+        <div class="pet-body">
+          <div class="pet-status-copy">
+            <div class="status-line">
+              <span class="status-dot"></span>
+              <span id="petSubtitle">Ready</span>
+            </div>
+            <p>Drag reports or capture content to get started.</p>
+          </div>
+          <div class="pet-actions">
+            <button id="petCaptureButton" class="pet-action" type="button" aria-label="Capture screen">
+              <svg id="captureIcon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+                <path d="M9 12h6" />
+              </svg>
+              <span>Capture</span>
+            </button>
+            <button id="petUploadButton" class="pet-action" type="button" aria-label="Upload file">
+              <svg id="uploadIcon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 16V4" />
+                <path d="m7 9 5-5 5 5" />
+                <path d="M5 20h14" />
+              </svg>
+              <span>Upload</span>
+            </button>
+          </div>
+        </div>
+        <div class="drag-handle" aria-hidden="true"><span></span><span></span><span></span></div>
       </section>
 
       <section id="panelView" class="panel-shell">
         <header class="titlebar">
           <div class="brand">
             <div class="mark">CG</div>
-            <div>
-              <p class="eyebrow">CausalGraph</p>
-              <h1 id="panelTitle">Desktop Pet</h1>
-            </div>
+            <h1 id="panelTitle">CausalGraph</h1>
           </div>
           <div class="window-actions">
             <button id="petModeButton" class="icon-button" type="button" aria-label="Collapse to pet">-</button>
@@ -50,6 +73,9 @@
             <button id="loginButton" class="primary-button" type="button">Sign in</button>
           </div>
           <div id="signedInView" class="signed-in hidden">
+            <span class="user-chip" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M20 21a8 8 0 0 0-16 0" /><circle cx="12" cy="7" r="4" /></svg>
+            </span>
             <span id="userLabel"></span>
             <button id="logoutButton" class="text-button" type="button">Sign out</button>
           </div>
@@ -58,42 +84,41 @@
         <section id="workView" class="work-view">
           <section id="quickStartPanel" class="quick-start-panel" aria-label="Quick start">
             <button id="primaryCaptureButton" class="quick-action" type="button">
-              <strong>Capture</strong>
-              <span>Summarize the useful work or study content on screen.</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+              </svg>
+              <span>Capture screen</span>
             </button>
             <button id="primaryUploadButton" class="quick-action" type="button">
-              <strong>Add report</strong>
-              <span>Upload a document and learn it with ESG-focused prompts.</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 16V4" />
+                <path d="m7 9 5-5 5 5" />
+                <path d="M5 20h14" />
+              </svg>
+              <span>Add report</span>
             </button>
-            <button id="primaryAskButton" class="quick-action" type="button">
-              <strong>Ask</strong>
-              <span>Continue with the current document or knowledge base.</span>
+            <button id="primaryAskButton" class="quick-action primary" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+              </svg>
+              <span>Ask</span>
             </button>
           </section>
 
           <section id="dropZone" class="drop-zone">
-            <div class="pet-face" aria-hidden="true"><span></span><span></span></div>
-            <div>
-              <strong>Drop a report here</strong>
-              <p>Only work, academic, ESG, and document evidence will be prioritized.</p>
-            </div>
-          </section>
-
-          <section class="work-actions">
-            <button id="openWebButton" class="secondary-button" type="button">Web app</button>
-          </section>
-
-          <section class="status-card">
-            <div class="status-line">
-              <span id="statusDot" class="status-dot"></span>
-              <span id="statusText">Ready</span>
-            </div>
-            <div id="progressTrack" class="progress-track hidden">
-              <span id="progressBar"></span>
-            </div>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 16V4" />
+              <path d="m7 9 5-5 5 5" />
+              <path d="M5 20h14" />
+            </svg>
+            <strong>Drop a report</strong>
+            <p>PDF, DOCX, TXT, MD, PNG, JPG</p>
           </section>
 
           <section id="contextCard" class="context-card hidden">
+            <div class="context-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8 13h8M8 17h5" /></svg>
+            </div>
             <div>
               <p class="eyebrow">Current context</p>
               <h2 id="contextTitle">No active context</h2>
@@ -103,7 +128,7 @@
           </section>
 
           <section id="suggestionPanel" class="suggestion-panel hidden">
-            <p class="eyebrow">Suggested next questions</p>
+            <h2>Suggested next questions</h2>
             <div id="suggestionList" class="suggestion-list"></div>
           </section>
 
@@ -111,7 +136,7 @@
             <textarea
               id="screenshotPrompt"
               rows="2"
-              placeholder="Ask what to summarize from this screen"
+              placeholder="Extract useful work or academic information from this screen"
             ></textarea>
             <button id="summarizeScreenButton" class="primary-button" type="button">Summarize screen</button>
           </section>
@@ -121,23 +146,53 @@
 
         <section id="chatView" class="chat-view">
           <section class="chat-context">
+            <button id="backToWorkButton" class="icon-button flat" type="button" aria-label="Back to tasks">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+            </button>
             <div>
-              <p class="eyebrow">Asking with context</p>
               <h2 id="chatContextTitle">General knowledge base</h2>
             </div>
-            <button id="backToWorkButton" class="text-button" type="button">Tasks</button>
+            <span id="sourcePill" class="source-pill">3 sources</span>
           </section>
 
           <div id="chatLog" class="chat-log"></div>
+
+          <section id="evidenceSection" class="evidence-section">
+            <h2>Evidence</h2>
+            <div class="evidence-list">
+              <div class="evidence-row">
+                <span class="doc-mini" aria-hidden="true"></span>
+                <p>Evidence snippets and citations appear in the answer stream.</p>
+                <span>G</span>
+              </div>
+            </div>
+          </section>
+
           <form id="chatForm" class="composer">
             <div class="tier-toggle" role="group" aria-label="Reasoning tier">
               <button id="tierFlashButton" class="tier-button" type="button">Flash</button>
               <button id="tierDeepButton" class="tier-button" type="button">Deep</button>
             </div>
-            <input id="chatInput" autocomplete="off" placeholder="Ask to learn this document or ESG context" />
-            <button id="sendButton" class="primary-button" type="submit">Send</button>
+            <div class="input-row">
+              <input id="chatInput" autocomplete="off" placeholder="Ask to learn this document or ESG context" />
+              <button id="sendButton" class="primary-button" type="submit">Send</button>
+            </div>
           </form>
         </section>
+
+        <footer id="panelFooter" class="panel-footer">
+          <div class="status-line">
+            <span id="statusDot" class="status-dot"></span>
+            <span id="statusText">Ready</span>
+          </div>
+          <button id="openWebButton" class="kb-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6c0-1.1 3.6-2 8-2s8 .9 8 2-3.6 2-8 2-8-.9-8-2Z" /><path d="M4 6v6c0 1.1 3.6 2 8 2s8-.9 8-2V6" /><path d="M4 12v6c0 1.1 3.6 2 8 2s8-.9 8-2v-6" /></svg>
+            <span id="knowledgeBaseLabel">General knowledge base</span>
+          </button>
+          <div id="progressTrack" class="progress-track hidden">
+            <span id="progressBar"></span>
+          </div>
+        </footer>
 
         <input id="fileInput" class="hidden" type="file" />
       </section>
