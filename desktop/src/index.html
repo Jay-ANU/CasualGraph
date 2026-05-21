@@ -10,80 +10,123 @@
     <title>CausalGraph Pet</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body>
+  <body class="mode-pet">
     <main class="shell">
-      <header class="titlebar">
-        <div class="brand">
-          <div class="mark">CG</div>
-          <div>
-            <p class="eyebrow">CausalGraph</p>
-            <h1>Desktop Pet</h1>
+      <section id="petView" class="pet-shell" aria-label="CausalGraph desktop pet">
+        <button id="petExpandButton" class="pet-core" type="button" aria-label="Open CausalGraph Pet">
+          <span class="pet-face" aria-hidden="true"><span></span><span></span></span>
+          <span class="pet-copy">
+            <strong id="petTitle">CausalGraph</strong>
+            <small id="petSubtitle">Drop, capture, ask</small>
+          </span>
+        </button>
+        <div class="pet-actions">
+          <button id="petCaptureButton" class="icon-action" type="button" aria-label="Capture screen">SC</button>
+          <button id="petUploadButton" class="icon-action" type="button" aria-label="Upload file">UP</button>
+        </div>
+      </section>
+
+      <section id="panelView" class="panel-shell">
+        <header class="titlebar">
+          <div class="brand">
+            <div class="mark">CG</div>
+            <div>
+              <p class="eyebrow">CausalGraph</p>
+              <h1 id="panelTitle">Desktop Pet</h1>
+            </div>
           </div>
-        </div>
-        <div class="window-actions">
-          <button id="minimizeButton" class="icon-button" type="button" aria-label="Minimize">-</button>
-          <button id="closeButton" class="icon-button" type="button" aria-label="Close">x</button>
-        </div>
-      </header>
-
-      <section id="authPanel" class="auth-panel">
-        <div id="signedOutView">
-          <div class="field-row">
-            <input id="emailInput" type="email" placeholder="Email" autocomplete="email" />
-            <input id="passwordInput" type="password" placeholder="Password" autocomplete="current-password" />
+          <div class="window-actions">
+            <button id="petModeButton" class="icon-button" type="button" aria-label="Collapse to pet">-</button>
+            <button id="closeButton" class="icon-button" type="button" aria-label="Close">x</button>
           </div>
-          <button id="loginButton" class="primary-button" type="button">Sign in</button>
-        </div>
-        <div id="signedInView" class="signed-in hidden">
-          <span id="userLabel"></span>
-          <button id="logoutButton" class="text-button" type="button">Sign out</button>
-        </div>
-      </section>
+        </header>
 
-      <section id="dropZone" class="drop-zone">
-        <div class="pet-face" aria-hidden="true">
-          <span></span>
-          <span></span>
-        </div>
-        <strong>Drop report</strong>
-        <p>Private upload</p>
-      </section>
+        <section id="authPanel" class="auth-panel">
+          <div id="signedOutView">
+            <div class="field-row">
+              <input id="emailInput" type="email" placeholder="Email" autocomplete="email" />
+              <input id="passwordInput" type="password" placeholder="Password" autocomplete="current-password" />
+            </div>
+            <button id="loginButton" class="primary-button" type="button">Sign in</button>
+          </div>
+          <div id="signedInView" class="signed-in hidden">
+            <span id="userLabel"></span>
+            <button id="logoutButton" class="text-button" type="button">Sign out</button>
+          </div>
+        </section>
 
-      <section class="status-panel">
-        <div class="status-line">
-          <span id="statusDot" class="status-dot"></span>
-          <span id="statusText">Ready</span>
-        </div>
-        <div id="progressTrack" class="progress-track hidden">
-          <span id="progressBar"></span>
-        </div>
-      </section>
+        <section id="workView" class="work-view">
+          <section id="dropZone" class="drop-zone">
+            <div class="pet-face" aria-hidden="true"><span></span><span></span></div>
+            <div>
+              <strong>Drop a report</strong>
+              <p>It uploads to your private knowledge base, then I suggest what to ask.</p>
+            </div>
+          </section>
 
-      <section class="tools">
-        <div class="tier-toggle" role="group" aria-label="Reasoning tier">
-          <button id="tierFlashButton" class="tier-button" type="button">Flash</button>
-          <button id="tierDeepButton" class="tier-button" type="button">Deep</button>
-        </div>
-        <button id="captureButton" class="secondary-button" type="button">Capture</button>
-        <button id="openWebButton" class="secondary-button" type="button">Web app</button>
-      </section>
+          <section class="work-actions">
+            <button id="captureButton" class="secondary-button" type="button">Capture screen</button>
+            <button id="uploadButton" class="secondary-button" type="button">Choose file</button>
+            <button id="openWebButton" class="secondary-button" type="button">Web app</button>
+          </section>
 
-      <section id="screenshotPanel" class="screenshot-panel hidden">
-        <img id="screenshotPreview" alt="Latest screenshot preview" />
-        <textarea
-          id="screenshotPrompt"
-          rows="2"
-          placeholder="Ask what to summarize from this screen"
-        ></textarea>
-        <button id="summarizeScreenButton" class="primary-button" type="button">Summarize</button>
-      </section>
+          <section class="status-card">
+            <div class="status-line">
+              <span id="statusDot" class="status-dot"></span>
+              <span id="statusText">Ready</span>
+            </div>
+            <div id="progressTrack" class="progress-track hidden">
+              <span id="progressBar"></span>
+            </div>
+          </section>
 
-      <section class="chat-panel">
-        <div id="chatLog" class="chat-log"></div>
-        <form id="chatForm" class="composer">
-          <input id="chatInput" autocomplete="off" placeholder="Ask about your reports" />
-          <button id="sendButton" class="primary-button" type="submit">Send</button>
-        </form>
+          <section id="contextCard" class="context-card hidden">
+            <div>
+              <p class="eyebrow">Current context</p>
+              <h2 id="contextTitle">No active context</h2>
+              <p id="contextDetail">Drop a file or capture the screen to begin.</p>
+            </div>
+            <img id="contextPreview" class="hidden" alt="Current context preview" />
+          </section>
+
+          <section id="suggestionPanel" class="suggestion-panel hidden">
+            <p class="eyebrow">Suggested next questions</p>
+            <div id="suggestionList" class="suggestion-list"></div>
+          </section>
+
+          <section id="screenshotPanel" class="screenshot-panel hidden">
+            <textarea
+              id="screenshotPrompt"
+              rows="2"
+              placeholder="Ask what to summarize from this screen"
+            ></textarea>
+            <button id="summarizeScreenButton" class="primary-button" type="button">Summarize screen</button>
+          </section>
+
+          <button id="switchToChatButton" class="primary-button wide-button" type="button">Ask a follow-up</button>
+        </section>
+
+        <section id="chatView" class="chat-view">
+          <section class="chat-context">
+            <div>
+              <p class="eyebrow">Asking with context</p>
+              <h2 id="chatContextTitle">General knowledge base</h2>
+            </div>
+            <button id="backToWorkButton" class="text-button" type="button">Tasks</button>
+          </section>
+
+          <div id="chatLog" class="chat-log"></div>
+          <form id="chatForm" class="composer">
+            <div class="tier-toggle" role="group" aria-label="Reasoning tier">
+              <button id="tierFlashButton" class="tier-button" type="button">Flash</button>
+              <button id="tierDeepButton" class="tier-button" type="button">Deep</button>
+            </div>
+            <input id="chatInput" autocomplete="off" placeholder="Ask about the current context" />
+            <button id="sendButton" class="primary-button" type="submit">Send</button>
+          </form>
+        </section>
+
+        <input id="fileInput" class="hidden" type="file" />
       </section>
     </main>
     <script src="./renderer.js"></script>

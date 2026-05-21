@@ -2,15 +2,20 @@ const { app, BrowserWindow, desktopCapturer, ipcMain, shell } = require("electro
 const path = require("path");
 
 const DEFAULT_API_BASE = "https://casualgraph.fly.dev";
+const WINDOW_MODES = {
+  pet: { width: 260, height: 122, minWidth: 240, minHeight: 112 },
+  work: { width: 430, height: 620, minWidth: 360, minHeight: 520 },
+  chat: { width: 430, height: 620, minWidth: 360, minHeight: 520 }
+};
 
 let mainWindow = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 380,
-    height: 560,
-    minWidth: 330,
-    minHeight: 460,
+    width: WINDOW_MODES.pet.width,
+    height: WINDOW_MODES.pet.height,
+    minWidth: WINDOW_MODES.pet.minWidth,
+    minHeight: WINDOW_MODES.pet.minHeight,
     frame: false,
     transparent: true,
     resizable: true,
@@ -133,6 +138,18 @@ app.on("window-all-closed", () => {
 });
 
 ipcMain.handle("api:request", handleApiRequest);
+
+ipcMain.handle("window:setMode", (event, mode) => {
+  const win = getSenderWindow(event);
+  const normalized = Object.prototype.hasOwnProperty.call(WINDOW_MODES, mode) ? mode : "work";
+  const target = WINDOW_MODES[normalized];
+  if (!win) {
+    return normalized;
+  }
+  win.setMinimumSize(target.minWidth, target.minHeight);
+  win.setSize(target.width, target.height, true);
+  return normalized;
+});
 
 ipcMain.handle("screen:capture", async () => {
   const sources = await desktopCapturer.getSources({
