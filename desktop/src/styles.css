@@ -77,12 +77,42 @@ svg {
   padding: 8px;
 }
 
+.dock-shell,
 .pet-shell,
 .panel-shell {
   border: 1px solid var(--cg-line);
   background: rgba(255, 255, 255, 0.98);
   box-shadow: var(--cg-shadow);
   backdrop-filter: blur(18px);
+}
+
+.dock-shell {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  border-radius: 22px;
+  -webkit-app-region: drag;
+}
+
+.dock-button {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border: 1px solid var(--cg-line-soft);
+  border-radius: 18px;
+  background: var(--cg-surface);
+  box-shadow: var(--cg-shadow-soft);
+  -webkit-app-region: no-drag;
+}
+
+.dock-button:hover {
+  transform: translateY(-1px);
+}
+
+.dock-button img {
+  width: 40px;
+  height: 40px;
 }
 
 .pet-shell {
@@ -107,10 +137,18 @@ svg {
   border-radius: 18px;
 }
 
+.mode-dock .pet-shell,
+.mode-dock .panel-shell {
+  display: none;
+}
+
+.mode-pet .dock-shell,
 .mode-pet .panel-shell {
   display: none;
 }
 
+.mode-work .dock-shell,
+.mode-chat .dock-shell,
 .mode-work .pet-shell,
 .mode-chat .pet-shell {
   display: none;
@@ -134,6 +172,18 @@ svg {
   width: 28px;
   height: 28px;
   font-size: 10px;
+}
+
+.brand-mark-image {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 9px;
+}
+
+.brand-mark-image.large {
+  width: 30px;
+  height: 30px;
 }
 
 .pet-header,
@@ -183,6 +233,12 @@ svg {
   -webkit-app-region: no-drag;
 }
 
+.pet-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 64px);
+  gap: 7px;
+}
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -219,7 +275,7 @@ svg {
 .pet-body {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 14px;
+  gap: 12px;
   align-items: center;
   min-height: 0;
 }
@@ -231,7 +287,7 @@ svg {
 }
 
 .pet-status-copy p {
-  max-width: 165px;
+  max-width: 118px;
   margin: 0;
   color: var(--cg-ink-soft);
   font-size: 13px;
@@ -242,7 +298,7 @@ svg {
   display: grid;
   place-items: center;
   gap: 6px;
-  width: 70px;
+  width: 64px;
   height: 66px;
   border: 1px solid var(--cg-line);
   border-radius: 10px;
@@ -440,6 +496,7 @@ svg {
     background 140ms ease;
 }
 
+.dock-shell.dragging,
 .drop-zone.dragging,
 .pet-shell.dragging {
   transform: translateY(-1px);

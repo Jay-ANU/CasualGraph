@@ -10,17 +10,23 @@
     <title>CausalGraph Pet</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body class="mode-pet">
+  <body class="mode-dock">
     <main class="shell">
+      <section id="dockView" class="dock-shell" aria-label="CausalGraph dock">
+        <button id="dockButton" class="dock-button" type="button" aria-label="Open CausalGraph">
+          <img src="./assets/logo-mark.svg" alt="" />
+        </button>
+      </section>
+
       <section id="petView" class="pet-shell" aria-label="CausalGraph desktop pet">
         <div class="pet-header">
           <button id="petExpandButton" class="pet-brand" type="button" aria-label="Open CausalGraph Pet">
-            <span class="mark mark-sm">CG</span>
+            <img class="brand-mark-image" src="./assets/logo-mark.svg" alt="" />
             <span id="petTitle">CausalGraph</span>
           </button>
           <div class="window-actions pet-window-actions">
-            <button id="petModeButtonGhost" class="icon-button ghost" type="button" aria-hidden="true" tabindex="-1">-</button>
-            <button id="petCloseGhost" class="icon-button ghost" type="button" aria-hidden="true" tabindex="-1">x</button>
+            <button id="petDockButton" class="icon-button" type="button" aria-label="Collapse to logo">-</button>
+            <button id="petCloseButton" class="icon-button" type="button" aria-label="Close">x</button>
           </div>
         </div>
         <div class="pet-body">
@@ -47,6 +53,12 @@
               </svg>
               <span>Upload</span>
             </button>
+            <button id="petAskButton" class="pet-action" type="button" aria-label="Ask CausalGraph">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+              </svg>
+              <span>Ask</span>
+            </button>
           </div>
         </div>
         <div class="drag-handle" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -55,11 +67,11 @@
       <section id="panelView" class="panel-shell">
         <header class="titlebar">
           <div class="brand">
-            <div class="mark">CG</div>
+            <img class="brand-mark-image large" src="./assets/logo-mark.svg" alt="" />
             <h1 id="panelTitle">CausalGraph</h1>
           </div>
           <div class="window-actions">
-            <button id="petModeButton" class="icon-button" type="button" aria-label="Collapse to pet">-</button>
+            <button id="petModeButton" class="icon-button" type="button" aria-label="Collapse to logo">-</button>
             <button id="closeButton" class="icon-button" type="button" aria-label="Close">x</button>
           </div>
         </header>

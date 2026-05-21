@@ -3,7 +3,8 @@ const path = require("path");
 
 const DEFAULT_API_BASE = "https://casualgraph.fly.dev";
 const WINDOW_MODES = {
-  pet: { width: 360, height: 158, minWidth: 320, minHeight: 138 },
+  dock: { width: 82, height: 82, minWidth: 82, minHeight: 82 },
+  pet: { width: 384, height: 158, minWidth: 348, minHeight: 138 },
   work: { width: 430, height: 620, minWidth: 360, minHeight: 520 },
   chat: { width: 430, height: 620, minWidth: 360, minHeight: 520 }
 };
@@ -14,8 +15,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: WINDOW_MODES.pet.width,
     height: WINDOW_MODES.pet.height,
-    minWidth: WINDOW_MODES.pet.minWidth,
-    minHeight: WINDOW_MODES.pet.minHeight,
+    minWidth: WINDOW_MODES.dock.minWidth,
+    minHeight: WINDOW_MODES.dock.minHeight,
     frame: false,
     transparent: true,
     resizable: true,
@@ -159,18 +160,24 @@ async function captureScreenWithoutWindow(win) {
   const shouldRestore = Boolean(win && !win.isDestroyed() && win.isVisible());
   if (shouldRestore) {
     win.hide();
-    await wait(180);
+    await wait(260);
   }
 
   try {
-    const sources = await desktopCapturer.getSources({
-      types: ["screen"],
-      thumbnailSize: { width: 1440, height: 900 }
-    });
-    const source = sources.find((candidate) => {
-      const thumbnail = candidate && candidate.thumbnail;
-      return thumbnail && !thumbnail.isEmpty() && thumbnail.toDataURL().length > "data:image/png;base64,".length;
-    });
+    let source = null;
+    for (let attempt = 0; attempt < 2 && !source; attempt += 1) {
+      if (attempt > 0) {
+        await wait(220);
+      }
+      const sources = await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: { width: 1440, height: 900 }
+      });
+      source = sources.find((candidate) => {
+        const thumbnail = candidate && candidate.thumbnail;
+        return thumbnail && !thumbnail.isEmpty() && thumbnail.toDataURL().length > "data:image/png;base64,".length;
+      });
+    }
     if (!source) {
       throw new Error(
         "Screen capture returned an empty image. On macOS, enable Screen Recording for CausalGraph Pet in System Settings > Privacy & Security > Screen & System Audio Recording, then restart the app."

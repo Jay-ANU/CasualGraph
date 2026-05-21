@@ -13,11 +13,16 @@ const WORK_ACADEMIC_SCREEN_PROMPT = [
 ].join(" ");
 
 const elements = {
+  dockView: document.getElementById("dockView"),
+  dockButton: document.getElementById("dockButton"),
   petView: document.getElementById("petView"),
   panelView: document.getElementById("panelView"),
   petExpandButton: document.getElementById("petExpandButton"),
   petCaptureButton: document.getElementById("petCaptureButton"),
   petUploadButton: document.getElementById("petUploadButton"),
+  petAskButton: document.getElementById("petAskButton"),
+  petDockButton: document.getElementById("petDockButton"),
+  petCloseButton: document.getElementById("petCloseButton"),
   petTitle: document.getElementById("petTitle"),
   petSubtitle: document.getElementById("petSubtitle"),
   panelTitle: document.getElementById("panelTitle"),
@@ -114,8 +119,8 @@ function renderTier() {
 }
 
 function setAppMode(nextMode) {
-  const requestedMode = ["pet", "work", "chat"].includes(nextMode) ? nextMode : "work";
-  appMode = !isSignedIn() && requestedMode === "pet" ? "work" : requestedMode;
+  const requestedMode = ["dock", "pet", "work", "chat"].includes(nextMode) ? nextMode : "work";
+  appMode = !isSignedIn() && ["dock", "pet"].includes(requestedMode) ? "work" : requestedMode;
   document.body.className = `mode-${appMode}`;
   elements.panelTitle.textContent = "CausalGraph";
 
@@ -129,10 +134,13 @@ function setBusy(nextBusy, label) {
   for (const button of [
     elements.loginButton,
     elements.sendButton,
+    elements.dockButton,
     elements.primaryCaptureButton,
     elements.petCaptureButton,
     elements.primaryUploadButton,
     elements.petUploadButton,
+    elements.petAskButton,
+    elements.petDockButton,
     elements.summarizeScreenButton
   ]) {
     button.disabled = busy;
@@ -296,7 +304,7 @@ function renderAuth() {
   if (signedIn) {
     elements.userLabel.textContent = currentUser.email || currentUser.username || "Signed in";
   }
-  if (!signedIn && appMode === "pet") {
+  if (!signedIn && ["dock", "pet"].includes(appMode)) {
     setAppMode("work");
   }
 }
@@ -507,7 +515,7 @@ async function handleLogin() {
     saveJson(USER_KEY, currentUser);
     renderAuth();
     setStatus("Ready");
-    setAppMode("pet");
+    setAppMode("dock");
   } catch (error) {
     setStatus(error.message, "error");
   } finally {
@@ -636,7 +644,6 @@ async function sendChat(question) {
 
 async function captureScreen() {
   requireAuth();
-  setAppMode("work");
   setBusy(true, "Capturing screen");
   const capture = await window.desktopAPI.captureScreen();
   if (!isUsableImageDataUrl(capture && capture.dataUrl)) {
@@ -647,15 +654,16 @@ async function captureScreen() {
   setActiveContext({
     type: "screenshot",
     title: capture.name || "Screen capture",
-    detail: "Captured without the pet window. I will ignore visual noise and focus on useful work or academic content.",
+    detail: "Ready to summarize. I will focus on useful work or academic content.",
     preview: currentScreenshot,
     suggestions: contextSuggestions({ type: "screenshot" })
   });
+  setAppMode("work");
   elements.screenshotPanel.classList.remove("hidden");
   if (!elements.screenshotPrompt.value.trim()) {
     elements.screenshotPrompt.value = "Extract useful work or academic information from this screen.";
   }
-  setStatus(`Captured ${capture.name || "screen"}`);
+  setStatus("Screen captured");
 }
 
 async function startScreenshotSummary() {
@@ -706,13 +714,14 @@ function handleDrop(event) {
   event.stopPropagation();
   elements.dropZone.classList.remove("dragging");
   elements.petView.classList.remove("dragging");
+  elements.dockView.classList.remove("dragging");
   handleFiles(event.dataTransfer.files);
 }
 
 function handleDragOver(event) {
   event.preventDefault();
   event.stopPropagation();
-  const target = appMode === "pet" ? elements.petView : elements.dropZone;
+  const target = appMode === "dock" ? elements.dockView : appMode === "pet" ? elements.petView : elements.dropZone;
   target.classList.add("dragging");
 }
 
@@ -721,9 +730,14 @@ function handleDragLeave(event) {
   if (event.currentTarget === document.body) {
     elements.dropZone.classList.remove("dragging");
     elements.petView.classList.remove("dragging");
+    elements.dockView.classList.remove("dragging");
     return;
   }
-  if (event.currentTarget === elements.petView || event.currentTarget === elements.dropZone) {
+  if (
+    event.currentTarget === elements.dockView ||
+    event.currentTarget === elements.petView ||
+    event.currentTarget === elements.dropZone
+  ) {
     event.currentTarget.classList.remove("dragging");
   }
 }
@@ -735,8 +749,10 @@ function wait(milliseconds) {
 function bindEvents() {
   elements.tierFlashButton.addEventListener("click", () => setTier("flash"));
   elements.tierDeepButton.addEventListener("click", () => setTier("deep"));
+  elements.dockButton.addEventListener("click", () => setAppMode("pet"));
   elements.petExpandButton.addEventListener("click", () => setAppMode("work"));
-  elements.petModeButton.addEventListener("click", () => setAppMode("pet"));
+  elements.petDockButton.addEventListener("click", () => setAppMode("dock"));
+  elements.petModeButton.addEventListener("click", () => setAppMode("dock"));
   elements.switchToChatButton.addEventListener("click", () => switchToChat());
   elements.backToWorkButton.addEventListener("click", () => setAppMode("work"));
 
@@ -750,10 +766,11 @@ function bindEvents() {
 
   elements.petUploadButton.addEventListener("click", openFilePicker);
   elements.primaryUploadButton.addEventListener("click", openFilePicker);
+  elements.petAskButton.addEventListener("click", () => switchToChat());
   elements.primaryAskButton.addEventListener("click", () => switchToChat());
   elements.fileInput.addEventListener("change", (event) => handleFiles(event.target.files));
 
-  for (const target of [document.body, elements.dropZone, elements.petView]) {
+  for (const target of [document.body, elements.dockView, elements.dropZone, elements.petView]) {
     target.addEventListener("dragover", handleDragOver);
     target.addEventListener("dragleave", handleDragLeave);
     target.addEventListener("drop", handleDrop);
@@ -797,6 +814,9 @@ function bindEvents() {
   elements.closeButton.addEventListener("click", () => {
     window.desktopAPI.close();
   });
+  elements.petCloseButton.addEventListener("click", () => {
+    window.desktopAPI.close();
+  });
 }
 
 function init() {
@@ -808,7 +828,7 @@ function init() {
   renderSuggestions();
   bindEvents();
   setStatus(isSignedIn() ? "Ready" : "Sign in");
-  setAppMode(isSignedIn() ? "pet" : "work");
+  setAppMode(isSignedIn() ? "dock" : "work");
 }
 
 init();
