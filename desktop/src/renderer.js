@@ -22,6 +22,7 @@ const elements = {
   petSubtitle: document.getElementById("petSubtitle"),
   panelTitle: document.getElementById("panelTitle"),
   sourcePill: document.getElementById("sourcePill"),
+  evidenceList: document.getElementById("evidenceList"),
   knowledgeBaseLabel: document.getElementById("knowledgeBaseLabel"),
   petModeButton: document.getElementById("petModeButton"),
   closeButton: document.getElementById("closeButton"),
@@ -332,6 +333,40 @@ function renderMessages() {
   });
 }
 
+function sourceLabel(source) {
+  const title = source && (source.title || source.document_title || source.source || source.document_id);
+  const chunk = source && (source.chunk_id || source.chunk || source.id);
+  const parts = [title, chunk].filter(Boolean).map((item) => String(item));
+  return parts.join(" · ") || "Evidence";
+}
+
+function renderEvidence(sources = []) {
+  const items = Array.isArray(sources) ? sources.slice(0, 4) : [];
+  elements.evidenceList.innerHTML = "";
+  if (!items.length) {
+    const row = document.createElement("div");
+    row.className = "evidence-row";
+    row.innerHTML = '<span class="doc-mini" aria-hidden="true"></span><p>Evidence snippets and citations appear in the answer stream.</p><span>G</span>';
+    elements.evidenceList.appendChild(row);
+    elements.sourcePill.textContent = "Sources";
+    return;
+  }
+  for (const source of items) {
+    const row = document.createElement("div");
+    row.className = "evidence-row";
+    const icon = document.createElement("span");
+    icon.className = "doc-mini";
+    icon.setAttribute("aria-hidden", "true");
+    const text = document.createElement("p");
+    text.textContent = sourceLabel(source);
+    const tag = document.createElement("span");
+    tag.textContent = source && source.chunk_id ? String(source.chunk_id).slice(0, 8) : "G";
+    row.append(icon, text, tag);
+    elements.evidenceList.appendChild(row);
+  }
+  elements.sourcePill.textContent = `${items.length} ${items.length === 1 ? "source" : "sources"}`;
+}
+
 function switchToChat(prefill = "") {
   setAppMode("chat");
   if (prefill) {
@@ -595,6 +630,7 @@ async function sendChat(question) {
     json: payload
   });
   addMessage("assistant", data.answer || "No answer returned.");
+  renderEvidence(data.sources || []);
   setStatus("Ready");
 }
 
@@ -767,6 +803,7 @@ function init() {
   renderTier();
   renderAuth();
   renderMessages();
+  renderEvidence([]);
   renderContext();
   renderSuggestions();
   bindEvents();
