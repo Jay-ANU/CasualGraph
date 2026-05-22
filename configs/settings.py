@@ -37,7 +37,14 @@ CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1500"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
 EXTRACTION_CACHE_ENABLED = os.getenv("EXTRACTION_CACHE_ENABLED", "True").lower() == "true"
 EXTRACTION_CACHE_PATH = Path(os.getenv("EXTRACTION_CACHE_PATH", "./data/extraction_cache.sqlite"))
-EXTRACTION_MAX_WORKERS = max(1, int(os.getenv("EXTRACTION_MAX_WORKERS", "1")))
+
+
+def _default_extraction_workers() -> str:
+    extraction_backend = os.getenv("ESG_EXTRACTION_BACKEND", "remote").strip().lower()
+    return "4" if extraction_backend == "remote" else "1"
+
+
+EXTRACTION_MAX_WORKERS = max(1, int(os.getenv("EXTRACTION_MAX_WORKERS", _default_extraction_workers())))
 INGESTION_JOB_MAX_WORKERS = max(1, int(os.getenv("INGESTION_JOB_MAX_WORKERS", "4")))
 INGESTION_MAX_QUEUED_JOBS = max(1, int(os.getenv("INGESTION_MAX_QUEUED_JOBS", "16")))
 INGESTION_AUDIT_THROTTLE_SECONDS = max(0.0, float(os.getenv("INGESTION_AUDIT_THROTTLE_SECONDS", "2.0")))

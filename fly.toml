@@ -6,6 +6,8 @@ primary_region = "syd"
 [env]
   PORT = "8000"
   AUTH_DB_PATH = "/data/auth.db"
+  EXTRACTION_MAX_WORKERS = "4"
+  INGESTION_JOB_MAX_WORKERS = "1"
 
 [mounts]
   source = "casualgraph_data"

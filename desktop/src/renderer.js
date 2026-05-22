@@ -543,24 +543,44 @@ async function uploadFile(file) {
   setBusy(true, `Uploading ${file.name}`);
   setProgress(4);
   try {
-    const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-    const job = await apiRequest("/documents/upload-async", {
-      method: "POST",
-      formData: {
-        fields: {
-          title: file.name,
-          domain: "desktop",
-          source: "desktop-pet",
-          source_type: "desktop_file",
-          content: ""
-        },
+    const fields = {
+      title: file.name,
+      domain: "desktop",
+      source: "desktop-pet",
+      source_type: "desktop_file",
+      content: ""
+    };
+    let job = null;
+    if (file.path && window.desktopAPI && window.desktopAPI.uploadFile) {
+      const response = await window.desktopAPI.uploadFile({
+        baseUrl: apiBase(),
+        path: "/documents/upload-async",
+        token,
+        fields,
         file: {
+          path: file.path,
           name: file.name,
-          type: file.type || "application/octet-stream",
-          bytes
+          type: file.type || "application/octet-stream"
         }
+      });
+      if (!response.ok) {
+        throw new Error(extractError(response));
       }
-    });
+      job = response.data;
+    } else {
+      const bytes = await file.arrayBuffer();
+      job = await apiRequest("/documents/upload-async", {
+        method: "POST",
+        formData: {
+          fields,
+          file: {
+            name: file.name,
+            type: file.type || "application/octet-stream",
+            bytes
+          }
+        }
+      });
+    }
 
     const jobId = job.job_id;
     if (!jobId) {

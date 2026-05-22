@@ -1,4 +1,5 @@
 const { app, BrowserWindow, desktopCapturer, ipcMain, screen, shell } = require("electron");
+const fs = require("fs");
 const path = require("path");
 
 const DEFAULT_API_BASE = "https://casualgraph.fly.dev";
@@ -129,6 +130,54 @@ async function handleApiRequest(_event, payload) {
   };
 }
 
+async function handleFileUpload(_event, payload) {
+  const request = payload || {};
+  const file = request.file || {};
+  const filePath = String(file.path || "");
+  if (!filePath) {
+    throw new Error("Missing file path for desktop upload.");
+  }
+
+  const headers = {};
+  appendSafeHeaders(headers, request.headers);
+  if (request.token) {
+    headers.authorization = `Bearer ${request.token}`;
+  }
+
+  const form = new FormData();
+  const fields = request.fields || {};
+  for (const [key, value] of Object.entries(fields)) {
+    form.append(key, value == null ? "" : String(value));
+  }
+
+  const buffer = await fs.promises.readFile(filePath);
+  const blob = new Blob([buffer], {
+    type: String(file.type || "application/octet-stream")
+  });
+  form.append("file", blob, String(file.name || path.basename(filePath) || "upload.bin"));
+
+  const response = await fetch(buildApiUrl(request.baseUrl, request.path || "/documents/upload-async"), {
+    method: "POST",
+    headers,
+    body: form
+  });
+  const text = await response.text();
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch (_error) {
+      data = null;
+    }
+  }
+  return {
+    ok: response.ok,
+    status: response.status,
+    data,
+    text
+  };
+}
+
 app.whenReady().then(() => {
   createWindow();
   registerDisplayTracking();
@@ -146,6 +195,7 @@ app.on("window-all-closed", () => {
 });
 
 ipcMain.handle("api:request", handleApiRequest);
+ipcMain.handle("api:uploadFile", handleFileUpload);
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
