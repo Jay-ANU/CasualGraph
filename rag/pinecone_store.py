@@ -91,6 +91,16 @@ def delete_vectors_by_document_id(document_id: str, namespace: Optional[str] = N
     index.delete(filter={"document_id": {"$eq": document_id}}, namespace=target_namespace)
 
 
+def delete_vectors_by_ids(ids: List[str], namespace: Optional[str] = None) -> None:
+    """Best-effort deletion for explicit vector IDs."""
+    vector_ids = [str(item).strip() for item in ids if str(item or "").strip()]
+    if not vector_ids:
+        return
+    index = get_pinecone_index()
+    target_namespace = namespace or PINECONE_NAMESPACE
+    index.delete(ids=vector_ids, namespace=target_namespace)
+
+
 def query_vectors(
     vector: List[float],
     top_k: int,

@@ -8,6 +8,7 @@ import About from './pages/About';
 import EsgDemo from './pages/EsgDemo';
 import Login from './pages/Login';
 import Admin from './pages/Admin';
+import DesktopDownload from './pages/DesktopDownload';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -36,6 +37,8 @@ function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/esg-demo" element={<EsgDemo />} />
               <Route path="/causal-inference" element={<CausalInference />} />
+              <Route path="/desktop" element={<DesktopDownload />} />
+              <Route path="/download" element={<DesktopDownload />} />
               <Route path="/agent" element={<ProtectedRoute><Agent /></ProtectedRoute>} />
               <Route path="/admin" element={<AdminRoute><Admin /></AdminRoute>} />
               <Route path="/about" element={<About />} />

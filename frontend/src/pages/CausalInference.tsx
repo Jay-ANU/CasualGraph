@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -11,65 +11,164 @@ import {
 } from 'lucide-react';
 import { GraphVisualizer } from '../components';
 import type { GraphData, GraphHighlightPath } from '../types/graph';
+import { useAuth } from '../contexts/AuthContext';
 
-const graphEnginePreviewGraph: GraphData = {
-  nodes: [
-    { id: 'company', label: 'Company', domain: 'general', type: 'Company', confidence: 0.98 },
-    { id: 'climate_target', label: 'Climate target', domain: 'environmental', type: 'Target', confidence: 0.9 },
-    { id: 'scope_2', label: 'Scope 2', domain: 'environmental', type: 'Metric', confidence: 0.86 },
-    { id: 'transition_risk', label: 'Transition risk', domain: 'governance', type: 'Risk', confidence: 0.8 },
-    { id: 'evidence', label: 'Evidence', domain: 'general', type: 'Source passage', confidence: 0.92 },
-  ],
-  edges: [
-    {
-      source: 'company',
-      target: 'climate_target',
-      relationship_type: 'HAS_TARGET',
-      confidence: 0.88,
-      evidence: 'The company states a climate target in the report.',
-      domain: 'environmental',
-    },
-    {
-      source: 'company',
-      target: 'scope_2',
-      relationship_type: 'REPORTS_METRIC',
-      confidence: 0.84,
-      evidence: 'Scope 2 emissions are disclosed in the emissions table.',
-      domain: 'environmental',
-    },
-    {
-      source: 'transition_risk',
-      target: 'company',
-      relationship_type: 'AFFECTS',
-      confidence: 0.72,
-      evidence: 'Transition risk is discussed in governance oversight.',
-      domain: 'governance',
-    },
-    {
-      source: 'evidence',
-      target: 'climate_target',
-      relationship_type: 'SUPPORTS',
-      confidence: 0.9,
-      evidence: 'Source passage supports the extracted target.',
-      domain: 'general',
-    },
-  ],
+const emptyGraph: GraphData = {
+  nodes: [],
+  edges: [],
   metadata: {
-    node_count: 5,
-    edge_count: 4,
+    node_count: 0,
+    edge_count: 0,
     is_directed: true,
     is_acyclic: false,
   },
 };
 
-const graphEnginePreviewPath: GraphHighlightPath = {
-  nodes: ['company', 'climate_target', 'evidence'],
-  edges: [['company', 'climate_target'], ['evidence', 'climate_target']],
+const getApiBase = () => {
+  const host = window.location.hostname || '127.0.0.1';
+  const localApiHost = host === 'localhost' || host === '127.0.0.1';
+  return process.env.REACT_APP_ESG_API_BASE || (localApiHost ? `http://${host}:8000` : '');
+};
+
+const normalizeGraphPayload = (payload: any): GraphData => {
+  const rawNodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
+  const nodes: GraphData['nodes'] = rawNodes
+    .map((node: any) => ({
+      id: String(node?.id || '').trim(),
+      label: String(node?.label || node?.name || node?.id || '').trim(),
+      domain: String(node?.domain || node?.esg_domain || 'general'),
+      type: String(node?.type || 'Entity'),
+      confidence: Number(node?.confidence ?? 0.75),
+      description: String(node?.description || ''),
+      company: String(node?.company || ''),
+      year: String(node?.year || ''),
+      normalizedName: String(node?.normalizedName || node?.normalized_name || node?.id || ''),
+      metadata: node?.metadata || {},
+    }))
+    .filter((node: GraphData['nodes'][number]) => node.id && node.label);
+
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const rawEdges = Array.isArray(payload?.edges) ? payload.edges : [];
+  const edges: GraphData['edges'] = rawEdges
+    .map((edge: any) => ({
+      source: String(edge?.source || '').trim(),
+      target: String(edge?.target || '').trim(),
+      relationship_type: String(edge?.relationship_type || edge?.relation || edge?.type || 'RELATED_TO'),
+      confidence: Number(edge?.confidence ?? 0.75),
+      evidence: String(edge?.evidence || ''),
+      domain: String(edge?.domain || 'general'),
+      relationship_action: String(edge?.relationship_action || ''),
+      relationship_nature: String(edge?.relationship_nature || ''),
+      documentId: String(edge?.documentId || edge?.document_id || ''),
+      chunkId: String(edge?.chunkId || edge?.chunk_id || ''),
+      metadata: edge?.metadata || {},
+    }))
+    .filter((edge: GraphData['edges'][number]) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+
+  return {
+    nodes,
+    edges,
+    metadata: {
+      ...(payload?.metadata || {}),
+      node_count: nodes.length,
+      edge_count: edges.length,
+      is_directed: payload?.metadata?.is_directed ?? true,
+      is_acyclic: payload?.metadata?.is_acyclic ?? false,
+    },
+  };
+};
+
+const getDegreeMap = (graph: GraphData) => {
+  const degreeMap = new Map<string, number>();
+  graph.nodes.forEach((node) => degreeMap.set(node.id, 0));
+  graph.edges.forEach((edge) => {
+    degreeMap.set(edge.source, (degreeMap.get(edge.source) || 0) + 1);
+    degreeMap.set(edge.target, (degreeMap.get(edge.target) || 0) + 1);
+  });
+  return degreeMap;
+};
+
+const getGraphFocusNodeId = (graph: GraphData | null) => {
+  if (!graph || graph.nodes.length === 0) return null;
+  const degreeMap = getDegreeMap(graph);
+  return [...graph.nodes].sort((a, b) => (degreeMap.get(b.id) || 0) - (degreeMap.get(a.id) || 0))[0]?.id || null;
+};
+
+const buildPreviewGraph = (graph: GraphData | null, maxNodes = 220, maxEdges = 340): GraphData => {
+  if (!graph || graph.nodes.length === 0) return emptyGraph;
+  const degreeMap = getDegreeMap(graph);
+  const nodes = [...graph.nodes]
+    .sort((a, b) => (degreeMap.get(b.id) || 0) - (degreeMap.get(a.id) || 0))
+    .slice(0, maxNodes);
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const edges = graph.edges
+    .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+    .slice(0, maxEdges);
+  return {
+    nodes,
+    edges,
+    metadata: {
+      node_count: nodes.length,
+      edge_count: edges.length,
+      is_directed: true,
+      is_acyclic: false,
+    },
+  };
+};
+
+const buildHighlightPath = (graph: GraphData | null): GraphHighlightPath | null => {
+  if (!graph || graph.edges.length === 0) return null;
+  const firstEdge = graph.edges[0];
+  const chain = [firstEdge.source, firstEdge.target];
+  const nextEdge = graph.edges.find((edge) => edge.source === firstEdge.target && edge.target !== firstEdge.source);
+  if (nextEdge) chain.push(nextEdge.target);
+  return {
+    nodes: chain,
+    edges: chain.slice(0, -1).map((source, index) => [source, chain[index + 1]]),
+  };
+};
+
+const compactNumber = (value: number) => {
+  if (value >= 10000) return `${(value / 1000).toFixed(1)}k`;
+  return value.toLocaleString();
 };
 
 const CausalInference: React.FC = () => {
   const [selectedWorkflow, setSelectedWorkflow] = useState('disclosures');
+  const [knowledgeGraph, setKnowledgeGraph] = useState<GraphData | null>(null);
+  const [graphStatus, setGraphStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const navigate = useNavigate();
+  const { token } = useAuth();
+  const apiBase = useMemo(() => getApiBase(), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadGraph = async () => {
+      setGraphStatus('loading');
+      try {
+        const response = await fetch(`${apiBase}/public/knowledge-graph?limit=25000&edge_limit=30000`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(payload?.message || payload?.error || 'Unable to load knowledge graph');
+        }
+        const graph = normalizeGraphPayload(payload);
+        if (cancelled) return;
+        setKnowledgeGraph(graph);
+        setGraphStatus(graph.nodes.length > 0 ? 'ready' : 'empty');
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load real knowledge graph:', error);
+        setKnowledgeGraph(emptyGraph);
+        setGraphStatus('error');
+      }
+    };
+    loadGraph();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, token]);
 
   const pipeline = [
     {
@@ -128,16 +227,32 @@ const CausalInference: React.FC = () => {
   ];
 
   const selected = workflows.find((workflow) => workflow.id === selectedWorkflow) || workflows[0];
+  const previewGraph = useMemo(() => buildPreviewGraph(knowledgeGraph), [knowledgeGraph]);
+  const previewFocusNodeId = useMemo(() => getGraphFocusNodeId(previewGraph), [previewGraph]);
+  const fullFocusNodeId = useMemo(() => getGraphFocusNodeId(knowledgeGraph), [knowledgeGraph]);
+  const previewHighlightPath = useMemo(() => buildHighlightPath(previewGraph), [previewGraph]);
+  const fullHighlightPath = useMemo(() => buildHighlightPath(knowledgeGraph), [knowledgeGraph]);
+  const graphNodes = knowledgeGraph?.nodes.length || 0;
+  const graphEdges = knowledgeGraph?.edges.length || 0;
+  const graphDocumentCount = Number((knowledgeGraph?.metadata as any)?.document_count || 0);
+  const graphSource = String((knowledgeGraph?.metadata as any)?.source || 'backend');
+  const graphStatusLabel = graphStatus === 'ready'
+    ? 'Real graph'
+    : graphStatus === 'loading'
+      ? 'Loading'
+      : graphStatus === 'empty'
+        ? 'No data'
+        : 'Unavailable';
 
   return (
-    <div className="min-h-screen bg-canvas text-ink">
+    <div className="min-h-screen overflow-x-hidden bg-canvas text-ink">
       <section className="border-b border-hairline-soft">
         <div className="mx-auto grid max-w-page gap-10 px-4 py-16 sm:px-6 lg:max-w-page-wide lg:grid-cols-[0.95fr_1.05fr] lg:px-8 lg:py-20 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16">
           <motion.div
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.42 }}
-            className="flex flex-col justify-center"
+            className="min-w-0 flex flex-col justify-center"
           >
             <div className="mb-6 inline-flex w-fit items-center gap-2 rounded-full border border-hairline bg-surface px-3 py-2 text-[13px] font-semibold text-ink-charcoal">
               <Network className="h-4 w-4" />
@@ -166,7 +281,7 @@ const CausalInference: React.FC = () => {
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.46, delay: 0.06 }}
-            className="cg-tool-panel p-4"
+            className="cg-tool-panel min-w-0 p-4"
           >
             <div className="rounded-xl bg-surface-soft p-5">
               <div className="flex items-center justify-between gap-4 border-b border-hairline pb-4">
@@ -174,24 +289,35 @@ const CausalInference: React.FC = () => {
                   <div className="cg-eyebrow text-ink-stone">Knowledge map</div>
                   <div className="mt-1 text-[18px] font-semibold text-ink">Report evidence graph</div>
                 </div>
-                <span className="rounded-full bg-success-bg px-3 py-1 text-[12px] font-semibold text-success">Live</span>
+                <span className={`rounded-full px-3 py-1 text-[12px] font-semibold ${
+                  graphStatus === 'ready' ? 'bg-success-bg text-success' : 'bg-surface text-ink-steel'
+                }`}>
+                  {graphStatusLabel}
+                </span>
               </div>
 
               <div className="mt-5">
-                <GraphVisualizer
-                  graph={graphEnginePreviewGraph}
-                  compact
-                  height={340}
-                  focusNodeId="company"
-                  highlightPath={graphEnginePreviewPath}
-                />
+                {previewGraph.nodes.length > 0 ? (
+                  <GraphVisualizer
+                    graph={previewGraph}
+                    compact
+                    height={340}
+                    focusNodeId={previewFocusNodeId}
+                    highlightPath={previewHighlightPath}
+                  />
+                ) : (
+                  <div className="rounded-xl border border-hairline bg-white px-5 py-16 text-center">
+                    <div className="cg-eyebrow text-ink-stone">{graphStatusLabel}</div>
+                    <p className="mt-2 text-sm text-ink-steel">No real graph nodes are available from the backend yet.</p>
+                  </div>
+                )}
               </div>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
                 {[
-                  ['26k+', 'entities'],
-                  ['19k+', 'edges'],
-                  ['cited', 'relationships'],
+                  [compactNumber(graphNodes), 'real nodes'],
+                  [compactNumber(graphEdges), 'real edges'],
+                  [graphDocumentCount ? compactNumber(graphDocumentCount) : graphSource, 'source'],
                 ].map(([value, label]) => (
                   <div key={label} className="rounded-2xl border border-hairline bg-white p-4">
                     <div className="font-display text-[28px] font-semibold leading-none tracking-normal">{value}</div>
@@ -201,6 +327,39 @@ const CausalInference: React.FC = () => {
               </div>
             </div>
           </motion.div>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-page px-4 py-section sm:px-6 lg:max-w-page-wide lg:px-8 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16">
+        <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <p className="cg-eyebrow">Clustered knowledge graph</p>
+            <h2 className="mt-3 text-heading-lg xl:text-[56px]" style={{ letterSpacing: 0, lineHeight: 1.1 }}>
+              E, S, G, and AI stay readable at scale.
+            </h2>
+            <p className="mt-4 text-body-md text-ink-steel xl:text-[18px]">
+              The clusters are only the review lens. Every visible dot is a real extracted entity from the backend graph, grouped by ESG/AI semantics.
+            </p>
+          </div>
+          <div className="hidden h-px flex-1 bg-hairline lg:block" />
+        </div>
+
+        <div className="cg-tool-panel min-w-0 p-4 xl:p-5">
+          {knowledgeGraph && knowledgeGraph.nodes.length > 0 ? (
+            <GraphVisualizer
+              graph={knowledgeGraph}
+              height={640}
+              focusNodeId={fullFocusNodeId}
+              highlightPath={fullHighlightPath}
+            />
+          ) : (
+            <div className="rounded-xl border border-hairline bg-white px-6 py-20 text-center">
+              <div className="cg-eyebrow text-ink-stone">{graphStatusLabel}</div>
+              <p className="mt-2 text-sm text-ink-steel">
+                Upload or sync documents so the backend can return real extracted nodes and relationships.
+              </p>
+            </div>
+          )}
         </div>
       </section>
 

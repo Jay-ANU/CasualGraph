@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import io
 import time
+import asyncio
 import base64
 import smtplib
 import random
@@ -44,12 +45,8 @@ _APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).strip()
 _JWT_SECRET = os.getenv("JWT_SECRET", _DEFAULT_JWT_SECRET).strip() or _DEFAULT_JWT_SECRET
 _JWT_ALGORITHM = "HS256"
 _TOKEN_MINUTES = 60 * 24  # 1 day
-_DB_PATH = os.getenv("AUTH_DB_PATH", os.path.join(os.path.dirname(__file__), "auth.db"))
-_FEEDBACK_DB_PATH = os.getenv(
-    "CAUSALGRAPH_DB_PATH",
-    os.path.join(os.path.dirname(__file__), "backend", "causalgraph.db"),
-)
-_CORS_ALLOW_ORIGINS_RAW = os.getenv("CORS_ALLOW_ORIGINS") or os.getenv("CORS_ALLOWED_ORIGINS", "")
+_DB_PATH = os.path.join(os.path.dirname(__file__), "auth.db")
+_FEEDBACK_DB_PATH = os.path.join(os.path.dirname(__file__), "backend", "causalgraph.db")
 _security = HTTPBearer(auto_error=False)
 _CLEANUP_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 _ENTITY_TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9&.-]*")
@@ -143,14 +140,6 @@ def _validate_startup_security_config(*, app_env: Optional[str] = None, jwt_secr
         raise RuntimeError("JWT_SECRET must be at least 32 characters when APP_ENV=production/staging.")
 
 
-def _validate_startup_cors_config(*, app_env: Optional[str] = None, cors_allow_origins_raw: Optional[str] = None) -> None:
-    if not _is_production_like_env(app_env):
-        return
-    raw = _CORS_ALLOW_ORIGINS_RAW if cors_allow_origins_raw is None else str(cors_allow_origins_raw)
-    if not raw.strip():
-        raise RuntimeError("CORS_ALLOW_ORIGINS must be set when APP_ENV=production/staging.")
-
-
 def _parse_cors_origins(raw: Optional[str]) -> List[str]:
     origins = [item.strip() for item in str(raw or "").split(",") if item.strip()]
     if origins:
@@ -163,7 +152,7 @@ def _parse_cors_origins(raw: Optional[str]) -> List[str]:
     ]
 
 
-_CORS_ALLOW_ORIGINS = _parse_cors_origins(_CORS_ALLOW_ORIGINS_RAW)
+_CORS_ALLOW_ORIGINS = _parse_cors_origins(os.getenv("CORS_ALLOW_ORIGINS", ""))
 _CORS_ALLOW_ORIGIN_REGEX = os.getenv(
     "CORS_ALLOW_ORIGIN_REGEX",
     r"https://.*\.ngrok-free\.app|https://.*\.ngrok\.app",
@@ -193,6 +182,11 @@ _RAG_FLASH_POINT_COST = max(1, int(os.getenv("RAG_FLASH_POINT_COST", "1")))
 _RAG_DEEP_POINT_COST = max(1, int(os.getenv("RAG_DEEP_POINT_COST", "5")))
 _RAG_MIN_SECONDS_BETWEEN_REQUESTS = max(0, int(os.getenv("RAG_MIN_SECONDS_BETWEEN_REQUESTS", "20")))
 _RAG_ANONYMOUS_ENABLED = _env_flag("RAG_ANONYMOUS_ENABLED", "false")
+_DESKTOP_SCREENSHOT_SUMMARY_MODEL = os.getenv(
+    "DESKTOP_SCREENSHOT_SUMMARY_MODEL",
+    os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+).strip() or "gpt-4o-mini"
+_DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS = max(128, int(os.getenv("DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS", "700")))
 _DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES = max(256_000, int(os.getenv("DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES", "6000000")))
 
 
@@ -202,7 +196,6 @@ async def _get_db():
 
 
 async def _init_auth_db():
-    Path(_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -266,6 +259,7 @@ async def _init_auth_db():
         await db.execute("CREATE INDEX IF NOT EXISTS rag_unlimited_users_created_at_idx ON rag_unlimited_users(created_at)")
         await _ensure_column(db, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
         await db.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR lower(role) NOT IN ('admin', 'user')")
+        await init_user_memory_db(db)
         admin_emails = sorted(_admin_email_set())
         if admin_emails:
             placeholders = ",".join("?" for _ in admin_emails)
@@ -800,21 +794,17 @@ async def _consume_admin_invite(code: str, user_id: str, db: aiosqlite.Connectio
 from ai_service.extractor import extract_esg
 from ai_service.schemas import EsgExtractionRequest, EsgExtractionResponse
 from chat_memory_service import RedisUnavailableError, chat_memory_service
-from configs.settings import (
-    CHUNK_DIR,
-    EMBEDDING_FALLBACK_DIM,
-    GRAPH_DIR,
-    INGESTION_ENABLED,
-    NEO4J_AUTO_SYNC,
-    OPENAI_MAX_TOKENS,
-    OPENAI_TEMPERATURE,
-    RAG_DEEP_MAX_TOKENS,
-    RAG_DEEP_MODEL,
-    RAG_DEEP_TEMPERATURE,
-    RAG_FLASH_MODEL,
-    VECTOR_DIR,
-    VECTOR_STORE_PROVIDER,
-    neo4j_configured,
+from configs.settings import CHUNK_DIR, EMBEDDING_FALLBACK_DIM, GRAPH_DIR, NEO4J_AUTO_SYNC, VECTOR_DIR, VECTOR_STORE_PROVIDER, neo4j_configured
+from user_memory_service import (
+    delete_user_memory,
+    format_memories_for_prompt,
+    get_memory_settings,
+    get_relevant_user_memories,
+    init_user_memory_db,
+    list_user_memories,
+    remember_exchange,
+    update_memory_settings,
+    update_user_memory,
 )
 import document_registry
 from graph.causal_reasoning import CausalReasoner
@@ -839,7 +829,6 @@ from pipeline_runtime import (
     summarize_registered_document,
 )
 from rag.bm25_index import warm_bm25_index
-from rag.anthropic_client import get_anthropic_client
 from rag.embeddings import embedding_backend_is_real, get_embedding_backend, get_embedding_model
 from rag.openai_client import get_openai_client
 from rag.openai_compat import chat_token_kwargs
@@ -893,7 +882,6 @@ app.mount("/kg-static", StaticFiles(directory=str(_KG_VIEW_STATIC)), name="kg-st
 @app.on_event("startup")
 async def startup():
     _validate_startup_security_config()
-    _validate_startup_cors_config()
     await _init_auth_db()
     await _init_feedback_db()
     init_admin_db()
@@ -1229,7 +1217,6 @@ class DesktopScreenshotSummaryRequest(BaseModel):
         default="Summarize the visible information and point out anything that needs attention.",
         max_length=1200,
     )
-    reasoning_mode: Optional[str] = "flash"
 
 
 def _validate_desktop_image_data_url(value: str) -> str:
@@ -1258,26 +1245,6 @@ def _validate_desktop_image_data_url(value: str) -> str:
     return f"data:{normalized_mime};base64,{base64.b64encode(raw).decode('ascii')}"
 
 
-def _desktop_reasoning_mode(value: Optional[str]) -> str:
-    return "deep" if str(value or "").strip().lower() == "deep" else "flash"
-
-
-def _split_desktop_image_data_url(value: str) -> Tuple[str, str]:
-    header, encoded = str(value).split(",", 1)
-    media_type = header.removeprefix("data:").split(";", 1)[0]
-    return media_type, encoded
-
-
-_DESKTOP_SCREENSHOT_SYSTEM_PROMPT = (
-    "You summarize user-initiated desktop screenshots for a work and academic research assistant. "
-    "Prioritize useful document, study, ESG, finance, strategy, data, and error information. "
-    "Ignore desktop chrome, wallpaper, window controls, app navigation, decorative UI, casual chat, "
-    "and other noisy content unless it directly affects the user's task. "
-    "Return concise Markdown with useful evidence, learning points, and next steps. "
-    "Do not invent hidden context, and clearly separate visible evidence from inference."
-)
-
-
 def _extract_chat_completion_text(response: Any) -> str:
     choice = response.choices[0]
     content = getattr(getattr(choice, "message", None), "content", "")
@@ -1288,69 +1255,6 @@ def _extract_chat_completion_text(response: Any) -> str:
                 parts.append(str(item.get("text") or ""))
         return "\n".join(parts).strip()
     return str(content or "").strip()
-
-
-def _extract_anthropic_message_text(response: Any) -> str:
-    parts: List[str] = []
-    for block in getattr(response, "content", []) or []:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(str(text))
-    return "".join(parts).strip()
-
-
-def _summarize_desktop_screenshot_flash(image_data_url: str, prompt: str) -> Optional[str]:
-    client = get_openai_client()
-    if client is None:
-        return None
-    response = client.chat.completions.create(
-        model=RAG_FLASH_MODEL,
-        messages=[
-            {"role": "system", "content": _DESKTOP_SCREENSHOT_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}},
-                ],
-            },
-        ],
-        temperature=OPENAI_TEMPERATURE,
-        **chat_token_kwargs(RAG_FLASH_MODEL, OPENAI_MAX_TOKENS),
-    )
-    return _extract_chat_completion_text(response)
-
-
-def _summarize_desktop_screenshot_deep(image_data_url: str, prompt: str) -> Optional[str]:
-    client = get_anthropic_client()
-    if client is None:
-        return None
-    media_type, image_data = _split_desktop_image_data_url(image_data_url)
-    kwargs: Dict[str, Any] = {
-        "model": RAG_DEEP_MODEL,
-        "max_tokens": RAG_DEEP_MAX_TOKENS,
-        "system": _DESKTOP_SCREENSHOT_SYSTEM_PROMPT,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": image_data,
-                        },
-                    },
-                ],
-            }
-        ],
-    }
-    if not RAG_DEEP_MODEL.startswith("claude-opus-4"):
-        kwargs["temperature"] = RAG_DEEP_TEMPERATURE
-    response = client.messages.create(**kwargs)
-    return _extract_anthropic_message_text(response)
 
 
 def _normalize_entity_token(value: str) -> str:
@@ -1647,6 +1551,62 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
     }
 
 
+async def _load_long_term_memory_context(
+    db: aiosqlite.Connection,
+    current_user: Optional[dict],
+    query: str,
+) -> Tuple[str, List[Dict[str, Any]]]:
+    if not current_user:
+        return "", []
+    user_id = str(current_user.get("id") or "").strip()
+    if not user_id:
+        return "", []
+    try:
+        memories = await get_relevant_user_memories(db, user_id, query)
+    except Exception as exc:
+        print(f"[memory] retrieval skipped: {type(exc).__name__}: {exc}")
+        return "", []
+    return format_memories_for_prompt(memories), memories
+
+
+def _history_with_long_term_memory(history: Optional[List[Dict[str, Any]]], memory_context: str) -> List[Dict[str, Any]]:
+    normalized = list(history or [])
+    if not memory_context:
+        return normalized
+    return [{"role": "assistant", "content": memory_context}, *normalized]
+
+
+def _remember_exchange_later(
+    *,
+    user_id: Optional[str],
+    user_message: str,
+    assistant_message: str,
+    source: str,
+) -> None:
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id or not str(user_message or "").strip() or not str(assistant_message or "").strip():
+        return
+
+    def _worker() -> None:
+        async def _run() -> None:
+            async with aiosqlite.connect(_DB_PATH) as memory_db:
+                await init_user_memory_db(memory_db)
+                await remember_exchange(
+                    memory_db,
+                    user_id=normalized_user_id,
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    source=source,
+                )
+
+        try:
+            asyncio.run(_run())
+        except Exception as exc:
+            print(f"[memory] background store skipped: {type(exc).__name__}: {exc}")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 class PipelinePdfRequest(BaseModel):
     pdf_path: str
     name: str
@@ -1691,6 +1651,19 @@ class ChatSessionMessageRequest(BaseModel):
     content: str
     timestamp: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
+
+
+class MemorySettingsUpdateRequest(BaseModel):
+    enabled: Optional[bool] = None
+    auto_extract: Optional[bool] = None
+    raw_retention_days: Optional[int] = Field(default=None, ge=1, le=365)
+
+
+class MemoryUpdateRequest(BaseModel):
+    category: Optional[str] = None
+    content: Optional[str] = Field(default=None, min_length=1, max_length=420)
+    sensitivity: Optional[Literal["normal", "sensitive"]] = None
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 _FEEDBACK_REASON_TAGS = {"missing_evidence", "wrong_citation", "hallucination", "irrelevant", "other"}
@@ -1924,6 +1897,89 @@ async def delete_chat_session(session_id: str, current_user: dict = Depends(get_
         )
 
 
+@app.get("/memory/settings")
+async def get_long_term_memory_settings(
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    settings = await get_memory_settings(db, str(current_user["id"]))
+    return JSONResponse(content={"settings": settings, "memory_backend": "sqlite+vector"})
+
+
+@app.patch("/memory/settings")
+async def update_long_term_memory_settings(
+    request: MemorySettingsUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    settings = await update_memory_settings(
+        db,
+        str(current_user["id"]),
+        enabled=request.enabled,
+        auto_extract=request.auto_extract,
+        raw_retention_days=request.raw_retention_days,
+    )
+    return JSONResponse(content={"settings": settings, "memory_backend": "sqlite+vector"})
+
+
+@app.get("/memory")
+async def get_long_term_memories(
+    category: Optional[str] = None,
+    include_deleted: bool = False,
+    limit: int = Query(80, ge=1, le=300),
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    memories = await list_user_memories(
+        db,
+        str(current_user["id"]),
+        category=category,
+        include_deleted=include_deleted,
+        limit=limit,
+    )
+    settings = await get_memory_settings(db, str(current_user["id"]))
+    return JSONResponse(content={"memories": memories, "settings": settings, "memory_backend": "sqlite+vector"})
+
+
+@app.patch("/memory/{memory_id}")
+async def patch_long_term_memory(
+    memory_id: str,
+    request: MemoryUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    memory = await update_user_memory(
+        db,
+        str(current_user["id"]),
+        memory_id,
+        category=request.category,
+        content=request.content,
+        sensitivity=request.sensitivity,
+        confidence=request.confidence,
+    )
+    if memory is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "memory_not_found", "message": "No active memory found for this account."},
+        )
+    return JSONResponse(content={"memory": memory, "memory_backend": "sqlite+vector"})
+
+
+@app.delete("/memory/{memory_id}")
+async def remove_long_term_memory(
+    memory_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    deleted = await delete_user_memory(db, str(current_user["id"]), memory_id)
+    if not deleted:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "memory_not_found", "message": "No active memory found for this account."},
+        )
+    return JSONResponse(content={"deleted": True, "memory_backend": "sqlite+vector"})
+
+
 def _sort_registry_entries(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sorted(
         entries,
@@ -2118,19 +2174,292 @@ class Neo4jQuestionRequest(BaseModel):
     limit: int = 10
 
 
+_PUBLIC_GRAPH_MAX_NODES = 30000
+_PUBLIC_GRAPH_MAX_EDGES = 40000
+
+
+def _bounded_graph_limit(value: int, default: int, maximum: int, minimum: int = 1) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def _resolve_project_file(value: str) -> Path:
+    path = Path(str(value or "")).expanduser()
+    if path.is_absolute():
+        return path
+    return (_APP_ROOT / path).resolve()
+
+
+def _safe_graph_float(value: object, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _graph_text_domain(*values: object) -> str:
+    text = " ".join(str(value or "") for value in values).lower()
+    direct = text.strip()
+    if direct in {"environmental", "environment", "e"}:
+        return "environmental"
+    if direct in {"social", "s"}:
+        return "social"
+    if direct in {"governance", "g"}:
+        return "governance"
+    if direct in {"ai", "artificial intelligence"}:
+        return "ai"
+    if re.search(r"\b(ai|llm|machine learning|model|algorithm|retrieval|rag|embedding|vector|parser|parsing|summary|summarization|prediction)\b", text):
+        return "ai"
+    if re.search(r"\b(climate|carbon|emission|scope\s?[123]|ghg|greenhouse|net zero|renewable|energy|water|waste|recycl|circular|biodiversity|pollution)\b", text):
+        return "environmental"
+    if re.search(r"\b(employee|workforce|worker|diversity|inclusion|dei|safety|health|supplier|supply chain|community|human rights|labor|labour|training|customer)\b", text):
+        return "social"
+    if re.search(r"\b(governance|board|committee|audit|assurance|compliance|ethic|risk|control|policy|shareholder|remuneration|compensation|anti[- ]?bribery|corruption)\b", text):
+        return "governance"
+    return "general"
+
+
+def _local_graph_node_payload(node: Dict[str, Any], entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    node_id = str(node.get("id") or "").strip()
+    if not node_id:
+        return None
+    properties = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+    label = str(properties.get("display_name") or properties.get("name") or node_id).strip() or node_id
+    description = str(properties.get("description") or "")
+    direct_domain = str(properties.get("esg_domain") or properties.get("domain") or entry.get("domain") or "")
+    domain = _graph_text_domain(direct_domain, node.get("type"), label, description)
+    return {
+        "id": node_id,
+        "label": label,
+        "domain": domain,
+        "type": str(node.get("type") or properties.get("type") or "Entity"),
+        "confidence": _safe_graph_float(properties.get("confidence"), 0.8),
+        "description": description,
+        "company": str(properties.get("company") or ""),
+        "year": str(properties.get("year") or ""),
+        "normalizedName": str(properties.get("normalized_name") or node_id),
+        "metadata": {
+            "documentIds": [str(entry.get("document_id") or "")],
+            "documentTitles": [str(entry.get("title") or "")],
+            "frequency": 1,
+        },
+    }
+
+
+def _merge_local_node(existing: Dict[str, Any], candidate: Dict[str, Any]) -> None:
+    existing["confidence"] = max(float(existing.get("confidence") or 0), float(candidate.get("confidence") or 0))
+    if not existing.get("description") and candidate.get("description"):
+        existing["description"] = candidate["description"]
+    if existing.get("domain") == "general" and candidate.get("domain") != "general":
+        existing["domain"] = candidate["domain"]
+    metadata = existing.setdefault("metadata", {})
+    candidate_metadata = candidate.get("metadata") or {}
+    for key in ("documentIds", "documentTitles"):
+        values = list(metadata.get(key) or [])
+        for value in candidate_metadata.get(key) or []:
+            if value and value not in values:
+                values.append(value)
+        metadata[key] = values[:12]
+    metadata["frequency"] = int(metadata.get("frequency") or 1) + 1
+
+
+def _local_graph_edge_payload(edge: Dict[str, Any], entry: Dict[str, Any], node_domains: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    source = str(edge.get("source") or "").strip()
+    target = str(edge.get("target") or "").strip()
+    if not source or not target:
+        return None
+    properties = edge.get("properties") if isinstance(edge.get("properties"), dict) else {}
+    relation = str(edge.get("relation") or edge.get("relationship_type") or properties.get("relation_type") or "RELATED_TO")
+    evidence = str(properties.get("evidence") or properties.get("context") or "")
+    direct_domain = str(properties.get("domain") or properties.get("esg_domain") or entry.get("domain") or "")
+    inferred = _graph_text_domain(direct_domain, relation, evidence, node_domains.get(source), node_domains.get(target))
+    return {
+        "source": source,
+        "target": target,
+        "relationship_type": relation,
+        "confidence": _safe_graph_float(properties.get("confidence"), 0.75),
+        "evidence": evidence,
+        "domain": inferred,
+        "relationship_action": str(properties.get("action") or ""),
+        "relationship_nature": str(properties.get("nature") or ""),
+        "documentId": str(entry.get("document_id") or ""),
+        "chunkId": str(properties.get("chunk_id") or ""),
+    }
+
+
+def _merge_local_knowledge_graph(entries: List[Dict[str, Any]], node_limit: int, edge_limit: int) -> Dict[str, Any]:
+    nodes_by_id: Dict[str, Dict[str, Any]] = {}
+    raw_edges: List[Dict[str, Any]] = []
+    degree: Dict[str, int] = {}
+    loaded_document_ids: List[str] = []
+
+    for entry in entries:
+        paths = entry.get("paths") or {}
+        graph_path = _resolve_project_file(str(paths.get("graph") or ""))
+        if not graph_path.is_file():
+            continue
+        try:
+            graph = json.loads(graph_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        document_id = str(entry.get("document_id") or "")
+        if document_id:
+            loaded_document_ids.append(document_id)
+        for node in graph.get("nodes") or []:
+            if not isinstance(node, dict):
+                continue
+            payload = _local_graph_node_payload(node, entry)
+            if not payload:
+                continue
+            existing = nodes_by_id.get(payload["id"])
+            if existing:
+                _merge_local_node(existing, payload)
+            else:
+                nodes_by_id[payload["id"]] = payload
+        for edge in graph.get("edges") or []:
+            if not isinstance(edge, dict):
+                continue
+            source = str(edge.get("source") or "").strip()
+            target = str(edge.get("target") or "").strip()
+            if not source or not target:
+                continue
+            degree[source] = degree.get(source, 0) + 1
+            degree[target] = degree.get(target, 0) + 1
+            raw_edges.append({"edge": edge, "entry": entry})
+
+    sorted_nodes = sorted(
+        nodes_by_id.values(),
+        key=lambda node: (
+            degree.get(str(node.get("id") or ""), 0),
+            int((node.get("metadata") or {}).get("frequency") or 0),
+            float(node.get("confidence") or 0),
+            str(node.get("label") or ""),
+        ),
+        reverse=True,
+    )
+    selected_nodes = sorted_nodes[:node_limit]
+    selected_ids = {str(node.get("id") or "") for node in selected_nodes}
+    node_domains = {str(node.get("id") or ""): str(node.get("domain") or "general") for node in selected_nodes}
+
+    edges: List[Dict[str, Any]] = []
+    seen_edges: set[str] = set()
+    for item in raw_edges:
+        if len(edges) >= edge_limit:
+            break
+        edge = _local_graph_edge_payload(item["edge"], item["entry"], node_domains)
+        if not edge or edge["source"] not in selected_ids or edge["target"] not in selected_ids:
+            continue
+        edge_key = f"{edge['source']}|{edge['relationship_type']}|{edge['target']}|{edge.get('documentId', '')}"
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+        edges.append(edge)
+
+    return {
+        "nodes": selected_nodes,
+        "edges": edges,
+        "metadata": {
+            "node_count": len(selected_nodes),
+            "edge_count": len(edges),
+            "total_node_count": len(nodes_by_id),
+            "total_edge_count": len(raw_edges),
+            "document_count": len(set(loaded_document_ids)),
+            "source": "local_graph_json",
+            "is_directed": True,
+            "is_acyclic": False,
+        },
+    }
+
+
+def _neo4j_visualization_to_graph_data(payload: Dict[str, Any], edge_limit: int) -> Dict[str, Any]:
+    nodes = []
+    for row in payload.get("nodes") or []:
+        if not isinstance(row, dict):
+            continue
+        node_id = str(row.get("id") or "").strip()
+        if not node_id:
+            continue
+        domain = _graph_text_domain(row.get("domain") or row.get("esg_domain"), row.get("type"), row.get("label"), row.get("description"))
+        nodes.append(
+            {
+                "id": node_id,
+                "label": str(row.get("label") or row.get("name") or node_id),
+                "domain": domain,
+                "type": str(row.get("type") or "Entity"),
+                "confidence": _safe_graph_float(row.get("confidence"), 0.75),
+                "description": str(row.get("description") or ""),
+                "company": str(row.get("company") or ""),
+                "year": str(row.get("year") or ""),
+                "normalizedName": str(row.get("normalized_name") or node_id),
+                "metadata": {"frequency": int(row.get("frequency") or 0)},
+            }
+        )
+    node_ids = {node["id"] for node in nodes}
+    edges = []
+    for row in (payload.get("edges") or [])[:edge_limit]:
+        if not isinstance(row, dict):
+            continue
+        source = str(row.get("source") or "").strip()
+        target = str(row.get("target") or "").strip()
+        if source not in node_ids or target not in node_ids:
+            continue
+        edges.append(
+            {
+                "source": source,
+                "target": target,
+                "relationship_type": str(row.get("relationship_type") or row.get("type") or "RELATED_TO"),
+                "confidence": _safe_graph_float(row.get("confidence"), 0.75),
+                "evidence": str(row.get("evidence") or ""),
+                "domain": _graph_text_domain(row.get("domain"), row.get("category"), row.get("relationship_type"), row.get("evidence")),
+                "relationship_action": str(row.get("relationship_action") or ""),
+                "relationship_nature": str(row.get("relationship_nature") or ""),
+                "documentId": str(row.get("document_id") or ""),
+                "chunkId": str(row.get("chunk_id") or ""),
+            }
+        )
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "metadata": {
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "source": "neo4j",
+            "is_directed": True,
+            "is_acyclic": False,
+        },
+    }
+
+
+def _load_real_knowledge_graph(current_user: Optional[Dict[str, Any]], node_limit: int, edge_limit: int) -> Dict[str, Any]:
+    entries = _retrievable_registry_entries(current_user)
+    document_ids = [
+        str(entry.get("document_id") or "").strip()
+        for entry in entries
+        if str(entry.get("document_id") or "").strip()
+    ]
+
+    try:
+        store = get_neo4j_store()
+        if store is not None and (_is_admin_user(current_user) or document_ids):
+            raw = store.get_visualization_graph(
+                limit=node_limit,
+                document_ids=None if _is_admin_user(current_user) else document_ids,
+            )
+            graph = _neo4j_visualization_to_graph_data(raw, edge_limit=edge_limit)
+            if graph["nodes"]:
+                return graph
+    except Exception as exc:
+        print(f"[public-knowledge-graph] Neo4j graph unavailable, using local graph files: {type(exc).__name__}: {exc}")
+
+    return _merge_local_knowledge_graph(entries, node_limit=node_limit, edge_limit=edge_limit)
+
+
 @app.get("/health")
 async def health() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
-
-
-@app.get("/healthz")
-async def healthz() -> JSONResponse:
-    return JSONResponse(content={"status": "ok"})
-
-
-def _ensure_ingestion_enabled() -> None:
-    if not INGESTION_ENABLED:
-        raise HTTPException(status_code=503, detail="Document ingestion is disabled in this deployment.")
 
 
 @app.get("/kg-view", response_class=HTMLResponse)
@@ -2141,6 +2470,26 @@ async def kg_view(current_user: dict = Depends(require_admin)) -> HTMLResponse:
         _KG_VIEW_TEMPLATE.read_text(encoding="utf-8"),
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+@app.get("/public/knowledge-graph")
+async def public_knowledge_graph(
+    limit: int = Query(default=25000, ge=1, le=_PUBLIC_GRAPH_MAX_NODES),
+    edge_limit: int = Query(default=30000, ge=0, le=_PUBLIC_GRAPH_MAX_EDGES),
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    try:
+        graph = _load_real_knowledge_graph(
+            current_user=current_user,
+            node_limit=_bounded_graph_limit(limit, 25000, _PUBLIC_GRAPH_MAX_NODES),
+            edge_limit=_bounded_graph_limit(edge_limit, 30000, _PUBLIC_GRAPH_MAX_EDGES, minimum=0),
+        )
+        return JSONResponse(content=graph)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "knowledge_graph_failed", "message": str(exc)},
+        )
 
 
 @app.get("/kg-api/filters")
@@ -2351,20 +2700,34 @@ async def rag_ask(
         if context["error_response"] is not None:
             return context["error_response"]
         quota = await _enforce_rag_rate_limit(db, current_user, request.reasoning_mode) if current_user else None
+        memory_context, injected_memories = await _load_long_term_memory_context(db, current_user, request.question)
+        answer_history = _history_with_long_term_memory(context["history"], memory_context)
         result = answer_question(
             request.question,
             top_k=request.top_k,
-            history=context["history"],
+            history=answer_history,
             retrieval_filters=context["filters"],
             mode=request.mode or "ask",
             reasoning_mode=request.reasoning_mode or "flash",
             user_id=context["user_id"],
         )
         result["memory_backend"] = context["memory_backend"]
+        result["long_term_memory"] = {
+            "backend": "sqlite+vector",
+            "injected": len(injected_memories),
+            "auto_extract": bool(current_user),
+        }
         if quota and not quota.get("bypassed"):
             result["quota"] = quota
         if request.session_id:
             result["session_id"] = request.session_id
+        if current_user:
+            _remember_exchange_later(
+                user_id=str(current_user.get("id") or ""),
+                user_message=request.question,
+                assistant_message=str(result.get("answer") or ""),
+                source="rag",
+            )
         return JSONResponse(content=result)
     except HTTPException:
         raise
@@ -2438,12 +2801,14 @@ async def rag_ask_stream(
         if context["error_response"] is not None:
             return context["error_response"]
         quota = await _enforce_rag_rate_limit(db, current_user, request.reasoning_mode) if current_user else None
+        memory_context, injected_memories = await _load_long_term_memory_context(db, current_user, request.question)
+        answer_history = _history_with_long_term_memory(context["history"], memory_context)
 
         def _stream_factory():
             for event in stream_answer_question(
                 request.question,
                 top_k=request.top_k,
-                history=context["history"],
+                history=answer_history,
                 retrieval_filters=context["filters"],
                 mode=request.mode or "ask",
                 reasoning_mode=request.reasoning_mode or "flash",
@@ -2452,10 +2817,22 @@ async def rag_ask_stream(
                 if event.get("type") == "done":
                     payload = dict(event.get("payload") or {})
                     payload["memory_backend"] = context["memory_backend"]
+                    payload["long_term_memory"] = {
+                        "backend": "sqlite+vector",
+                        "injected": len(injected_memories),
+                        "auto_extract": bool(current_user),
+                    }
                     if quota and not quota.get("bypassed"):
                         payload["quota"] = quota
                     if request.session_id:
                         payload["session_id"] = request.session_id
+                    if current_user:
+                        _remember_exchange_later(
+                            user_id=str(current_user.get("id") or ""),
+                            user_message=request.question,
+                            assistant_message=str(payload.get("answer") or ""),
+                            source="rag_stream",
+                        )
                     yield {"type": "done", "payload": payload}
                 else:
                     if event.get("type") == "meta":
@@ -2470,17 +2847,29 @@ async def rag_ask_stream(
             result = answer_question(
                 request.question,
                 top_k=request.top_k,
-                history=context["history"],
+                history=answer_history,
                 retrieval_filters=context["filters"],
                 mode=request.mode or "ask",
                 reasoning_mode=request.reasoning_mode or "flash",
                 user_id=context["user_id"],
             )
             result["memory_backend"] = context["memory_backend"]
+            result["long_term_memory"] = {
+                "backend": "sqlite+vector",
+                "injected": len(injected_memories),
+                "auto_extract": bool(current_user),
+            }
             if quota and not quota.get("bypassed"):
                 result["quota"] = quota
             if request.session_id:
                 result["session_id"] = request.session_id
+            if current_user:
+                _remember_exchange_later(
+                    user_id=str(current_user.get("id") or ""),
+                    user_message=request.question,
+                    assistant_message=str(result.get("answer") or ""),
+                    source="rag_stream_fallback",
+                )
             return result
 
         return _build_streaming_response(
@@ -2510,53 +2899,70 @@ async def desktop_screenshot_summarize(
 ):
     image_data_url = _validate_desktop_image_data_url(request.image_data_url)
     prompt = str(request.prompt or "").strip() or "Summarize this screen."
-    mode = _desktop_reasoning_mode(request.reasoning_mode)
+    client = get_openai_client()
+    if client is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "openai_unavailable",
+                "message": "Screenshot summary requires OPENAI_API_KEY to be configured.",
+            },
+        )
 
     try:
-        quota = await _enforce_rag_rate_limit(db, current_user, mode)
-        summary: Optional[str] = None
-        backend = "openai_flash"
-        model = RAG_FLASH_MODEL
-        fallback_to_flash = False
-
-        if mode == "deep":
-            try:
-                summary = _summarize_desktop_screenshot_deep(image_data_url, prompt)
-            except Exception as exc:
-                print(f"[desktop] Deep screenshot summary failed: {type(exc).__name__}: {exc}")
-                summary = None
-            if summary:
-                backend = "claude_deep"
-                model = RAG_DEEP_MODEL
-            else:
-                fallback_to_flash = True
-
-        if not summary:
-            try:
-                summary = _summarize_desktop_screenshot_flash(image_data_url, prompt)
-            except Exception as exc:
-                print(f"[desktop] Flash screenshot summary failed: {type(exc).__name__}: {exc}")
-                summary = None
-
+        memory_context, injected_memories = await _load_long_term_memory_context(db, current_user, prompt)
+        system_prompt = (
+            "You summarize user-initiated desktop screenshots for a work and academic research assistant. "
+            "Prioritize useful document, study, ESG, finance, strategy, data, and error information. "
+            "Ignore desktop chrome, wallpaper, window controls, app navigation, decorative UI, casual chat, "
+            "and other noisy content unless it directly affects the user's task. "
+            "Return concise Markdown with useful evidence, learning points, and next steps. "
+            "Do not invent hidden context, and clearly separate visible evidence from inference."
+        )
+        if memory_context:
+            system_prompt = f"{system_prompt}\n\n{memory_context}"
+        quota = await _enforce_rag_rate_limit(db, current_user, "deep")
+        response = client.chat.completions.create(
+            model=_DESKTOP_SCREENSHOT_SUMMARY_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}},
+                    ],
+                },
+            ],
+            temperature=0.2,
+            **chat_token_kwargs(_DESKTOP_SCREENSHOT_SUMMARY_MODEL, _DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS),
+        )
+        summary = _extract_chat_completion_text(response)
         if not summary:
             return JSONResponse(
-                status_code=503,
-                content={
-                    "error": "screenshot_summary_unavailable",
-                    "message": "Screenshot summary requires the selected Flash/Deep model backend to be configured.",
-                    "reasoning_mode": mode,
-                },
+                status_code=502,
+                content={"error": "empty_screenshot_summary", "message": "The model returned an empty summary."},
             )
         payload = {
             "summary": summary,
-            "model": model,
-            "backend": backend,
-            "reasoning_mode": mode,
+            "model": _DESKTOP_SCREENSHOT_SUMMARY_MODEL,
+            "long_term_memory": {
+                "backend": "sqlite+vector",
+                "injected": len(injected_memories),
+                "auto_extract": True,
+            },
         }
-        if fallback_to_flash:
-            payload["fallback_to_flash"] = True
         if quota and not quota.get("bypassed"):
             payload["quota"] = quota
+        _remember_exchange_later(
+            user_id=str(current_user.get("id") or ""),
+            user_message=prompt,
+            assistant_message=summary,
+            source="desktop_screenshot",
+        )
         return JSONResponse(content=payload)
     except HTTPException:
         raise
@@ -2569,7 +2975,6 @@ async def desktop_screenshot_summarize(
 
 @app.post("/pipeline/pdf")
 async def pipeline_pdf(request: PipelinePdfRequest, current_user: dict = Depends(get_current_user)):
-    _ensure_ingestion_enabled()
     try:
         result = run_pdf_pipeline(request.pdf_path, request.name)
         return JSONResponse(content=result)
@@ -2615,7 +3020,6 @@ async def upload_document(
     file: Optional[UploadFile] = File(default=None),
     current_user: dict = Depends(get_current_user),
 ):
-    _ensure_ingestion_enabled()
     try:
         file_bytes = await file.read() if file is not None else None
         is_admin = _is_admin_user(current_user)
@@ -2651,7 +3055,6 @@ async def upload_document_async(
     file: Optional[UploadFile] = File(default=None),
     current_user: dict = Depends(get_current_user),
 ):
-    _ensure_ingestion_enabled()
     try:
         assert_neo4j_ready()
         file_bytes = await file.read() if file is not None else None
@@ -2823,7 +3226,6 @@ async def delete_document(document_id: str, current_user: dict = Depends(get_cur
 
 @app.post("/documents/ingest-text")
 async def ingest_text_document(request: ManualDocumentRequest, current_user: dict = Depends(get_current_user)):
-    _ensure_ingestion_enabled()
     try:
         is_admin = _is_admin_user(current_user)
         result = ingest_uploaded_document(
@@ -2846,7 +3248,6 @@ async def ingest_text_document(request: ManualDocumentRequest, current_user: dic
 
 @app.post("/documents/rebuild-graph")
 async def rebuild_graph(request: RebuildDocumentGraphRequest, current_user: dict = Depends(get_current_user)):
-    _ensure_ingestion_enabled()
     try:
         result = rebuild_document_graph(request.model_dump())
         return JSONResponse(content=result)

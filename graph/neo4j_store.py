@@ -571,12 +571,16 @@ class Neo4jGraphStore:
         esg_domains: Optional[List[str]] = None,
         limit: int = 1000,
         document_id: Optional[str] = None,
+        document_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         filters: List[str] = []
-        params: Dict[str, Any] = {"limit": max(100, min(int(limit or 1000), 3000))}
+        params: Dict[str, Any] = {"limit": max(100, min(int(limit or 1000), 30000))}
         if document_id:
             filters.append("EXISTS { MATCH (:Document {id: $document_id})-[:HAS_ENTITY]->(e) }")
             params["document_id"] = document_id
+        if document_ids:
+            filters.append("EXISTS { MATCH (d:Document)-[:HAS_ENTITY]->(e) WHERE d.id IN $document_ids }")
+            params["document_ids"] = document_ids
         if years:
             filters.append("toString(e.year) IN $years")
             params["years"] = years
@@ -596,16 +600,18 @@ class Neo4jGraphStore:
                     MATCH (e:Entity)
                     {where_clause}
                     OPTIONAL MATCH (e)-[m:MENTIONED_IN]->(:Chunk)
+                    WITH e, properties(e) AS props, count(m) AS frequency
                     RETURN
                       e.id AS id,
-                      coalesce(e.name, e.canonical_name, e.normalized_name, e.id) AS label,
+                      coalesce(e.name, props.canonical_name, e.normalized_name, e.id) AS label,
                       coalesce(e.type, 'Entity') AS type,
-                      coalesce(e.esg_domain, 'general') AS esg_domain,
-                      coalesce(toString(e.year), '') AS year,
-                      coalesce(e.company, '') AS company,
+                      coalesce(props.esg_domain, 'general') AS esg_domain,
+                      coalesce(props.esg_domain, 'general') AS domain,
+                      coalesce(toString(props.year), '') AS year,
+                      coalesce(props.company, '') AS company,
                       coalesce(e.description, '') AS description,
                       coalesce(e.confidence, 0.75) AS confidence,
-                      count(m) AS frequency
+                      frequency AS frequency
                     ORDER BY frequency DESC, confidence DESC, label ASC
                     LIMIT $limit
                     """,
@@ -619,20 +625,26 @@ class Neo4jGraphStore:
                 edge_query = """
                     MATCH (source:Entity)-[r:RELATIONSHIP]->(target:Entity)
                     WHERE source.id IN $node_ids AND target.id IN $node_ids
+                      __DOCUMENT_EDGE_FILTER__
+                    WITH source, target, r, properties(r) AS props
                     RETURN
                       source.id AS source,
                       target.id AS target,
                       coalesce(r.relation_type, r.type, 'RELATED_TO') AS relationship_type,
                       coalesce(r.type, r.relation_type, 'RELATED_TO') AS type,
-                      coalesce(r.action, '') AS relationship_action,
-                      coalesce(r.nature, '') AS relationship_nature,
-                      coalesce(r.category, '') AS category,
+                      coalesce(props.action, '') AS relationship_action,
+                      coalesce(props.nature, '') AS relationship_nature,
+                      coalesce(props.category, '') AS category,
+                      coalesce(props.domain, props.esg_domain, props.category, 'general') AS domain,
                       coalesce(r.evidence, '') AS evidence,
                       coalesce(r.confidence, 0.75) AS confidence,
                       coalesce(r.document_id, '') AS document_id,
                       coalesce(r.chunk_id, '') AS chunk_id
                     LIMIT $limit
-                """
+                """.replace(
+                    "__DOCUMENT_EDGE_FILTER__",
+                    "AND r.document_id IN $document_ids" if document_ids else "",
+                )
                 edges = session.run(edge_query, node_ids=node_ids, limit=params["limit"]).data()
                 return {"nodes": nodes, "edges": edges}
 
