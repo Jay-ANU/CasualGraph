@@ -18,6 +18,7 @@ from configs.settings import (
     RAG_GRAPH_CONTEXT_MIN_SOURCES,
 )
 from notifications.client import notify_unanswerable_async
+from rag.answer_intent import classify_answer_intent
 from rag.chitchat import generate_chitchat_reply, stream_chitchat_reply
 from rag.graph_context import build_graph_context, graph_context_enabled
 from rag.multi_query import generate_query_variants
@@ -35,6 +36,7 @@ from rag.strategies import STRATEGY_REGISTRY
 
 INSUFFICIENT_CONTEXT_ANSWER = "The provided reports do not contain enough information to answer this question."
 _WORD_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_CJK_PATTERN = re.compile(r"[\u4e00-\u9fff]")
 
 
 def _resolve_tier(reasoning_mode: Optional[str]) -> str:
@@ -110,15 +112,61 @@ def _fallback_answer_from_sources(query: str, sources: List[Dict]) -> str:
     return " ".join(selected) if selected else INSUFFICIENT_CONTEXT_ANSWER
 
 
+def _fallback_general_answer(query: str, answer_mode: str) -> str:
+    if _CJK_PATTERN.search(str(query or "")):
+        prefix = "我没有检索到可引用的报告证据，下面是通用分析："
+        if answer_mode == "general":
+            prefix = "下面是通用建议，不是来自已上传报告的结论："
+        return f"{prefix}\n\n你可以把问题拆成：背景或定义、关键影响因素、可量化指标、风险与机会、最后形成可验证的结论。"
+    prefix = "I did not retrieve report evidence for this, so this is general analysis:"
+    if answer_mode == "general":
+        prefix = "General guidance, not sourced from uploaded reports:"
+    return (
+        f"{prefix}\n\nBreak the question into context, key drivers, measurable indicators, "
+        "risks and opportunities, then turn the result into claims that can be verified with sources."
+    )
+
+
 def _build_local_prompt(
     query: str,
     context: str,
     history_block: str,
     allow_speculation: bool,
     graph_context: Optional[str] = None,
+    answer_intent: str = "evidence",
 ) -> str:
     conversation_context = f"\nConversation history:\n{history_block}\n" if history_block else ""
     graph_context_block = f"\nGraph context:\n{graph_context}\n" if graph_context else ""
+    if answer_intent == "general":
+        return f"""You are a practical ESG, business, and academic research assistant.
+
+Answer this as general guidance. Do not claim the answer is based on uploaded reports, and do not cite report chunks.
+{conversation_context}
+
+Question:
+{query}
+
+Answer:
+"""
+
+    if answer_intent == "hybrid":
+        return f"""You are an ESG report question answering assistant.
+
+Use retrieved report excerpts first when they are available. Cite chunk ids only for claims supported by excerpts.
+If the excerpts do not fully answer the question, say so and then provide a clearly labeled "General analysis" section.
+Do not present general reasoning as report-backed.
+{conversation_context}
+{graph_context_block}
+
+Question:
+{query}
+
+Report excerpts:
+{context}
+
+Answer:
+"""
+
     if allow_speculation:
         return f"""You are an ESG report question answering assistant.
 
@@ -178,6 +226,7 @@ def _prepare_answer_context(
     mode: str,
     reasoning_mode: str = "flash",
     user_id: Optional[str],
+    answer_intent: Optional[Dict[str, Any]] = None,
 ) -> Dict:
     timings = _initialize_timings()
     total_started = time.perf_counter()
@@ -202,9 +251,20 @@ def _prepare_answer_context(
     timings["rewrite"] = round((time.perf_counter() - rewrite_started) * 1000, 2)
     retrieval_query = str(rewrite_result["query"]).strip() or query
     history_block = format_history(history, current_query=query)
+    if answer_intent is None:
+        answer_intent = classify_answer_intent(query=retrieval_query, history_block=history_block)
+    answer_mode = str((answer_intent or {}).get("mode") or "evidence").strip().lower()
 
     route_started = time.perf_counter()
-    routing = route_query(query=retrieval_query, history_block=history_block, mode=route_mode, filters=retrieval_filters)
+    if answer_mode == "general":
+        routing = {
+            "strategy": "no_retrieval",
+            "reason": "answer_intent_general",
+            "backend": str(answer_intent.get("backend") or "answer_intent"),
+            "fallback_chain": [],
+        }
+    else:
+        routing = route_query(query=retrieval_query, history_block=history_block, mode=route_mode, filters=retrieval_filters)
     timings["route"] = round((time.perf_counter() - route_started) * 1000, 2)
 
     retrieval_result: Dict = {"sources": [], "metadata": {}, "strategy": str(routing.get("strategy") or "vector_only")}
@@ -298,6 +358,7 @@ def _prepare_answer_context(
         "retrieval_query": retrieval_query,
         "history_block": history_block,
         "routing": routing,
+        "answer_intent": dict(answer_intent or {}),
         "retrieval_result": retrieval_result,
         "graph_ctx": graph_ctx,
         "sources": sources,
@@ -305,7 +366,7 @@ def _prepare_answer_context(
         "queries": queries,
         "layered_context": layered_context,
         "decomposition": decomposition,
-        "allow_speculation": bool(RAG_ALLOW_SPECULATION and not entity_scope_miss),
+        "allow_speculation": bool((answer_mode == "hybrid" or (RAG_ALLOW_SPECULATION and answer_mode != "evidence")) and not entity_scope_miss),
         "graph_context_text": graph_ctx.get("text") or None,
         "timings": timings,
         "total_started": total_started,
@@ -314,6 +375,11 @@ def _prepare_answer_context(
 
 
 def _intent_from_context(prepared: Dict, *, fallback: str) -> str:
+    answer_mode = str((prepared.get("answer_intent") or {}).get("mode") or "").lower()
+    if answer_mode == "general":
+        return "general_guidance"
+    if answer_mode == "hybrid":
+        return "hybrid"
     strategy = str((prepared.get("routing") or {}).get("strategy") or "").lower()
     if strategy == "no_retrieval":
         return "chitchat"
@@ -389,6 +455,7 @@ def _build_answer_blocks(*, answer: str, sources: List[Dict], graph_sources: Dic
 
 def _build_ask_payload(prepared: Dict, *, answer: str, backend: str) -> Dict:
     tier = prepared.get("tier") or prepared.get("reasoning_mode") or "flash"
+    answer_intent = dict(prepared.get("answer_intent") or {})
     payload = {
         "answer": answer,
         "sources": _serialize_sources(prepared["sources"]),
@@ -396,6 +463,8 @@ def _build_ask_payload(prepared: Dict, *, answer: str, backend: str) -> Dict:
         "backend": backend,
         "mode": "ask",
         "reasoning_mode": tier,
+        "answer_mode": answer_intent.get("mode") or "evidence",
+        "answer_intent": answer_intent,
         "intent": _intent_from_context(prepared, fallback="answer"),
         "original_query": prepared["query"],
         "rewritten_query": prepared["retrieval_query"],
@@ -432,6 +501,8 @@ def _build_stream_meta_payload(prepared: Dict) -> Dict:
         "rewritten_query": prepared["retrieval_query"],
         "mode": prepared["resolved_mode"],
         "reasoning_mode": prepared.get("reasoning_mode") or "flash",
+        "answer_mode": (prepared.get("answer_intent") or {}).get("mode") or "evidence",
+        "answer_intent": dict(prepared.get("answer_intent") or {}),
         "intent": _intent_from_context(prepared, fallback="answer"),
         "stream_stage": "context_ready",
     }
@@ -449,6 +520,7 @@ def answer_question(
     mode: str = "ask",
     reasoning_mode: str = "flash",
     user_id: Optional[str] = None,
+    answer_intent: Optional[Dict[str, Any]] = None,
 ) -> Dict:
     """Answer a question using retrieved ESG report chunks."""
     prepared = _prepare_answer_context(
@@ -459,11 +531,14 @@ def answer_question(
         mode=mode,
         reasoning_mode=reasoning_mode,
         user_id=user_id,
+        answer_intent=answer_intent,
     )
     timings = prepared["timings"]
     resolved_mode = prepared["resolved_mode"]
 
-    if prepared["routing"].get("strategy") == "no_retrieval":
+    answer_intent_mode = str((prepared.get("answer_intent") or {}).get("mode") or "evidence").lower()
+
+    if prepared["routing"].get("strategy") == "no_retrieval" and answer_intent_mode != "general":
         generate_started = time.perf_counter()
         answer = generate_chitchat_reply(query=query, history_block=prepared["history_block"])
         timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
@@ -476,6 +551,8 @@ def answer_question(
                 "backend": "chitchat",
                 "mode": resolved_mode,
                 "reasoning_mode": prepared.get("reasoning_mode") or "flash",
+                "answer_mode": answer_intent_mode,
+                "answer_intent": dict(prepared.get("answer_intent") or {}),
                 "intent": "chitchat",
                 "blocks": _build_answer_blocks(answer=answer, sources=[], graph_sources=chitchat_graph_sources, intent="chitchat"),
                 "original_query": query,
@@ -517,6 +594,7 @@ def answer_question(
                     graph_context=prepared["graph_context_text"],
                     priors=list(layered.get("priors") or []),
                     regulatory=list(layered.get("regulatory") or []),
+                    answer_intent=answer_intent_mode,
                 )
             except Exception as exc:
                 print(f"[rag] Claude Deep answering failed: {type(exc).__name__}: {exc}")
@@ -535,7 +613,7 @@ def answer_question(
         # Claude unavailable — record nothing yet; fall through to Flash logic.
         print("[rag] Deep tier requested but Claude unavailable — falling back to Flash.")
 
-    if not _has_grounding_context(prepared) and not prepared["allow_speculation"]:
+    if not _has_grounding_context(prepared) and not prepared["allow_speculation"] and answer_intent_mode == "evidence":
         timings["generate"] = 0.0
         _notify_unanswerable(
             query=query,
@@ -567,18 +645,19 @@ def answer_question(
         history_block=prepared["history_block"],
         allow_speculation=prepared["allow_speculation"],
         graph_context=prepared["graph_context_text"],
+        answer_intent=answer_intent_mode,
     )
 
     answer = None
     backend = None
-    answer_mode = RAG_ANSWER_MODE or "auto"
+    answer_backend_mode = RAG_ANSWER_MODE or "auto"
     generate_started = time.perf_counter()
 
-    if answer_mode == "extractive":
+    if answer_backend_mode == "extractive":
         answer = _fallback_answer_from_sources(query, prepared["sources"])
         backend = "extractive_only"
 
-    if answer is None and answer_mode in {"auto", "openai"} and openai_answering_available():
+    if answer is None and answer_backend_mode in {"auto", "openai"} and openai_answering_available():
         try:
             answer = generate_openai_rag_answer(
                 question=query,
@@ -586,6 +665,7 @@ def answer_question(
                 history_block=prepared["history_block"],
                 graph_context=prepared["graph_context_text"],
                 allow_speculation=prepared["allow_speculation"],
+                answer_intent=answer_intent_mode,
             )
             if answer:
                 backend = "openai" if _has_grounding_context(prepared) else "openai_speculative"
@@ -597,7 +677,7 @@ def answer_question(
             answer = None
 
     try:
-        if answer is None and answer_mode in {"auto", "local_qlora"}:
+        if answer is None and answer_backend_mode in {"auto", "local_qlora"}:
             import torch
             from ai_service.model_loader import get_model_and_tokenizer
 
@@ -624,8 +704,12 @@ def answer_question(
         answer = None
 
     if answer is None:
-        answer = _fallback_answer_from_sources(query, prepared["sources"])
-        backend = "extractive_fallback" if answer_mode == "auto" else f"{answer_mode}_fallback"
+        if answer_intent_mode in {"general", "hybrid"} and not prepared["sources"]:
+            answer = _fallback_general_answer(query, answer_intent_mode)
+            backend = f"{answer_intent_mode}_fallback"
+        else:
+            answer = _fallback_answer_from_sources(query, prepared["sources"])
+            backend = "extractive_fallback" if answer_backend_mode == "auto" else f"{answer_backend_mode}_fallback"
     timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
 
     if backend == "extractive_fallback":
@@ -670,6 +754,7 @@ def stream_answer_question(
     mode: str = "ask",
     reasoning_mode: str = "flash",
     user_id: Optional[str] = None,
+    answer_intent: Optional[Dict[str, Any]] = None,
 ) -> Iterator[Dict]:
     """Yield meta, token, and done events for the selected tier.
 
@@ -695,11 +780,13 @@ def stream_answer_question(
         mode=mode,
         reasoning_mode=reasoning_mode,
         user_id=user_id,
+        answer_intent=answer_intent,
     )
     timings = prepared["timings"]
     yield {"type": "meta", "payload": _build_stream_meta_payload(prepared)}
+    answer_intent_mode = str((prepared.get("answer_intent") or {}).get("mode") or "evidence").lower()
 
-    if prepared["routing"].get("strategy") == "no_retrieval":
+    if prepared["routing"].get("strategy") == "no_retrieval" and answer_intent_mode != "general":
         generate_started = time.perf_counter()
         parts: List[str] = []
         for chunk in stream_chitchat_reply(query=query, history_block=prepared["history_block"]):
@@ -719,6 +806,8 @@ def stream_answer_question(
                 "backend": "chitchat",
                 "mode": "ask",
                 "reasoning_mode": prepared.get("reasoning_mode") or "flash",
+                "answer_mode": answer_intent_mode,
+                "answer_intent": dict(prepared.get("answer_intent") or {}),
                 "intent": "chitchat",
                 "blocks": _build_answer_blocks(answer=answer, sources=[], graph_sources=chitchat_graph_sources, intent="chitchat"),
                 "original_query": query,
@@ -744,7 +833,7 @@ def stream_answer_question(
         yield {"type": "done", "payload": done_payload}
         return
 
-    if not _has_grounding_context(prepared) and not prepared["allow_speculation"]:
+    if not _has_grounding_context(prepared) and not prepared["allow_speculation"] and answer_intent_mode == "evidence":
         answer = INSUFFICIENT_CONTEXT_ANSWER
         yield {"type": "token", "text": answer}
         timings["generate"] = 0.0
@@ -771,12 +860,12 @@ def stream_answer_question(
 
     answer = None
     backend = None
-    answer_mode = RAG_ANSWER_MODE or "auto"
+    answer_backend_mode = RAG_ANSWER_MODE or "auto"
     generate_started = time.perf_counter()
     emitted_parts: List[str] = []
     tier = prepared.get("tier") or "flash"
 
-    if answer_mode == "extractive":
+    if answer_backend_mode == "extractive":
         answer = _fallback_answer_from_sources(query, prepared["sources"])
         backend = "extractive_only"
         if answer:
@@ -798,6 +887,7 @@ def stream_answer_question(
                 graph_context=prepared["graph_context_text"],
                 priors=list(layered.get("priors") or []),
                 regulatory=list(layered.get("regulatory") or []),
+                answer_intent=answer_intent_mode,
             ):
                 if not chunk:
                     continue
@@ -822,7 +912,7 @@ def stream_answer_question(
         # Deep requested but Anthropic never configured — tell the FE upfront.
         yield {"type": "meta", "payload": {"fallback_to_flash": True, "reason": "anthropic_not_configured"}}
 
-    if answer is None and answer_mode in {"auto", "openai"} and openai_answering_available():
+    if answer is None and answer_backend_mode in {"auto", "openai"} and openai_answering_available():
         try:
             for chunk in stream_openai_rag_answer(
                 question=query,
@@ -830,6 +920,7 @@ def stream_answer_question(
                 history_block=prepared["history_block"],
                 graph_context=prepared["graph_context_text"],
                 allow_speculation=prepared["allow_speculation"],
+                answer_intent=answer_intent_mode,
             ):
                 if not chunk:
                     continue
@@ -848,7 +939,7 @@ def stream_answer_question(
             answer = None
 
     try:
-        if answer is None and answer_mode in {"auto", "local_qlora"}:
+        if answer is None and answer_backend_mode in {"auto", "local_qlora"}:
             import torch
             from ai_service.model_loader import get_model_and_tokenizer
 
@@ -863,6 +954,7 @@ def stream_answer_question(
                 history_block=prepared["history_block"],
                 allow_speculation=prepared["allow_speculation"],
                 graph_context=prepared["graph_context_text"],
+                answer_intent=answer_intent_mode,
             )
             model, tokenizer = get_model_and_tokenizer()
             inputs = tokenizer(prompt, return_tensors="pt")
@@ -884,8 +976,12 @@ def stream_answer_question(
         answer = None
 
     if answer is None:
-        answer = _fallback_answer_from_sources(query, prepared["sources"])
-        backend = "extractive_fallback" if answer_mode == "auto" else f"{answer_mode}_fallback"
+        if answer_intent_mode in {"general", "hybrid"} and not prepared["sources"]:
+            answer = _fallback_general_answer(query, answer_intent_mode)
+            backend = f"{answer_intent_mode}_fallback"
+        else:
+            answer = _fallback_answer_from_sources(query, prepared["sources"])
+            backend = "extractive_fallback" if answer_backend_mode == "auto" else f"{answer_backend_mode}_fallback"
         yield {"type": "token", "text": answer}
     timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
 

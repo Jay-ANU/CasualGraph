@@ -180,6 +180,7 @@ RAG_DECOMPOSE_MAX_SUBQ = max(1, int(os.getenv("RAG_DECOMPOSE_MAX_SUBQ", "3")))
 RAG_ROUTER_ENABLED = os.getenv("RAG_ROUTER_ENABLED", "true").lower() == "true"
 RAG_ROUTER_LLM_ENABLED = os.getenv("RAG_ROUTER_LLM_ENABLED", "false").lower() == "true"
 RAG_CHITCHAT_ENABLED = os.getenv("RAG_CHITCHAT_ENABLED", "true").lower() == "true"
+RAG_ANSWER_INTENT_ROUTER_ENABLED = os.getenv("RAG_ANSWER_INTENT_ROUTER_ENABLED", "true").lower() == "true"
 
 NOTIFICATIONS_ENABLED = os.getenv("NOTIFICATIONS_ENABLED", "false").lower() == "true"
 NOTIFICATIONS_DB_PATH = os.getenv("NOTIFICATIONS_DB_PATH", "backend/notifications.db")
@@ -240,6 +241,9 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
 DEEPSEEK_TIMEOUT = float(os.getenv("DEEPSEEK_TIMEOUT", "60"))
 DEEPSEEK_EXTRACTION_MODEL = os.getenv("DEEPSEEK_EXTRACTION_MODEL", DEEPSEEK_MODEL).strip()
 DEEPSEEK_EXTRACTION_MAX_TOKENS = int(os.getenv("DEEPSEEK_EXTRACTION_MAX_TOKENS", "8000"))
+RAG_ANSWER_INTENT_ROUTER_MODEL = os.getenv("RAG_ANSWER_INTENT_ROUTER_MODEL", DEEPSEEK_MODEL).strip()
+RAG_ANSWER_INTENT_ROUTER_TIMEOUT = float(os.getenv("RAG_ANSWER_INTENT_ROUTER_TIMEOUT", "4"))
+RAG_ANSWER_INTENT_ROUTER_MAX_TOKENS = int(os.getenv("RAG_ANSWER_INTENT_ROUTER_MAX_TOKENS", "240"))
 ESG_EXTRACTION_BACKEND = os.getenv("ESG_EXTRACTION_BACKEND", "remote").strip().lower()
 INGESTION_ENABLED = os.getenv("INGESTION_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 

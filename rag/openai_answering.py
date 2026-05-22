@@ -76,11 +76,28 @@ def _build_openai_messages(
     history_block: str,
     graph_context: Optional[str],
     allow_speculation: bool,
+    answer_intent: str = "evidence",
 ) -> List[Dict]:
     context = "\n\n".join(f"[{item['chunk_id']}] {item['text']}" for item in sources) if sources else "No relevant report excerpts were retrieved."
     history_section = f"\nConversation history:\n{history_block}\n" if history_block else ""
     graph_section = f"\nGraph context:\n{graph_context}\n" if graph_context else ""
-    if allow_speculation:
+    if answer_intent == "general":
+        system_prompt = (
+            "You are a practical ESG, business, and academic research assistant. "
+            "The user is asking for general guidance, not a report-grounded answer. "
+            "Answer directly and helpfully. Do not claim that your answer comes from uploaded reports, "
+            "and do not include report citations. If useful, briefly label the answer as general guidance."
+        )
+    elif answer_intent == "hybrid":
+        system_prompt = (
+            "You are an ESG report question answering assistant. "
+            "Use retrieved report evidence first when it is available and cite chunk ids like [chunk_0] "
+            "only for claims supported by retrieved excerpts. "
+            "If report evidence is incomplete or missing, say that clearly and then provide a separate "
+            "'General analysis' section based on general knowledge. "
+            "Never present general reasoning as if it were supported by the reports."
+        )
+    elif allow_speculation:
         system_prompt = (
             "You are an ESG report question answering assistant. "
             "Use the retrieved report evidence first when it is available. "
@@ -98,13 +115,20 @@ def _build_openai_messages(
             "Cite supporting chunk ids like [chunk_0] when you make factual claims. "
             "Do not invent metrics, dates, or company statements."
         )
-    user_prompt = (
-        f"{history_section}"
-        f"{graph_section}"
-        f"\nQuestion:\n{question}\n\n"
-        f"Report excerpts:\n{context}\n\n"
-        "Answer:"
-    )
+    if answer_intent == "general":
+        user_prompt = (
+            f"{history_section}"
+            f"\nQuestion:\n{question}\n\n"
+            "Answer as general guidance:"
+        )
+    else:
+        user_prompt = (
+            f"{history_section}"
+            f"{graph_section}"
+            f"\nQuestion:\n{question}\n\n"
+            f"Report excerpts:\n{context}\n\n"
+            "Answer:"
+        )
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -117,6 +141,7 @@ def generate_openai_rag_answer(
     history_block: str = "",
     graph_context: Optional[str] = None,
     allow_speculation: bool = False,
+    answer_intent: str = "evidence",
 ) -> Optional[str]:
     """Generate a grounded answer with OpenAI, or return None on failure."""
     if not openai_answering_available():
@@ -133,6 +158,7 @@ def generate_openai_rag_answer(
         history_block=history_block,
         graph_context=graph_context,
         allow_speculation=allow_speculation,
+        answer_intent=answer_intent,
     )
 
     if hasattr(openai, "OpenAI"):
@@ -166,6 +192,7 @@ def stream_openai_rag_answer(
     history_block: str = "",
     graph_context: Optional[str] = None,
     allow_speculation: bool = False,
+    answer_intent: str = "evidence",
 ) -> Iterator[str]:
     """Stream a grounded OpenAI answer token-by-token when supported."""
     if not openai_answering_available():
@@ -182,6 +209,7 @@ def stream_openai_rag_answer(
         history_block=history_block,
         graph_context=graph_context,
         allow_speculation=allow_speculation,
+        answer_intent=answer_intent,
     )
 
     if not hasattr(openai, "OpenAI"):
@@ -191,6 +219,7 @@ def stream_openai_rag_answer(
             history_block=history_block,
             graph_context=graph_context,
             allow_speculation=allow_speculation,
+            answer_intent=answer_intent,
         )
         if answer:
             yield answer

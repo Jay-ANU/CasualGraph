@@ -850,6 +850,8 @@ from rag.embeddings import embedding_backend_is_real, get_embedding_backend, get
 from rag.openai_client import get_openai_client
 from rag.openai_compat import chat_token_kwargs
 from rag.rag_pipeline import answer_question, stream_answer_question
+from rag.answer_intent import classify_answer_intent
+from rag.query_rewriter import format_history
 from scripts.run_pdf_pipeline import run_pdf_pipeline
 
 
@@ -1560,6 +1562,46 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
         filters["entity_scope_miss"] = True
         filters["entity_scope_terms"] = entity_scope_terms
 
+    return {
+        "filters": filters,
+        "history": history,
+        "memory_backend": memory_backend,
+        "user_id": str(current_user["id"]) if current_user else None,
+        "error_response": None,
+    }
+
+
+def _load_request_history_for_rag(request: RagAskRequest, current_user: Optional[dict]) -> Tuple[List[Dict[str, Any]], str]:
+    history = list(request.history or [])
+    memory_backend = "disabled"
+    if request.session_id and current_user:
+        try:
+            history = chat_memory_service.get_recent_history(
+                user_id=str(current_user["id"]),
+                session_id=str(request.session_id),
+            )
+            memory_backend = "redis"
+        except RedisUnavailableError:
+            memory_backend = "disabled"
+    return history, memory_backend
+
+
+def _resolve_general_rag_request_context(
+    request: RagAskRequest,
+    current_user: Optional[dict],
+    history: List[Dict[str, Any]],
+    memory_backend: str,
+) -> Dict[str, Any]:
+    filters: Dict[str, Any] = {
+        "document_ids": [],
+        "preferred_document_id": None,
+        "document_group": request.document_group,
+        "source_type": request.source_type,
+        "domain": request.domain,
+        "answer_mode": "general",
+    }
+    if current_user and not _is_admin_user(current_user):
+        filters["owner_user_id"] = str(current_user.get("id") or "")
     return {
         "filters": filters,
         "history": history,
@@ -2714,7 +2756,15 @@ async def rag_ask(
     try:
         if not current_user:
             await _enforce_rag_rate_limit(db, current_user, request.reasoning_mode)
-        context = _resolve_rag_request_context(request, current_user)
+        pre_history, pre_memory_backend = _load_request_history_for_rag(request, current_user)
+        answer_intent = classify_answer_intent(
+            query=request.question,
+            history_block=format_history(pre_history, current_query=request.question),
+        )
+        if str(answer_intent.get("mode") or "") == "general":
+            context = _resolve_general_rag_request_context(request, current_user, pre_history, pre_memory_backend)
+        else:
+            context = _resolve_rag_request_context(request, current_user)
         if context["error_response"] is not None:
             return context["error_response"]
         quota = await _enforce_rag_rate_limit(db, current_user, request.reasoning_mode) if current_user else None
@@ -2728,6 +2778,7 @@ async def rag_ask(
             mode=request.mode or "ask",
             reasoning_mode=request.reasoning_mode or "flash",
             user_id=context["user_id"],
+            answer_intent=answer_intent,
         )
         result["memory_backend"] = context["memory_backend"]
         result["long_term_memory"] = {
@@ -2815,7 +2866,15 @@ async def rag_ask_stream(
     try:
         if not current_user:
             await _enforce_rag_rate_limit(db, current_user, request.reasoning_mode)
-        context = _resolve_rag_request_context(request, current_user)
+        pre_history, pre_memory_backend = _load_request_history_for_rag(request, current_user)
+        answer_intent = classify_answer_intent(
+            query=request.question,
+            history_block=format_history(pre_history, current_query=request.question),
+        )
+        if str(answer_intent.get("mode") or "") == "general":
+            context = _resolve_general_rag_request_context(request, current_user, pre_history, pre_memory_backend)
+        else:
+            context = _resolve_rag_request_context(request, current_user)
         if context["error_response"] is not None:
             return context["error_response"]
         quota = await _enforce_rag_rate_limit(db, current_user, request.reasoning_mode) if current_user else None
@@ -2831,6 +2890,7 @@ async def rag_ask_stream(
                 mode=request.mode or "ask",
                 reasoning_mode=request.reasoning_mode or "flash",
                 user_id=context["user_id"],
+                answer_intent=answer_intent,
             ):
                 if event.get("type") == "done":
                     payload = dict(event.get("payload") or {})
@@ -2870,6 +2930,7 @@ async def rag_ask_stream(
                 mode=request.mode or "ask",
                 reasoning_mode=request.reasoning_mode or "flash",
                 user_id=context["user_id"],
+                answer_intent=answer_intent,
             )
             result["memory_backend"] = context["memory_backend"]
             result["long_term_memory"] = {

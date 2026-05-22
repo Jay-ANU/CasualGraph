@@ -105,6 +105,7 @@ def _build_claude_request(
     regulatory: Optional[List[Dict]],
     graph_context: Optional[str],
     history_block: str,
+    answer_intent: str = "evidence",
 ) -> Dict[str, object]:
     """Build the (system, user) payload Claude expects."""
     sections: List[str] = []
@@ -122,16 +123,42 @@ def _build_claude_request(
     if graph_context:
         sections.append(f"<graph>\n{graph_context.strip()}\n</graph>")
     sections.append(f"<question>\n{question.strip()}\n</question>")
-    if not sources_block and not priors_block and not reg_block:
+    if answer_intent == "general":
+        sections.append(
+            "<instruction>This is a general guidance question. Answer directly without requiring report evidence, and do not cite uploaded-report markers.</instruction>"
+        )
+    elif answer_intent == "hybrid":
+        sections.append(
+            "<instruction>Use report evidence first when available. If evidence is incomplete or missing, clearly separate a General analysis section and do not present it as report-backed.</instruction>"
+        )
+    elif not sources_block and not priors_block and not reg_block:
         # Tell the model upfront so it follows the INSUFFICIENT_CONTEXT contract.
         sections.append(
             "<note>No relevant report excerpts were retrieved for this question.</note>"
         )
     user_content = "\n\n".join(sections)
     return {
-        "system": _SYSTEM_PROMPT,
+        "system": _system_prompt_for_intent(answer_intent),
         "messages": [{"role": "user", "content": user_content}],
     }
+
+
+def _system_prompt_for_intent(answer_intent: str) -> str:
+    if answer_intent == "general":
+        return (
+            "You are a practical ESG, business, and academic research assistant. "
+            "The user is asking for general guidance, not a report-grounded answer. "
+            "Answer directly in concise markdown. Do not claim that your answer comes from uploaded reports, "
+            "do not invent company-specific facts, and do not include report citations."
+        )
+    if answer_intent == "hybrid":
+        return (
+            _SYSTEM_PROMPT
+            + "\n\nFor hybrid questions, use retrieved report evidence first and cite it. "
+            "If report evidence is incomplete or missing, clearly separate a 'General analysis' section. "
+            "Do not present general reasoning as report-backed."
+        )
+    return _SYSTEM_PROMPT
 
 
 # The newer Opus 4.x models reject `temperature` as a deprecated parameter
@@ -164,6 +191,7 @@ def generate_claude_deep_rag_answer(
     graph_context: Optional[str] = None,
     priors: Optional[List[Dict]] = None,
     regulatory: Optional[List[Dict]] = None,
+    answer_intent: str = "evidence",
 ) -> Optional[str]:
     """Non-streaming Deep answer. Returns markdown, or None to trigger fallback."""
     if not claude_answering_available():
@@ -179,6 +207,7 @@ def generate_claude_deep_rag_answer(
         regulatory=regulatory,
         graph_context=graph_context,
         history_block=history_block,
+        answer_intent=answer_intent,
     )
 
     try:
@@ -220,6 +249,7 @@ def stream_claude_deep_rag_answer(
     graph_context: Optional[str] = None,
     priors: Optional[List[Dict]] = None,
     regulatory: Optional[List[Dict]] = None,
+    answer_intent: str = "evidence",
 ) -> Iterator[str]:
     """Stream a Deep markdown answer token-by-token. Yields nothing on failure."""
     if not claude_answering_available():
@@ -235,6 +265,7 @@ def stream_claude_deep_rag_answer(
         regulatory=regulatory,
         graph_context=graph_context,
         history_block=history_block,
+        answer_intent=answer_intent,
     )
 
     parts: List[str] = []
