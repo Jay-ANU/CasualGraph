@@ -45,7 +45,21 @@ _APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).strip()
 _JWT_SECRET = os.getenv("JWT_SECRET", _DEFAULT_JWT_SECRET).strip() or _DEFAULT_JWT_SECRET
 _JWT_ALGORITHM = "HS256"
 _TOKEN_MINUTES = 60 * 24  # 1 day
-_DB_PATH = os.path.join(os.path.dirname(__file__), "auth.db")
+
+
+def _resolve_auth_db_path() -> str:
+    configured = os.getenv("AUTH_DB_PATH", "").strip()
+    if configured:
+        return configured
+
+    fly_data_dir = Path("/data")
+    if fly_data_dir.exists() and os.access(fly_data_dir, os.W_OK):
+        return str(fly_data_dir / "auth.db")
+
+    return str(Path(__file__).resolve().parent / "auth.db")
+
+
+_DB_PATH = _resolve_auth_db_path()
 _FEEDBACK_DB_PATH = os.path.join(os.path.dirname(__file__), "backend", "causalgraph.db")
 _security = HTTPBearer(auto_error=False)
 _CLEANUP_EXECUTOR = ThreadPoolExecutor(max_workers=1)
@@ -191,11 +205,13 @@ _DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES = max(256_000, int(os.getenv("DESKTOP_SCREEN
 
 
 async def _get_db():
+    Path(_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(_DB_PATH) as db:
         yield db
 
 
 async def _init_auth_db():
+    Path(_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (

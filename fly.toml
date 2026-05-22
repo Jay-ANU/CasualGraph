@@ -5,6 +5,7 @@ primary_region = "syd"
 
 [env]
   PORT = "8000"
+  AUTH_DB_PATH = "/data/auth.db"
 
 [mounts]
   source = "casualgraph_data"
