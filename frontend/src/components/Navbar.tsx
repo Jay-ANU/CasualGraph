@@ -4,7 +4,6 @@ import { motion } from 'framer-motion';
 import { ChevronDown, Download, LogOut, Menu, ShieldCheck, UserCircle, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import BrandLogo from './BrandLogo';
-import { desktopMacArm64DownloadUrl } from '../config/downloads';
 
 // MiniMax-style navigation:
 //   white canvas + hairline bottom border, ~64px tall.
@@ -20,6 +19,7 @@ const Navbar: React.FC = () => {
   const navigation = [
     { name: 'Home',         href: '/' },
     { name: 'Graph Engine', href: '/causal-inference' },
+    { name: 'Desktop',      href: '/desktop' },
     { name: 'Company',      href: '/about' },
   ];
 
@@ -78,10 +78,10 @@ const Navbar: React.FC = () => {
         <div className="hidden items-center gap-2 justify-self-end md:flex">
           {isAuthenticated ? (
             <>
-              <a href={desktopMacArm64DownloadUrl} className="cg-btn-tertiary" download>
+              <Link to="/desktop" className="cg-btn-tertiary">
                 <Download className="h-4 w-4" />
                 Desktop
-              </a>
+              </Link>
               <Link to="/agent" className="cg-btn-primary">
                 Open Research Desk
               </Link>
@@ -136,10 +136,10 @@ const Navbar: React.FC = () => {
             </>
           ) : (
             <>
-              <a href={desktopMacArm64DownloadUrl} className="cg-btn-tertiary" download>
+              <Link to="/desktop" className="cg-btn-tertiary">
                 <Download className="h-4 w-4" />
                 Desktop
-              </a>
+              </Link>
               <Link to="/about" className="cg-btn-tertiary">
                 Contact
               </Link>
@@ -194,10 +194,10 @@ const Navbar: React.FC = () => {
                 <Link to="/agent" onClick={() => setIsOpen(false)} className="cg-btn-primary w-full">
                   Open Research Desk
                 </Link>
-                <a href={desktopMacArm64DownloadUrl} className="cg-btn-tertiary w-full justify-center" download>
+                <Link to="/desktop" onClick={() => setIsOpen(false)} className="cg-btn-tertiary w-full justify-center">
                   <Download className="h-4 w-4" />
                   Download Desktop
-                </a>
+                </Link>
                 <div className="rounded-xl border border-hairline bg-surface-soft p-2">
                   <div className="px-2 py-2">
                     <div className="truncate text-sm font-semibold text-ink">{userLabel}</div>
@@ -225,9 +225,9 @@ const Navbar: React.FC = () => {
               </div>
             ) : (
               <div className="flex gap-2">
-                <a href={desktopMacArm64DownloadUrl} className="cg-btn-tertiary flex-1 justify-center" download>
+                <Link to="/desktop" onClick={() => setIsOpen(false)} className="cg-btn-tertiary flex-1 justify-center">
                   Desktop
-                </a>
+                </Link>
                 <Link to="/login" onClick={() => setIsOpen(false)} className="cg-btn-primary flex-1">
                   Sign in
                 </Link>
