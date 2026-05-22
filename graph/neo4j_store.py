@@ -575,11 +575,13 @@ class Neo4jGraphStore:
     ) -> Dict[str, Any]:
         filters: List[str] = []
         params: Dict[str, Any] = {"limit": max(100, min(int(limit or 1000), 30000))}
+        node_match = "MATCH (e:Entity)"
         if document_id:
-            filters.append("EXISTS { MATCH (:Document {id: $document_id})-[:HAS_ENTITY]->(e) }")
+            node_match = "MATCH (:Document {id: $document_id})-[:HAS_ENTITY]->(e:Entity)"
             params["document_id"] = document_id
-        if document_ids:
-            filters.append("EXISTS { MATCH (d:Document)-[:HAS_ENTITY]->(e) WHERE d.id IN $document_ids }")
+        elif document_ids:
+            node_match = "MATCH (d:Document)-[:HAS_ENTITY]->(e:Entity)"
+            filters.append("d.id IN $document_ids")
             params["document_ids"] = document_ids
         if years:
             filters.append("toString(e.year) IN $years")
@@ -597,8 +599,9 @@ class Neo4jGraphStore:
             with self._session() as session:
                 nodes = session.run(
                     f"""
-                    MATCH (e:Entity)
+                    {node_match}
                     {where_clause}
+                    WITH DISTINCT e
                     OPTIONAL MATCH (e)-[m:MENTIONED_IN]->(:Chunk)
                     WITH e, properties(e) AS props, count(m) AS frequency
                     RETURN

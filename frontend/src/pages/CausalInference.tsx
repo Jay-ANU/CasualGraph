@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -133,29 +133,41 @@ const compactNumber = (value: number) => {
   return value.toLocaleString();
 };
 
+const GRAPH_OVERVIEW_NODE_LIMIT = 1500;
+const GRAPH_OVERVIEW_EDGE_LIMIT = 3000;
+const GRAPH_FULL_NODE_LIMIT = 25000;
+const GRAPH_FULL_EDGE_LIMIT = 30000;
+
 const CausalInference: React.FC = () => {
   const [selectedWorkflow, setSelectedWorkflow] = useState('disclosures');
   const [knowledgeGraph, setKnowledgeGraph] = useState<GraphData | null>(null);
   const [graphStatus, setGraphStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [graphScope, setGraphScope] = useState<'overview' | 'full'>('overview');
+  const [fullGraphLoading, setFullGraphLoading] = useState(false);
   const navigate = useNavigate();
   const { token } = useAuth();
   const apiBase = useMemo(() => getApiBase(), []);
+
+  const fetchKnowledgeGraph = useCallback(async (nodeLimit: number, edgeLimit: number) => {
+    const response = await fetch(`${apiBase}/public/knowledge-graph?limit=${nodeLimit}&edge_limit=${edgeLimit}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.message || payload?.error || 'Unable to load knowledge graph');
+    }
+    return normalizeGraphPayload(payload);
+  }, [apiBase, token]);
 
   useEffect(() => {
     let cancelled = false;
     const loadGraph = async () => {
       setGraphStatus('loading');
       try {
-        const response = await fetch(`${apiBase}/public/knowledge-graph?limit=25000&edge_limit=30000`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) {
-          throw new Error(payload?.message || payload?.error || 'Unable to load knowledge graph');
-        }
-        const graph = normalizeGraphPayload(payload);
+        const graph = await fetchKnowledgeGraph(GRAPH_OVERVIEW_NODE_LIMIT, GRAPH_OVERVIEW_EDGE_LIMIT);
         if (cancelled) return;
         setKnowledgeGraph(graph);
+        setGraphScope('overview');
         setGraphStatus(graph.nodes.length > 0 ? 'ready' : 'empty');
       } catch (error) {
         if (cancelled) return;
@@ -168,7 +180,22 @@ const CausalInference: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [apiBase, token]);
+  }, [fetchKnowledgeGraph]);
+
+  const loadCompleteGraph = async () => {
+    if (fullGraphLoading || graphScope === 'full') return;
+    setFullGraphLoading(true);
+    try {
+      const graph = await fetchKnowledgeGraph(GRAPH_FULL_NODE_LIMIT, GRAPH_FULL_EDGE_LIMIT);
+      setKnowledgeGraph(graph);
+      setGraphScope('full');
+      setGraphStatus(graph.nodes.length > 0 ? 'ready' : 'empty');
+    } catch (error) {
+      console.error('Failed to load complete knowledge graph:', error);
+    } finally {
+      setFullGraphLoading(false);
+    }
+  };
 
   const pipeline = [
     {
@@ -341,6 +368,15 @@ const CausalInference: React.FC = () => {
               The clusters are only the review lens. Every visible dot is a real extracted entity from the backend graph, grouped by ESG/AI semantics.
             </p>
           </div>
+          {knowledgeGraph && knowledgeGraph.nodes.length > 0 && graphScope !== 'full' && (
+            <button
+              onClick={loadCompleteGraph}
+              disabled={fullGraphLoading}
+              className="cg-btn-secondary shrink-0 justify-center disabled:cursor-wait disabled:opacity-60"
+            >
+              {fullGraphLoading ? 'Loading complete graph' : 'Load complete graph'}
+            </button>
+          )}
           <div className="hidden h-px flex-1 bg-hairline lg:block" />
         </div>
 

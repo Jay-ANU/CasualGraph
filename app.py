@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -891,6 +892,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.mount("/kg-static", StaticFiles(directory=str(_KG_VIEW_STATIC)), name="kg-static")
 
