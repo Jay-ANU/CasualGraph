@@ -54,6 +54,11 @@ _REPORT_OBJECT_PATTERN = re.compile(
 )
 _BROAD_ENTITY_REQUEST_PATTERN = re.compile(r"\b(tell me something about|tell me about|overview of|who is|what is)\b|介绍一下|讲讲", re.I)
 _SPECIFIC_ENTITY_PATTERN = re.compile(r"\b[A-Z][A-Za-z0-9&.-]+(?:\s+[A-Z][A-Za-z0-9&.-]+){0,4}\b")
+_FOLLOWUP_REFERENCE_PATTERN = re.compile(
+    r"\b(this|that|it|they|them|those|these|above|previous|earlier|same|the former|the latter)\b|"
+    r"这个|那个|这些|那些|它|他们|上述|上面|前面|刚才|同样|这份|该",
+    re.I,
+)
 _QUESTION_WORDS = {"what", "how", "why", "when", "where", "which", "who", "tell", "give", "can", "could"}
 _VALID_MODES = {"evidence", "general", "hybrid"}
 
@@ -75,11 +80,16 @@ def classify_answer_intent(query: str, history_block: str = "") -> AnswerIntent:
             _intent_cache.move_to_end(cache_key)
             return dict(cached)
 
+    rule_result = _classify_with_rules(text)
     llm_result: Optional[AnswerIntent] = None
-    if RAG_ANSWER_INTENT_ROUTER_ENABLED and deepseek_configured():
+    if (
+        RAG_ANSWER_INTENT_ROUTER_ENABLED
+        and deepseek_configured()
+        and not _is_high_confidence_rule(text, history_block, rule_result)
+    ):
         llm_result = _classify_with_deepseek(query=text, history_block=history_block)
 
-    result = _apply_policy_overrides(text, llm_result or _classify_with_rules(text))
+    result = _apply_policy_overrides(text, llm_result or rule_result)
     with _intent_cache_lock:
         _intent_cache[cache_key] = dict(result)
         _intent_cache.move_to_end(cache_key)
@@ -178,6 +188,38 @@ def _classify_with_rules(query: str) -> AnswerIntent:
     else:
         mode = "general"
     return _intent_for_mode(mode, reason="rule_classification", backend="heuristic", confidence=0.55)
+
+
+def _is_high_confidence_rule(query: str, history_block: str, intent: AnswerIntent) -> bool:
+    """Skip the LLM router for cases where local policy is already decisive."""
+
+    text = str(query or "").strip()
+    if not text:
+        return True
+
+    has_evidence_marker = bool(_EVIDENCE_MARKER_PATTERN.search(text))
+    has_predictive_marker = bool(_PREDICTIVE_PATTERN.search(text))
+    has_general_marker = bool(_GENERAL_PATTERN.search(text))
+    has_report_object = bool(_REPORT_OBJECT_PATTERN.search(text))
+    has_broad_entity_request = bool(_BROAD_ENTITY_REQUEST_PATTERN.search(text))
+    has_specific_entity = _has_specific_entity(text)
+    has_history = bool(str(history_block or "").strip())
+    is_followup_reference = bool(_FOLLOWUP_REFERENCE_PATTERN.search(text))
+
+    if has_history and is_followup_reference and not has_evidence_marker and not has_report_object:
+        return False
+    if has_evidence_marker or has_report_object:
+        return True
+    if has_predictive_marker:
+        return True
+    if has_broad_entity_request and has_specific_entity:
+        return True
+    if has_general_marker and not has_specific_entity and not is_followup_reference:
+        return True
+    if not has_history and not has_specific_entity:
+        return True
+
+    return float(intent.get("confidence") or 0.0) >= 0.85
 
 
 def _apply_policy_overrides(query: str, intent: AnswerIntent) -> AnswerIntent:
