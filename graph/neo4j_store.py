@@ -622,6 +622,15 @@ class Neo4jGraphStore:
                 if not node_ids:
                     return {"nodes": [], "edges": []}
 
+                edge_document_filter = ""
+                edge_params: Dict[str, Any] = {"node_ids": node_ids, "limit": params["limit"]}
+                if document_ids:
+                    edge_document_filter = "AND r.document_id IN $document_ids"
+                    edge_params["document_ids"] = params["document_ids"]
+                elif document_id:
+                    edge_document_filter = "AND r.document_id = $document_id"
+                    edge_params["document_id"] = params["document_id"]
+
                 edge_query = """
                     MATCH (source:Entity)-[r:RELATIONSHIP]->(target:Entity)
                     WHERE source.id IN $node_ids AND target.id IN $node_ids
@@ -643,9 +652,9 @@ class Neo4jGraphStore:
                     LIMIT $limit
                 """.replace(
                     "__DOCUMENT_EDGE_FILTER__",
-                    "AND r.document_id IN $document_ids" if document_ids else "",
+                    edge_document_filter,
                 )
-                edges = session.run(edge_query, node_ids=node_ids, limit=params["limit"]).data()
+                edges = session.run(edge_query, **edge_params).data()
                 return {"nodes": nodes, "edges": edges}
 
         return self._run_with_reconnect(operation)
