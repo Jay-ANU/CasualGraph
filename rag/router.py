@@ -10,18 +10,17 @@ import threading
 from typing import Dict, Optional
 
 from configs.settings import (
-    OPENAI_API_KEY,
-    OPENAI_BASE_URL,
-    OPENAI_MODEL,
-    OPENAI_TIMEOUT,
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL,
     RAG_CHITCHAT_ENABLED,
     RAG_ROUTER_ENABLED,
     RAG_ROUTER_LLM_ENABLED,
-    openai_configured,
+    RAG_ROUTER_MAX_TOKENS,
+    RAG_ROUTER_MODEL,
+    RAG_ROUTER_TIMEOUT,
+    deepseek_configured,
 )
 from rag.esg_lexicon import ESG_KEYWORDS
-from rag.openai_client import get_openai_client
-from rag.openai_compat import chat_token_kwargs
 
 
 _WORD_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
@@ -47,7 +46,7 @@ def route_query(query: str, history_block: str, mode: str, filters: Optional[Dic
         return {"strategy": strategy, "reason": "router_disabled", "backend": "disabled", "fallback_chain": _fallbacks(strategy)}
 
     heuristic = _route_with_heuristics(query=query, mode=mode, filters=filters, history_block=history_block)
-    if heuristic["strategy"] != "vector_only" or not RAG_ROUTER_LLM_ENABLED:
+    if heuristic["strategy"] == "no_retrieval" or not RAG_ROUTER_LLM_ENABLED:
         return heuristic
 
     llm_route = _route_with_llm_cached(query=query, history_block=history_block, mode=mode)
@@ -137,17 +136,26 @@ def _last_assistant_has_evidence(history_block: str) -> bool:
 
 
 def _route_with_llm(query: str, history_block: str, mode: str) -> Optional[Dict[str, object]]:
-    if not openai_configured():
+    if not deepseek_configured():
         return None
     try:
         import openai
     except Exception:
         return None
 
-    prompt = f"""Classify this ESG retrieval query.
+    prompt = f"""Classify this ESG/report assistant query into one retrieval strategy.
 
-Allowed strategies: no_retrieval, vector_only, hybrid, multi_query, decomposition, graph_first, layered.
-Return JSON only: {{"strategy":"...", "reason":"short reason"}}.
+Allowed strategies:
+- no_retrieval: pure greeting, thanks, bye, or meta chat that needs no documents.
+- vector_only: narrow factual lookup where semantic chunks are enough.
+- hybrid: metrics, dates, acronyms, standards, exact terms, or keyword-heavy queries.
+- multi_query: short, ambiguous, follow-up, or broad question that benefits from query expansion.
+- decomposition: multi-part, comparison, trend, respectively, or question with several sub-questions.
+- graph_first: entity-centric, relationship, causal, "impact of X on Y", or path-style query.
+- layered: strategic analysis, prediction, scenario, recommendation, Deep mode, or questions needing current/historical/regulatory context.
+
+Return JSON only:
+{{"strategy":"no_retrieval|vector_only|hybrid|multi_query|decomposition|graph_first|layered", "reason":"short reason", "confidence":0.0}}
 
 Mode: {mode}
 History:
@@ -161,37 +169,38 @@ Query:
     ]
     try:
         if hasattr(openai, "OpenAI"):
-            client = get_openai_client()
-            if client is None:
-                return None
+            client = openai.OpenAI(
+                api_key=DEEPSEEK_API_KEY,
+                base_url=DEEPSEEK_BASE_URL,
+                timeout=RAG_ROUTER_TIMEOUT,
+            )
             response = client.chat.completions.create(
-                model=OPENAI_MODEL,
+                model=RAG_ROUTER_MODEL,
                 temperature=0,
                 messages=messages,
                 response_format={"type": "json_object"},
-                **chat_token_kwargs(OPENAI_MODEL, 120),
+                max_tokens=RAG_ROUTER_MAX_TOKENS,
             )
             raw = response.choices[0].message.content or ""
         else:
-            openai.api_key = OPENAI_API_KEY
-            if OPENAI_BASE_URL:
-                openai.api_base = OPENAI_BASE_URL
+            openai.api_key = DEEPSEEK_API_KEY
+            openai.api_base = DEEPSEEK_BASE_URL
             response = openai.ChatCompletion.create(
-                model=OPENAI_MODEL,
+                model=RAG_ROUTER_MODEL,
                 temperature=0,
                 messages=messages,
                 response_format={"type": "json_object"},
-                request_timeout=OPENAI_TIMEOUT,
-                **chat_token_kwargs(OPENAI_MODEL, 120),
+                request_timeout=RAG_ROUTER_TIMEOUT,
+                max_tokens=RAG_ROUTER_MAX_TOKENS,
             )
             raw = response["choices"][0]["message"]["content"] or ""
-        parsed = json.loads(raw)
+        parsed = _parse_json_object(str(raw))
         strategy = str(parsed.get("strategy") or "vector_only")
         if strategy not in {"no_retrieval", "vector_only", "hybrid", "multi_query", "decomposition", "graph_first", "layered"}:
             strategy = "vector_only"
-        return _result(strategy, str(parsed.get("reason") or "llm_classification"), "llm")
+        return _result(strategy, str(parsed.get("reason") or "deepseek_classification"), "deepseek")
     except Exception as exc:
-        print(f"[rag.router] llm fell back: {type(exc).__name__}: {exc}")
+        print(f"[rag.router] DeepSeek router fell back: {type(exc).__name__}: {exc}")
         return None
 
 
@@ -233,3 +242,15 @@ def _route_with_llm_cached(query: str, history_block: str, mode: str) -> Optiona
 
 def _history_signature(history_block: str) -> str:
     return hashlib.sha1(str(history_block or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _parse_json_object(raw: str) -> Dict[str, object]:
+    text = str(raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
+        text = re.sub(r"\s*```$", "", text).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        text = text[start:end + 1]
+    return json.loads(text)

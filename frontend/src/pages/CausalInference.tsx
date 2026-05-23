@@ -143,6 +143,7 @@ const CausalInference: React.FC = () => {
   const [knowledgeGraph, setKnowledgeGraph] = useState<GraphData | null>(null);
   const [graphStatus, setGraphStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [graphScope, setGraphScope] = useState<'overview' | 'full'>('overview');
+  const [showGraphExplorer, setShowGraphExplorer] = useState(false);
   const [fullGraphLoading, setFullGraphLoading] = useState(false);
   const navigate = useNavigate();
   const { token } = useAuth();
@@ -357,46 +358,77 @@ const CausalInference: React.FC = () => {
         </div>
       </section>
 
-      <section className="mx-auto max-w-page px-4 py-section sm:px-6 lg:max-w-page-wide lg:px-8 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16">
-        <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <section className="mx-auto max-w-page px-4 py-12 sm:px-6 lg:max-w-page-wide lg:px-8 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16">
+        <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
-            <p className="cg-eyebrow">Clustered knowledge graph</p>
-            <h2 className="mt-3 text-heading-lg xl:text-[56px]" style={{ letterSpacing: 0, lineHeight: 1.1 }}>
-              E, S, G, and AI stay readable at scale.
+            <h2 className="text-heading-md tracking-normal xl:text-[42px]" style={{ letterSpacing: 0, lineHeight: 1.12 }}>
+              Explore the live graph when needed.
             </h2>
-            <p className="mt-4 text-body-md text-ink-steel xl:text-[18px]">
-              The clusters are only the review lens. Every visible dot is a real extracted entity from the backend graph, grouped by ESG/AI semantics.
+            <p className="mt-3 text-body-md text-ink-steel">
+              Keep the page light by default. Open the full map only when you need to inspect nodes and relationships.
             </p>
           </div>
-          {knowledgeGraph && knowledgeGraph.nodes.length > 0 && graphScope !== 'full' && (
+          <div className="flex flex-col gap-2 sm:flex-row">
             <button
-              onClick={loadCompleteGraph}
-              disabled={fullGraphLoading}
-              className="cg-btn-secondary shrink-0 justify-center disabled:cursor-wait disabled:opacity-60"
+              type="button"
+              onClick={() => setShowGraphExplorer(prev => !prev)}
+              className="cg-btn-primary shrink-0 justify-center"
             >
-              {fullGraphLoading ? 'Loading complete graph' : 'Load complete graph'}
+              {showGraphExplorer ? 'Hide graph' : 'Show graph'}
             </button>
-          )}
-          <div className="hidden h-px flex-1 bg-hairline lg:block" />
+            {showGraphExplorer && knowledgeGraph && knowledgeGraph.nodes.length > 0 && graphScope !== 'full' && (
+              <button
+                onClick={loadCompleteGraph}
+                disabled={fullGraphLoading}
+                className="cg-btn-secondary shrink-0 justify-center disabled:cursor-wait disabled:opacity-60"
+              >
+                {fullGraphLoading ? 'Loading full map' : 'Load full map'}
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="cg-tool-panel min-w-0 p-4 xl:p-5">
-          {knowledgeGraph && knowledgeGraph.nodes.length > 0 ? (
-            <GraphVisualizer
-              graph={knowledgeGraph}
-              height={640}
-              focusNodeId={fullFocusNodeId}
-              highlightPath={fullHighlightPath}
-            />
-          ) : (
-            <div className="rounded-xl border border-hairline bg-white px-6 py-20 text-center">
-              <div className="cg-eyebrow text-ink-stone">{graphStatusLabel}</div>
-              <p className="mt-2 text-sm text-ink-steel">
-                Upload or sync documents so the backend can return real extracted nodes and relationships.
-              </p>
-            </div>
-          )}
-        </div>
+        {!showGraphExplorer ? (
+          <button
+            type="button"
+            onClick={() => setShowGraphExplorer(true)}
+            className="grid w-full gap-4 rounded-2xl border border-hairline bg-white p-5 text-left transition hover:border-ink sm:grid-cols-3"
+          >
+            {[
+              [compactNumber(graphNodes), 'nodes'],
+              [compactNumber(graphEdges), 'edges'],
+              [graphDocumentCount ? compactNumber(graphDocumentCount) : graphSource, 'source'],
+            ].map(([value, label]) => (
+              <div key={label} className="border-b border-hairline pb-4 sm:border-b-0 sm:border-r sm:pb-0 last:sm:border-r-0">
+                <div className="font-display text-[34px] font-semibold leading-none text-ink">{value}</div>
+                <div className="mt-1 text-[12px] font-semibold uppercase tracking-[0.14em] text-ink-stone">{label}</div>
+              </div>
+            ))}
+          </button>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.28 }}
+            className="cg-tool-panel min-w-0 p-4 xl:p-5"
+          >
+            {knowledgeGraph && knowledgeGraph.nodes.length > 0 ? (
+              <GraphVisualizer
+                graph={knowledgeGraph}
+                height={640}
+                focusNodeId={fullFocusNodeId}
+                highlightPath={fullHighlightPath}
+              />
+            ) : (
+              <div className="rounded-xl border border-hairline bg-white px-6 py-20 text-center">
+                <div className="cg-eyebrow text-ink-stone">{graphStatusLabel}</div>
+                <p className="mt-2 text-sm text-ink-steel">
+                  Upload or sync documents so the backend can return real extracted nodes and relationships.
+                </p>
+              </div>
+            )}
+          </motion.div>
+        )}
       </section>
 
       <section className="mx-auto max-w-page px-4 py-section sm:px-6 lg:max-w-page-wide lg:px-8 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16">

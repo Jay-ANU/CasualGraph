@@ -16,6 +16,7 @@ import threading
 import uuid
 import json
 import re
+import hashlib
 import bcrypt
 import jwt
 import aiosqlite
@@ -24,11 +25,12 @@ from email.message import EmailMessage
 from email.utils import formataddr
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from urllib.parse import unquote
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from dotenv import load_dotenv
+from docx import Document as DocxDocument
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,6 +66,7 @@ _DB_PATH = _resolve_auth_db_path()
 _FEEDBACK_DB_PATH = os.path.join(os.path.dirname(__file__), "backend", "causalgraph.db")
 _security = HTTPBearer(auto_error=False)
 _CLEANUP_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+_GRAPH_CACHE_REFRESH_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 _ENTITY_TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9&.-]*")
 _ENTITY_OF_PATTERN = re.compile(
     r"\b(?:of|for|about|by|from|at|on)\s+([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,3})"
@@ -203,6 +206,25 @@ _DESKTOP_SCREENSHOT_SUMMARY_MODEL = os.getenv(
 ).strip() or "gpt-4o-mini"
 _DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS = max(128, int(os.getenv("DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS", "700")))
 _DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES = max(256_000, int(os.getenv("DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES", "6000000")))
+_DESKTOP_WORD_EDIT_MODEL = os.getenv(
+    "DESKTOP_WORD_EDIT_MODEL",
+    os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+).strip() or "gpt-4o-mini"
+_DESKTOP_WORD_EDIT_MAX_BYTES = max(512_000, int(os.getenv("DESKTOP_WORD_EDIT_MAX_BYTES", "12000000")))
+_DESKTOP_WORD_EDIT_MAX_PARAGRAPHS = max(4, int(os.getenv("DESKTOP_WORD_EDIT_MAX_PARAGRAPHS", "28")))
+_DESKTOP_WORD_EDIT_MAX_CHARS = max(2_000, int(os.getenv("DESKTOP_WORD_EDIT_MAX_CHARS", "14000")))
+_DESKTOP_WORD_EDIT_MAX_SUGGESTIONS = max(1, int(os.getenv("DESKTOP_WORD_EDIT_MAX_SUGGESTIONS", "8")))
+_DESKTOP_WORD_EDIT_MAX_TOKENS = max(500, int(os.getenv("DESKTOP_WORD_EDIT_MAX_TOKENS", "1800")))
+_DESKTOP_WORD_EDIT_EVIDENCE_TOP_K = max(0, int(os.getenv("DESKTOP_WORD_EDIT_EVIDENCE_TOP_K", "6")))
+_WORD_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_PUBLIC_GRAPH_CACHE_VERSION = os.getenv("PUBLIC_GRAPH_CACHE_VERSION", "v1").strip() or "v1"
+_PUBLIC_GRAPH_CACHE_TTL_SECONDS = max(60, int(os.getenv("PUBLIC_GRAPH_CACHE_TTL_SECONDS", "1800")))
+_PUBLIC_GRAPH_CACHE_STALE_SECONDS = max(
+    _PUBLIC_GRAPH_CACHE_TTL_SECONDS,
+    int(os.getenv("PUBLIC_GRAPH_CACHE_STALE_SECONDS", str(24 * 60 * 60))),
+)
+_PUBLIC_GRAPH_CACHE_LOCK_SECONDS = max(10, int(os.getenv("PUBLIC_GRAPH_CACHE_LOCK_SECONDS", "180")))
+_PUBLIC_GRAPH_CACHE_WAIT_SECONDS = max(1.0, float(os.getenv("PUBLIC_GRAPH_CACHE_WAIT_SECONDS", "12")))
 
 
 async def _get_db():
@@ -811,7 +833,7 @@ async def _consume_admin_invite(code: str, user_id: str, db: aiosqlite.Connectio
 from ai_service.extractor import extract_esg
 from ai_service.schemas import EsgExtractionRequest, EsgExtractionResponse
 from chat_memory_service import RedisUnavailableError, chat_memory_service
-from configs.settings import CHUNK_DIR, EMBEDDING_FALLBACK_DIM, GRAPH_DIR, NEO4J_AUTO_SYNC, VECTOR_DIR, VECTOR_STORE_PROVIDER, neo4j_configured
+from configs.settings import CHUNK_DIR, DATA_DIR, EMBEDDING_FALLBACK_DIM, GRAPH_DIR, NEO4J_AUTO_SYNC, VECTOR_DIR, VECTOR_STORE_PROVIDER, neo4j_configured
 from user_memory_service import (
     delete_user_memory,
     format_memories_for_prompt,
@@ -852,6 +874,7 @@ from rag.openai_compat import chat_token_kwargs
 from rag.rag_pipeline import answer_question, stream_answer_question
 from rag.answer_intent import classify_answer_intent
 from rag.query_rewriter import format_history
+from rag.retriever import retrieve_context
 from scripts.run_pdf_pipeline import run_pdf_pipeline
 
 
@@ -860,6 +883,31 @@ app = FastAPI(title="ESG QLoRA Extraction API", version="1.0.0")
 _APP_ROOT = Path(__file__).resolve().parent
 _KG_VIEW_TEMPLATE = _APP_ROOT / "kg_view" / "templates" / "index.html"
 _KG_VIEW_STATIC = _APP_ROOT / "kg_view" / "static"
+_TEXT_KG_WEB_ROOT = _APP_ROOT / "text-to-kg-esg" / "web"
+_TEXT_KG_VIEW_TEMPLATE = _TEXT_KG_WEB_ROOT / "templates" / "index.html"
+_TEXT_KG_VIEW_STATIC = _TEXT_KG_WEB_ROOT / "static"
+_KG_VIEW_LLM_CLUSTER_LABELS = _env_flag("KG_VIEW_LLM_CLUSTER_LABELS", "true")
+_KG_VIEW_CLUSTER_LABEL_MODEL = os.getenv(
+    "KG_VIEW_CLUSTER_LABEL_MODEL",
+    os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+).strip() or "gpt-4o-mini"
+_KG_VIEW_CLUSTER_LABEL_CACHE: Dict[str, Dict[str, str]] = {}
+_KG_VIEW_CACHE_ENABLED = _env_flag("KG_VIEW_CACHE_ENABLED", "true")
+_KG_VIEW_CACHE_VERSION = os.getenv("KG_VIEW_CACHE_VERSION", f"{_PUBLIC_GRAPH_CACHE_VERSION}-kgv4").strip() or f"{_PUBLIC_GRAPH_CACHE_VERSION}-kgv4"
+_KG_VIEW_CACHE_TTL_SECONDS = max(60, int(os.getenv("KG_VIEW_CACHE_TTL_SECONDS", str(_PUBLIC_GRAPH_CACHE_TTL_SECONDS))))
+_KG_VIEW_CACHE_STALE_SECONDS = max(
+    _KG_VIEW_CACHE_TTL_SECONDS,
+    int(os.getenv("KG_VIEW_CACHE_STALE_SECONDS", str(_PUBLIC_GRAPH_CACHE_STALE_SECONDS))),
+)
+_KG_VIEW_CACHE_LOCK_SECONDS = max(10, int(os.getenv("KG_VIEW_CACHE_LOCK_SECONDS", str(_PUBLIC_GRAPH_CACHE_LOCK_SECONDS))))
+_KG_VIEW_CACHE_WAIT_SECONDS = max(1.0, float(os.getenv("KG_VIEW_CACHE_WAIT_SECONDS", str(_PUBLIC_GRAPH_CACHE_WAIT_SECONDS))))
+_KG_VIEW_CACHE_MEMORY_MAX = max(16, int(os.getenv("KG_VIEW_CACHE_MEMORY_MAX", "128")))
+_KG_VIEW_DETAIL_RENDER_NODE_LIMIT = max(100, int(os.getenv("KG_VIEW_DETAIL_RENDER_NODE_LIMIT", "2000")))
+_KG_VIEW_REDIS_RETRY_SECONDS = max(1.0, float(os.getenv("KG_VIEW_REDIS_RETRY_SECONDS", "15")))
+_KG_VIEW_CACHE_MEMORY: Dict[str, Dict[str, Any]] = {}
+_KG_VIEW_CACHE_MEMORY_LOCKS: Dict[str, threading.Lock] = {}
+_KG_VIEW_CACHE_MEMORY_GUARD = threading.Lock()
+_KG_VIEW_REDIS_DISABLED_UNTIL = 0.0
 
 
 def _assert_embedding_dim_matches_pinecone() -> None:
@@ -897,6 +945,8 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.mount("/kg-static", StaticFiles(directory=str(_KG_VIEW_STATIC)), name="kg-static")
+if _TEXT_KG_VIEW_STATIC.exists():
+    app.mount("/static", StaticFiles(directory=str(_TEXT_KG_VIEW_STATIC)), name="text_to_kg_static")
 
 
 @app.on_event("startup")
@@ -1239,6 +1289,11 @@ class DesktopScreenshotSummaryRequest(BaseModel):
     )
 
 
+class DesktopWordEditExportRequest(BaseModel):
+    session_id: str = Field(..., min_length=8, max_length=80)
+    accepted_suggestion_ids: List[str] = []
+
+
 def _validate_desktop_image_data_url(value: str) -> str:
     data_url = str(value or "").strip()
     if not data_url.startswith("data:image/"):
@@ -1275,6 +1330,434 @@ def _extract_chat_completion_text(response: Any) -> str:
                 parts.append(str(item.get("text") or ""))
         return "\n".join(parts).strip()
     return str(content or "").strip()
+
+
+def _safe_word_filename(filename: Optional[str]) -> str:
+    name = Path(unquote(str(filename or "document.docx"))).name
+    name = re.sub(r"[^A-Za-z0-9._ ()-]+", "_", name).strip(" ._") or "document.docx"
+    if not name.lower().endswith(".docx"):
+        name = f"{Path(name).stem or 'document'}.docx"
+    return name
+
+
+def _word_user_key(current_user: Dict[str, Any]) -> str:
+    raw = str(current_user.get("id") or current_user.get("email") or "user").strip()
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", raw) or "user"
+
+
+def _word_edit_user_root(current_user: Dict[str, Any]) -> Path:
+    root = DATA_DIR / "word_edits" / _word_user_key(current_user)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _word_edit_session_dir(current_user: Dict[str, Any], session_id: str) -> Path:
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "", str(session_id or ""))
+    if len(normalized) < 8:
+        raise HTTPException(status_code=400, detail="Invalid Word edit session")
+    return _word_edit_user_root(current_user) / normalized
+
+
+def _word_session_json_path(current_user: Dict[str, Any], session_id: str) -> Path:
+    return _word_edit_session_dir(current_user, session_id) / "session.json"
+
+
+def _parse_docx_paragraphs(file_bytes: bytes) -> Tuple[Any, List[Dict[str, Any]]]:
+    document = DocxDocument(io.BytesIO(file_bytes))
+    paragraphs: List[Dict[str, Any]] = []
+    visible_index = 0
+    for docx_index, paragraph in enumerate(document.paragraphs):
+        text = re.sub(r"\s+", " ", str(paragraph.text or "")).strip()
+        if not text:
+            continue
+        visible_index += 1
+        paragraphs.append({
+            "id": f"p_{visible_index:03d}",
+            "docx_index": docx_index,
+            "text": text,
+        })
+    if not paragraphs:
+        raise HTTPException(status_code=400, detail="The Word document does not contain extractable paragraph text.")
+    return document, paragraphs
+
+
+def _select_word_paragraphs_for_review(paragraphs: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    selected: List[Dict[str, str]] = []
+    total_chars = 0
+    for paragraph in paragraphs:
+        text = str(paragraph.get("text") or "").strip()
+        if len(text) < 35 and len(selected) >= 3:
+            continue
+        clipped = text[:1400]
+        if selected and total_chars + len(clipped) > _DESKTOP_WORD_EDIT_MAX_CHARS:
+            break
+        selected.append({"id": str(paragraph.get("id") or ""), "text": clipped})
+        total_chars += len(clipped)
+        if len(selected) >= _DESKTOP_WORD_EDIT_MAX_PARAGRAPHS:
+            break
+    return selected or [{"id": str(paragraphs[0]["id"]), "text": str(paragraphs[0]["text"])[:1400]}]
+
+
+def _parse_json_object_text(raw: str) -> Dict[str, Any]:
+    text = str(raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        parsed = json.loads(text[start:end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("Model response was not a JSON object")
+    return parsed
+
+
+_WORD_EDIT_CATEGORY_LABELS = {
+    "clarity": "Clarity",
+    "logic": "Logic",
+    "evidence": "Evidence",
+    "structure": "Structure",
+    "tone": "Tone",
+    "esg_concept": "ESG concept",
+}
+
+_WORD_EDIT_GOAL_LABELS = {
+    "academic": "Academic analysis",
+    "business": "Business report",
+    "executive": "Executive summary",
+    "esg": "ESG analysis",
+}
+
+_WORD_EDIT_TEMPLATE_LABELS = {
+    "general": "General review",
+    "esg_report": "ESG analysis report",
+    "company_comparison": "Company comparison report",
+    "risk_assessment": "Risk assessment",
+    "sustainability_strategy": "Sustainability strategy analysis",
+    "causal_impact": "Causal impact analysis",
+    "literature_paragraph": "Literature-style paragraph",
+    "executive_summary": "Executive summary",
+}
+
+_WORD_EDIT_EVIDENCE_GAP_LABELS = {
+    "metric": "metric",
+    "source": "source",
+    "comparison": "comparison",
+    "causal_link": "causal link",
+    "citation": "citation",
+    "concept_definition": "concept definition",
+}
+
+
+def _normalize_word_edit_goal(value: str) -> str:
+    goal = str(value or "").strip().lower()
+    return goal if goal in _WORD_EDIT_GOAL_LABELS else "academic"
+
+
+def _normalize_word_edit_template(value: str) -> str:
+    template = str(value or "").strip().lower()
+    return template if template in _WORD_EDIT_TEMPLATE_LABELS else "general"
+
+
+def _word_edit_goal_instruction(goal: str) -> str:
+    normalized = _normalize_word_edit_goal(goal)
+    instructions = {
+        "academic": "Prioritize academic clarity, cautious claims, argument flow, and explicit evidence gaps.",
+        "business": "Prioritize concise business reporting, decision relevance, metrics, risks, and management implications.",
+        "executive": "Prioritize executive brevity, readable recommendations, business impact, and action-oriented wording.",
+        "esg": "Prioritize ESG terminology, standards-aware phrasing, materiality, metrics, risk, governance, and evidence traceability.",
+    }
+    return instructions[normalized]
+
+
+def _word_edit_template_instruction(template: str) -> str:
+    normalized = _normalize_word_edit_template(template)
+    instructions = {
+        "general": "Review the draft without forcing a specific document structure.",
+        "esg_report": "Check whether the draft has ESG context, material issues, metrics, evidence, risks, and implications.",
+        "company_comparison": "Check whether the draft compares companies using consistent metrics, evidence, and like-for-like logic.",
+        "risk_assessment": "Check whether the draft identifies risk drivers, likelihood, impact, controls, and evidence.",
+        "sustainability_strategy": "Check whether the draft links sustainability initiatives to strategy, resources, metrics, and trade-offs.",
+        "causal_impact": "Check whether causal claims distinguish evidence, correlation, mechanism, counterfactuals, and uncertainty.",
+        "literature_paragraph": "Check whether the paragraph has a clear claim, prior literature positioning, synthesis, and citation gaps.",
+        "executive_summary": "Check whether the draft is concise, decision-oriented, and explicit about business implications.",
+    }
+    return instructions[normalized]
+
+
+def _build_word_evidence_query(paragraphs: List[Dict[str, Any]], instruction: str, goal: str, template: str) -> str:
+    selected = _select_word_paragraphs_for_review(paragraphs)
+    text = "\n".join(str(item.get("text") or "") for item in selected[:8])
+    return "\n".join(
+        part
+        for part in [
+            _WORD_EDIT_GOAL_LABELS.get(_normalize_word_edit_goal(goal), "Academic analysis"),
+            _WORD_EDIT_TEMPLATE_LABELS.get(_normalize_word_edit_template(template), "General review"),
+            str(instruction or "").strip(),
+            text[:4000],
+        ]
+        if part
+    )
+
+
+def _serialize_word_evidence_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    serialized: List[Dict[str, Any]] = []
+    for index, source in enumerate(sources[:_DESKTOP_WORD_EDIT_EVIDENCE_TOP_K], start=1):
+        text = re.sub(r"\s+", " ", str(source.get("text") or "")).strip()
+        if not text:
+            continue
+        title = str(source.get("title") or source.get("document_title") or source.get("source") or source.get("document_id") or "Evidence").strip()
+        chunk_id = str(source.get("chunk_id") or source.get("id") or "").strip()
+        serialized.append({
+            "id": f"E{index}",
+            "title": title,
+            "document_id": str(source.get("document_id") or ""),
+            "chunk_id": chunk_id,
+            "text": text[:700],
+            "score": float(source.get("score") or 0.0),
+        })
+    return serialized
+
+
+def _retrieve_word_review_evidence(
+    *,
+    current_user: Dict[str, Any],
+    paragraphs: List[Dict[str, Any]],
+    instruction: str,
+    goal: str,
+    template: str,
+) -> List[Dict[str, Any]]:
+    if _DESKTOP_WORD_EDIT_EVIDENCE_TOP_K <= 0:
+        return []
+    filters: Dict[str, Any] = {}
+    if current_user and not _is_admin_user(current_user):
+        filters["owner_user_id"] = str(current_user.get("id") or "")
+    query = _build_word_evidence_query(paragraphs, instruction, goal, template)
+    try:
+        return _serialize_word_evidence_sources(
+            retrieve_context(query=query, top_k=_DESKTOP_WORD_EDIT_EVIDENCE_TOP_K, filters=filters)
+        )
+    except Exception as exc:
+        print(f"[desktop.word] evidence retrieval skipped: {type(exc).__name__}: {exc}")
+        return []
+
+
+def _normalize_word_edit_suggestions(
+    parsed: Dict[str, Any],
+    paragraph_lookup: Dict[str, Dict[str, Any]],
+    evidence_sources: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    raw_suggestions = parsed.get("suggestions")
+    if not isinstance(raw_suggestions, list):
+        return []
+    allowed_evidence_ids = {str(item.get("id") or "") for item in (evidence_sources or [])}
+    suggestions: List[Dict[str, Any]] = []
+    seen_paragraphs: set[str] = set()
+    for raw_item in raw_suggestions:
+        if not isinstance(raw_item, dict):
+            continue
+        paragraph_id = str(raw_item.get("paragraph_id") or raw_item.get("paragraph") or "").strip()
+        if paragraph_id not in paragraph_lookup or paragraph_id in seen_paragraphs:
+            continue
+        replacement = re.sub(r"\s+", " ", str(raw_item.get("replacement") or "")).strip()
+        if not replacement:
+            continue
+        original = str(paragraph_lookup[paragraph_id].get("text") or "").strip()
+        if replacement == original:
+            continue
+        reason = re.sub(r"\s+", " ", str(raw_item.get("reason") or "Improves clarity and analytical quality.")).strip()
+        problem = re.sub(
+            r"\s+",
+            " ",
+            str(raw_item.get("problem") or raw_item.get("problem_solved") or "Improves draft quality.").strip(),
+        )
+        category = str(raw_item.get("category") or "clarity").strip().lower()
+        if category not in _WORD_EDIT_CATEGORY_LABELS:
+            category = "clarity"
+        severity = str(raw_item.get("severity") or "").strip().lower()
+        if severity not in {"low", "medium", "high"}:
+            severity = "medium" if category in {"logic", "evidence", "esg_concept"} else "low"
+        raw_refs = raw_item.get("evidence_refs") if isinstance(raw_item.get("evidence_refs"), list) else []
+        evidence_refs = [str(ref) for ref in raw_refs if str(ref) in allowed_evidence_ids]
+        raw_gaps = raw_item.get("evidence_gap_types") if isinstance(raw_item.get("evidence_gap_types"), list) else []
+        evidence_gap_types = [
+            str(gap).strip().lower()
+            for gap in raw_gaps
+            if str(gap).strip().lower() in _WORD_EDIT_EVIDENCE_GAP_LABELS
+        ]
+        evidence_needed = bool(raw_item.get("evidence_needed")) or (category == "evidence" and not evidence_refs)
+        if evidence_needed and not evidence_gap_types:
+            evidence_gap_types = ["source"]
+        suggestions.append({
+            "id": f"s_{len(suggestions) + 1:03d}",
+            "paragraph_id": paragraph_id,
+            "operation": "replace",
+            "category": category,
+            "category_label": _WORD_EDIT_CATEGORY_LABELS[category],
+            "severity": severity,
+            "original": original,
+            "replacement": replacement,
+            "problem": problem[:260],
+            "reason": reason[:500],
+            "evidence_refs": evidence_refs,
+            "evidence_needed": evidence_needed,
+            "evidence_gap_types": evidence_gap_types,
+            "sources": [paragraph_id],
+        })
+        seen_paragraphs.add(paragraph_id)
+        if len(suggestions) >= _DESKTOP_WORD_EDIT_MAX_SUGGESTIONS:
+            break
+    return suggestions
+
+
+def _fallback_word_edit_suggestions(paragraphs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    suggestions: List[Dict[str, Any]] = []
+    for paragraph in paragraphs:
+        text = str(paragraph.get("text") or "").strip()
+        normalized = re.sub(r"\s+", " ", text).strip()
+        if normalized and normalized != text:
+            suggestions.append({
+                "id": f"s_{len(suggestions) + 1:03d}",
+                "paragraph_id": str(paragraph.get("id") or ""),
+                "operation": "replace",
+                "category": "clarity",
+                "category_label": _WORD_EDIT_CATEGORY_LABELS["clarity"],
+                "severity": "low",
+                "original": text,
+                "replacement": normalized,
+                "problem": "The paragraph contains inconsistent spacing that makes the draft less polished.",
+                "reason": "Normalizes spacing without changing the meaning.",
+                "evidence_refs": [],
+                "evidence_needed": False,
+                "evidence_gap_types": [],
+                "sources": [str(paragraph.get("id") or "")],
+            })
+        if len(suggestions) >= 3:
+            break
+    return suggestions
+
+
+def _generate_word_edit_suggestions(
+    instruction: str,
+    paragraphs: List[Dict[str, Any]],
+    *,
+    goal: str = "academic",
+    template: str = "general",
+    evidence_sources: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
+    client = get_openai_client()
+    if client is None:
+        return _fallback_word_edit_suggestions(paragraphs), "fallback_no_openai"
+
+    paragraph_lookup = {str(item.get("id") or ""): item for item in paragraphs}
+    review_paragraphs = _select_word_paragraphs_for_review(paragraphs)
+    normalized_goal = _normalize_word_edit_goal(goal)
+    normalized_template = _normalize_word_edit_template(template)
+    prompt = {
+        "writing_goal": _WORD_EDIT_GOAL_LABELS[normalized_goal],
+        "goal_instruction": _word_edit_goal_instruction(normalized_goal),
+        "writing_template": _WORD_EDIT_TEMPLATE_LABELS[normalized_template],
+        "template_instruction": _word_edit_template_instruction(normalized_template),
+        "task": str(instruction or "").strip()
+        or "Improve this Word document for academic or business analysis while preserving factual meaning.",
+        "rules": [
+            "Return JSON only.",
+            "Suggest paragraph-level replacements only; do not invent facts, data, or citations.",
+            "Preserve the user's meaning and named entities.",
+            "Prioritize clarity, structure, analytical strength, ESG/business terminology, and evidence-aware phrasing.",
+            "Each suggestion must include category: clarity, logic, evidence, structure, tone, or esg_concept.",
+            "Each suggestion must state the concrete problem it solves for the writer.",
+            "Each suggestion must include severity: low, medium, or high.",
+            "Use evidence_refs only when an evidence source directly supports the change.",
+            "If a paragraph needs evidence but no source supports it, set evidence_needed true and explain the gap.",
+            "Use evidence_gap_types to flag missing metric, source, comparison, causal_link, citation, or concept_definition.",
+            f"Return at most {_DESKTOP_WORD_EDIT_MAX_SUGGESTIONS} suggestions.",
+        ],
+        "schema": {
+            "suggestions": [
+                {
+                    "paragraph_id": "p_001",
+                    "category": "clarity|logic|evidence|structure|tone|esg_concept",
+                    "severity": "low|medium|high",
+                    "problem": "The concrete weakness this edit fixes.",
+                    "replacement": "Full replacement paragraph text.",
+                    "reason": "Why this edit helps.",
+                    "evidence_refs": ["E1"],
+                    "evidence_needed": False,
+                    "evidence_gap_types": ["metric", "source", "comparison", "causal_link", "citation", "concept_definition"],
+                }
+            ]
+        },
+        "evidence_sources": evidence_sources or [],
+        "paragraphs": review_paragraphs,
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a careful Word document editor for business, ESG, finance, and academic writing. "
+                "You help users improve draft quality, but you must not fabricate evidence."
+            ),
+        },
+        {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+    ]
+
+    def _create_completion(use_response_format: bool) -> Any:
+        kwargs: Dict[str, Any] = {
+            "model": _DESKTOP_WORD_EDIT_MODEL,
+            "messages": messages,
+            "temperature": 0.2,
+            **chat_token_kwargs(_DESKTOP_WORD_EDIT_MODEL, _DESKTOP_WORD_EDIT_MAX_TOKENS),
+        }
+        if use_response_format:
+            kwargs["response_format"] = {"type": "json_object"}
+        return client.chat.completions.create(**kwargs)
+
+    try:
+        try:
+            response = _create_completion(True)
+        except Exception as exc:
+            if "response_format" not in str(exc).lower() and "json" not in str(exc).lower():
+                raise
+            response = _create_completion(False)
+        parsed = _parse_json_object_text(_extract_chat_completion_text(response))
+        suggestions = _normalize_word_edit_suggestions(parsed, paragraph_lookup, evidence_sources=evidence_sources)
+        return suggestions, _DESKTOP_WORD_EDIT_MODEL
+    except Exception as exc:
+        print(f"[desktop.word] suggestion generation fell back: {type(exc).__name__}: {exc}")
+        return _fallback_word_edit_suggestions(paragraphs), "fallback_parse_error"
+
+
+def _load_word_edit_session(current_user: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+    path = _word_session_json_path(current_user, session_id)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Word edit session was not found.")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Word edit session is unreadable.") from exc
+    if str(payload.get("user_id") or "") != str(current_user.get("id") or ""):
+        raise HTTPException(status_code=403, detail="You do not have access to this Word edit session.")
+    return payload
+
+
+def _replace_paragraph_text(paragraph: Any, replacement: str) -> None:
+    text = str(replacement or "")
+    if paragraph.runs:
+        paragraph.runs[0].text = text
+        for run in paragraph.runs[1:]:
+            run.text = ""
+        return
+    paragraph.add_run(text)
+
+
+def _unique_output_name(file_name: str) -> str:
+    stem = Path(file_name).stem or "document"
+    return _safe_word_filename(f"{stem}.edited.docx")
 
 
 def _normalize_entity_token(value: str) -> str:
@@ -2517,18 +3000,1504 @@ def _load_real_knowledge_graph(current_user: Optional[Dict[str, Any]], node_limi
     return _merge_local_knowledge_graph(entries, node_limit=node_limit, edge_limit=edge_limit)
 
 
+def _public_graph_cache_enabled() -> bool:
+    return bool(getattr(chat_memory_service, "enabled", False))
+
+
+def _public_graph_cache_scope(current_user: Optional[Dict[str, Any]]) -> str:
+    if _is_admin_user(current_user):
+        return "admin"
+    user_id = str((current_user or {}).get("id") or "").strip()
+    if user_id:
+        return f"user:{user_id}"
+    return "public"
+
+
+def _public_graph_cache_key(current_user: Optional[Dict[str, Any]], node_limit: int, edge_limit: int) -> str:
+    raw = "|".join(
+        [
+            _PUBLIC_GRAPH_CACHE_VERSION,
+            _public_graph_cache_scope(current_user),
+            str(node_limit),
+            str(edge_limit),
+        ]
+    )
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    return f"public:knowledge_graph:{_PUBLIC_GRAPH_CACHE_VERSION}:{digest}"
+
+
+def _public_graph_cache_lock_key() -> str:
+    return f"public:knowledge_graph:{_PUBLIC_GRAPH_CACHE_VERSION}:refresh_lock"
+
+
+def _public_graph_cache_get(cache_key: str) -> Optional[Dict[str, Any]]:
+    try:
+        raw = chat_memory_service.client.execute("GET", cache_key)
+    except RedisUnavailableError:
+        return None
+    if not raw:
+        return None
+    try:
+        payload = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("graph"), dict):
+        return None
+    return payload
+
+
+def _public_graph_cache_store(cache_key: str, graph: Dict[str, Any]) -> Dict[str, Any]:
+    now = time.time()
+    payload = {
+        "graph": graph,
+        "created_at": now,
+        "expires_at": now + _PUBLIC_GRAPH_CACHE_TTL_SECONDS,
+        "cache_version": _PUBLIC_GRAPH_CACHE_VERSION,
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    chat_memory_service.client.execute("SET", cache_key, raw, "EX", _PUBLIC_GRAPH_CACHE_STALE_SECONDS)
+    return payload
+
+
+def _public_graph_cache_is_fresh(payload: Dict[str, Any]) -> bool:
+    try:
+        return float(payload.get("expires_at") or 0) > time.time()
+    except (TypeError, ValueError):
+        return False
+
+
+def _public_graph_cache_acquire_lock() -> str:
+    token = str(uuid.uuid4())
+    try:
+        result = chat_memory_service.client.execute(
+            "SET",
+            _public_graph_cache_lock_key(),
+            token,
+            "NX",
+            "EX",
+            _PUBLIC_GRAPH_CACHE_LOCK_SECONDS,
+        )
+    except RedisUnavailableError:
+        return ""
+    return token if str(result or "").upper() == "OK" else ""
+
+
+def _public_graph_cache_release_lock(token: str) -> None:
+    if not token:
+        return
+    try:
+        current = chat_memory_service.client.execute("GET", _public_graph_cache_lock_key())
+        if current == token:
+            chat_memory_service.client.execute("DEL", _public_graph_cache_lock_key())
+    except RedisUnavailableError:
+        return
+
+
+def _load_and_store_public_graph_cache(
+    cache_key: str,
+    current_user: Optional[Dict[str, Any]],
+    node_limit: int,
+    edge_limit: int,
+    lock_token: str,
+) -> Dict[str, Any]:
+    try:
+        graph = _load_real_knowledge_graph(
+            current_user=current_user,
+            node_limit=node_limit,
+            edge_limit=edge_limit,
+        )
+        _public_graph_cache_store(cache_key, graph)
+        return graph
+    finally:
+        _public_graph_cache_release_lock(lock_token)
+
+
+def _refresh_public_graph_cache_in_background(
+    cache_key: str,
+    current_user: Optional[Dict[str, Any]],
+    node_limit: int,
+    edge_limit: int,
+    lock_token: str,
+) -> None:
+    try:
+        _load_and_store_public_graph_cache(
+            cache_key=cache_key,
+            current_user=dict(current_user or {}),
+            node_limit=node_limit,
+            edge_limit=edge_limit,
+            lock_token=lock_token,
+        )
+    except Exception as exc:
+        print(f"[public-knowledge-graph-cache] refresh failed: {type(exc).__name__}: {exc}")
+
+
+async def _wait_for_public_graph_cache(cache_key: str) -> Optional[Dict[str, Any]]:
+    deadline = time.time() + _PUBLIC_GRAPH_CACHE_WAIT_SECONDS
+    while time.time() < deadline:
+        await asyncio.sleep(0.25)
+        payload = _public_graph_cache_get(cache_key)
+        if payload is not None:
+            return payload
+    return None
+
+
+def _kg_view_cache_scope(request: Request, current_user: Optional[Dict[str, Any]]) -> str:
+    effective_user = _kg_view_effective_user(request, current_user)
+    document_id = _kg_view_request_document_id(request)
+    if document_id and (_is_admin_user(effective_user) or _is_local_request(request)):
+        return f"document:{document_id}"
+    return _public_graph_cache_scope(effective_user)
+
+
+def _kg_view_cache_key(
+    request: Request,
+    current_user: Optional[Dict[str, Any]],
+    name: str,
+    params: Optional[Dict[str, Any]] = None,
+) -> str:
+    raw = json.dumps(
+        {
+            "version": _KG_VIEW_CACHE_VERSION,
+            "scope": _kg_view_cache_scope(request, current_user),
+            "name": name,
+            "params": params or {},
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
+    return f"kg-view:{_KG_VIEW_CACHE_VERSION}:{digest}"
+
+
+def _kg_view_cache_lock_key(cache_key: str) -> str:
+    return f"{cache_key}:lock"
+
+
+def _kg_view_cache_is_fresh(payload: Dict[str, Any]) -> bool:
+    try:
+        return float(payload.get("expires_at") or 0) > time.time()
+    except (TypeError, ValueError):
+        return False
+
+
+def _kg_view_cache_memory_set_payload(cache_key: str, payload: Dict[str, Any]) -> None:
+    with _KG_VIEW_CACHE_MEMORY_GUARD:
+        _KG_VIEW_CACHE_MEMORY[cache_key] = payload
+        if len(_KG_VIEW_CACHE_MEMORY) <= _KG_VIEW_CACHE_MEMORY_MAX:
+            return
+        oldest_keys = sorted(
+            _KG_VIEW_CACHE_MEMORY,
+            key=lambda key: float(_KG_VIEW_CACHE_MEMORY.get(key, {}).get("created_at") or 0),
+        )
+        for old_key in oldest_keys[: max(1, len(_KG_VIEW_CACHE_MEMORY) - _KG_VIEW_CACHE_MEMORY_MAX)]:
+            _KG_VIEW_CACHE_MEMORY.pop(old_key, None)
+
+
+def _kg_view_cache_memory_get(cache_key: str) -> Optional[Dict[str, Any]]:
+    now = time.time()
+    with _KG_VIEW_CACHE_MEMORY_GUARD:
+        payload = _KG_VIEW_CACHE_MEMORY.get(cache_key)
+        if payload is None:
+            return None
+        try:
+            stale_expires_at = float(payload.get("stale_expires_at") or 0)
+        except (TypeError, ValueError):
+            stale_expires_at = 0
+        if stale_expires_at <= now:
+            _KG_VIEW_CACHE_MEMORY.pop(cache_key, None)
+            return None
+        return payload
+
+
+def _kg_view_redis_available_for_cache() -> bool:
+    return chat_memory_service.enabled and time.time() >= _KG_VIEW_REDIS_DISABLED_UNTIL
+
+
+def _kg_view_note_redis_failure() -> None:
+    global _KG_VIEW_REDIS_DISABLED_UNTIL
+    _KG_VIEW_REDIS_DISABLED_UNTIL = time.time() + _KG_VIEW_REDIS_RETRY_SECONDS
+
+
+def _kg_view_cache_get(cache_key: str) -> Optional[Dict[str, Any]]:
+    if not _KG_VIEW_CACHE_ENABLED:
+        return None
+    memory_payload = _kg_view_cache_memory_get(cache_key)
+    if memory_payload is not None:
+        return memory_payload
+    if _kg_view_redis_available_for_cache():
+        try:
+            raw = chat_memory_service.client.execute("GET", cache_key)
+        except RedisUnavailableError:
+            _kg_view_note_redis_failure()
+            raw = None
+        if raw:
+            try:
+                payload = json.loads(str(raw))
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict) and "payload" in payload:
+                _kg_view_cache_memory_set_payload(cache_key, payload)
+                return payload
+    return None
+
+
+def _kg_view_cache_store(cache_key: str, value: Any) -> Dict[str, Any]:
+    now = time.time()
+    payload = {
+        "payload": value,
+        "created_at": now,
+        "expires_at": now + _KG_VIEW_CACHE_TTL_SECONDS,
+        "stale_expires_at": now + _KG_VIEW_CACHE_STALE_SECONDS,
+        "cache_version": _KG_VIEW_CACHE_VERSION,
+    }
+    _kg_view_cache_memory_set_payload(cache_key, payload)
+    if _kg_view_redis_available_for_cache():
+        raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        try:
+            chat_memory_service.client.execute("SET", cache_key, raw, "EX", _KG_VIEW_CACHE_STALE_SECONDS)
+        except RedisUnavailableError:
+            _kg_view_note_redis_failure()
+            pass
+    return payload
+
+
+def _kg_view_cache_memory_lock(cache_key: str) -> threading.Lock:
+    with _KG_VIEW_CACHE_MEMORY_GUARD:
+        lock = _KG_VIEW_CACHE_MEMORY_LOCKS.get(cache_key)
+        if lock is None:
+            lock = threading.Lock()
+            _KG_VIEW_CACHE_MEMORY_LOCKS[cache_key] = lock
+        return lock
+
+
+def _kg_view_cache_acquire_lock(cache_key: str) -> str:
+    token = str(uuid.uuid4())
+    if _kg_view_redis_available_for_cache():
+        try:
+            result = chat_memory_service.client.execute(
+                "SET",
+                _kg_view_cache_lock_key(cache_key),
+                token,
+                "NX",
+                "EX",
+                _KG_VIEW_CACHE_LOCK_SECONDS,
+            )
+            if str(result or "").upper() == "OK":
+                return f"redis:{token}"
+        except RedisUnavailableError:
+            _kg_view_note_redis_failure()
+            pass
+    lock = _kg_view_cache_memory_lock(cache_key)
+    if lock.acquire(blocking=False):
+        return f"memory:{token}"
+    return ""
+
+
+def _kg_view_cache_release_lock(cache_key: str, token: str) -> None:
+    if not token:
+        return
+    if token.startswith("redis:"):
+        raw_token = token.split(":", 1)[1]
+        try:
+            current = chat_memory_service.client.execute("GET", _kg_view_cache_lock_key(cache_key))
+            if current == raw_token:
+                chat_memory_service.client.execute("DEL", _kg_view_cache_lock_key(cache_key))
+        except RedisUnavailableError:
+            _kg_view_note_redis_failure()
+            pass
+        return
+    lock = _kg_view_cache_memory_lock(cache_key)
+    try:
+        lock.release()
+    except RuntimeError:
+        pass
+
+
+def _kg_view_cache_build_and_store(cache_key: str, lock_token: str, builder: Callable[[], Any]) -> Any:
+    try:
+        value = builder()
+        _kg_view_cache_store(cache_key, value)
+        return value
+    finally:
+        _kg_view_cache_release_lock(cache_key, lock_token)
+
+
+def _kg_view_cache_refresh_background(cache_key: str, lock_token: str, builder: Callable[[], Any]) -> None:
+    try:
+        _kg_view_cache_build_and_store(cache_key, lock_token, builder)
+    except Exception as exc:
+        print(f"[kg-view-cache] refresh failed: {type(exc).__name__}: {exc}")
+
+
+async def _kg_view_cache_wait(cache_key: str) -> Optional[Dict[str, Any]]:
+    deadline = time.time() + _KG_VIEW_CACHE_WAIT_SECONDS
+    while time.time() < deadline:
+        await asyncio.sleep(0.25)
+        payload = _kg_view_cache_get(cache_key)
+        if payload is not None:
+            return payload
+    return None
+
+
+async def _kg_view_cached_json(
+    request: Request,
+    current_user: Optional[Dict[str, Any]],
+    name: str,
+    params: Dict[str, Any],
+    builder: Callable[[], Dict[str, Any]],
+) -> JSONResponse:
+    if not _KG_VIEW_CACHE_ENABLED:
+        return JSONResponse(content=builder(), headers={"X-KG-View-Cache": "bypass"})
+
+    cache_key = _kg_view_cache_key(request, current_user, name, params)
+    cached = _kg_view_cache_get(cache_key)
+    if cached is not None:
+        payload = cached.get("payload")
+        if isinstance(payload, dict):
+            if _kg_view_cache_is_fresh(cached):
+                return JSONResponse(content=payload, headers={"X-KG-View-Cache": "hit"})
+            lock_token = _kg_view_cache_acquire_lock(cache_key)
+            if lock_token:
+                _GRAPH_CACHE_REFRESH_EXECUTOR.submit(
+                    _kg_view_cache_refresh_background,
+                    cache_key,
+                    lock_token,
+                    builder,
+                )
+            return JSONResponse(content=payload, headers={"X-KG-View-Cache": "stale"})
+
+    lock_token = _kg_view_cache_acquire_lock(cache_key)
+    if lock_token:
+        loop = asyncio.get_running_loop()
+        payload = await loop.run_in_executor(
+            _GRAPH_CACHE_REFRESH_EXECUTOR,
+            _kg_view_cache_build_and_store,
+            cache_key,
+            lock_token,
+            builder,
+        )
+        return JSONResponse(content=payload, headers={"X-KG-View-Cache": "miss"})
+
+    warmed = await _kg_view_cache_wait(cache_key)
+    if warmed is not None and isinstance(warmed.get("payload"), dict):
+        return JSONResponse(content=warmed["payload"], headers={"X-KG-View-Cache": "wait-hit"})
+
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "kg_view_cache_warming",
+            "message": "Knowledge graph view is warming. Please retry shortly.",
+        },
+        headers={"Retry-After": "3", "X-KG-View-Cache": "warming"},
+    )
+
+
+def _kg_view_param_list(values: Optional[List[str]]) -> List[str]:
+    return sorted({str(item).strip() for item in (values or []) if str(item).strip()})
+
+
+def _kg_view_text(value: Any, fallback: str = "") -> str:
+    text = str(value if value is not None else fallback).strip()
+    return text or fallback
+
+
+def _kg_view_humanize(value: Any) -> str:
+    text = _kg_view_text(value)
+    text = re.sub(r"[_-]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.title() if text else "Entity"
+
+
+def _kg_view_domain(value: Any, *hints: Any) -> str:
+    raw = " ".join(_kg_view_text(item) for item in (value, *hints)).lower()
+    if "environment" in raw or "emission" in raw or "climate" in raw or "carbon" in raw:
+        return "environmental"
+    if "social" in raw or "employee" in raw or "workforce" in raw or "supplier" in raw or "community" in raw:
+        return "social"
+    if "govern" in raw or "board" in raw or "audit" in raw or "ethic" in raw or "compliance" in raw:
+        return "governance"
+    if raw.strip() == "ai" or "artificial" in raw or "model" in raw or "data center" in raw:
+        return "ai"
+    normalized = _kg_view_text(value, "general").lower()
+    return normalized if normalized in {"environmental", "social", "governance", "ai", "general"} else "general"
+
+
+def _kg_view_requested_scope(request: Request) -> str:
+    raw = _kg_view_text(
+        request.query_params.get("scope")
+        or request.query_params.get("graph_scope")
+        or request.cookies.get("kg_view_scope")
+    ).lower()
+    if raw in {"all", "global", "public"}:
+        return "all"
+    if raw in {"document", "current", "doc"}:
+        return "document"
+    return ""
+
+
+def _kg_view_raw_document_id(request: Request) -> str:
+    value = request.query_params.get("document_id") or request.cookies.get("kg_document_id") or ""
+    return _kg_view_text(value)
+
+
+def _kg_view_request_document_id(request: Request) -> str:
+    if _kg_view_requested_scope(request) == "all":
+        return ""
+    return _kg_view_raw_document_id(request)
+
+
+def _kg_view_effective_user(request: Request, current_user: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if current_user is not None:
+        return current_user
+    if _is_local_request(request):
+        return {"id": "local-admin", "email": "local", "username": "Local Admin", "role": "admin"}
+    return None
+
+
+def _kg_view_can_use_document_scope(
+    request: Request,
+    current_user: Optional[Dict[str, Any]],
+    document_id: str,
+) -> bool:
+    if not document_id:
+        return False
+    effective_user = _kg_view_effective_user(request, current_user)
+    if _is_admin_user(effective_user) or _is_local_request(request):
+        return True
+    try:
+        entry = document_registry.get_entry(document_id, valid_only=True)
+        if entry is None:
+            audit = get_latest_upload_by_document_id(document_id)
+            if audit is not None:
+                entry = _entry_from_upload(audit)
+        if entry is None:
+            return False
+        if effective_user:
+            return _can_access_entry(effective_user, entry)
+        return _is_global_entry(entry)
+    except Exception:
+        return False
+
+
+
+def _kg_view_active_scope(
+    request: Request,
+    current_user: Optional[Dict[str, Any]],
+    document_id: str,
+) -> str:
+    requested = _kg_view_requested_scope(request)
+    if requested == "all":
+        return "all"
+    if _kg_view_can_use_document_scope(request, current_user, document_id):
+        return "document"
+    return "all"
+
+
+def _kg_view_document_graph_from_registry(
+    document_id: str,
+    current_user: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    document_id = _kg_view_text(document_id)
+    if not document_id:
+        return {"nodes": [], "edges": []}
+    try:
+        entry = document_registry.get_entry(document_id, valid_only=True)
+        audit = get_latest_upload_by_document_id(document_id)
+        if entry is None and audit is not None:
+            entry = _entry_from_upload(audit)
+        if entry is None:
+            return {"nodes": [], "edges": []}
+        if current_user and not _can_access_entry(current_user, entry):
+            return {"nodes": [], "edges": []}
+        if not current_user and not _is_global_entry(entry):
+            return {"nodes": [], "edges": []}
+        if audit and str(audit.get("status") or "") in {"deleted", "deleted_with_warnings"}:
+            return {"nodes": [], "edges": []}
+        document = load_registered_document(entry, audit=audit)
+        graph = document.get("graph") if isinstance(document, dict) else None
+        if isinstance(graph, dict):
+            return {
+                "nodes": list(graph.get("nodes") or []),
+                "edges": list(graph.get("edges") or []),
+                "metadata": dict(graph.get("metadata") or {}),
+            }
+    except Exception as exc:
+        print(f"[kg-view] registry document graph fallback failed: {type(exc).__name__}: {exc}")
+    return {"nodes": [], "edges": []}
+
+
+def _kg_view_source_graph_uncached(
+    request: Request,
+    current_user: Optional[Dict[str, Any]],
+    *,
+    node_limit: int = 25000,
+    edge_limit: int = 30000,
+) -> Dict[str, Any]:
+    effective_user = _kg_view_effective_user(request, current_user)
+    document_id = _kg_view_request_document_id(request)
+    if document_id and _kg_view_can_use_document_scope(request, effective_user, document_id):
+        try:
+            store = get_neo4j_store()
+            if store is not None:
+                raw = store.get_visualization_graph(limit=node_limit, document_id=document_id)
+                graph = _neo4j_visualization_to_graph_data(raw, edge_limit=edge_limit)
+                if graph.get("nodes") or graph.get("edges"):
+                    return graph
+        except Exception as exc:
+            print(f"[kg-view] document graph fallback: {type(exc).__name__}: {exc}")
+        registry_graph = _kg_view_document_graph_from_registry(document_id, effective_user)
+        if registry_graph.get("nodes") or registry_graph.get("edges"):
+            return registry_graph
+
+    return _load_real_knowledge_graph(
+        current_user=effective_user,
+        node_limit=node_limit,
+        edge_limit=edge_limit,
+    )
+
+
+def _kg_view_source_graph(
+    request: Request,
+    current_user: Optional[Dict[str, Any]],
+    *,
+    node_limit: int = 25000,
+    edge_limit: int = 30000,
+) -> Dict[str, Any]:
+    node_limit = max(10, min(int(node_limit or 25000), _PUBLIC_GRAPH_MAX_NODES))
+    edge_limit = max(0, min(int(edge_limit or 30000), _PUBLIC_GRAPH_MAX_EDGES))
+    if not _KG_VIEW_CACHE_ENABLED:
+        return _kg_view_source_graph_uncached(
+            request,
+            current_user,
+            node_limit=node_limit,
+            edge_limit=edge_limit,
+        )
+
+    cache_key = _kg_view_cache_key(
+        request,
+        current_user,
+        "source-graph",
+        {"node_limit": node_limit, "edge_limit": edge_limit},
+    )
+    builder = lambda: _kg_view_source_graph_uncached(
+        request,
+        current_user,
+        node_limit=node_limit,
+        edge_limit=edge_limit,
+    )
+
+    cached = _kg_view_cache_get(cache_key)
+    if cached is not None and isinstance(cached.get("payload"), dict):
+        graph = cached["payload"]
+        if not _kg_view_cache_is_fresh(cached):
+            lock_token = _kg_view_cache_acquire_lock(cache_key)
+            if lock_token:
+                _GRAPH_CACHE_REFRESH_EXECUTOR.submit(
+                    _kg_view_cache_refresh_background,
+                    cache_key,
+                    lock_token,
+                    builder,
+                )
+        return graph
+
+    lock_token = _kg_view_cache_acquire_lock(cache_key)
+    if lock_token:
+        return _kg_view_cache_build_and_store(cache_key, lock_token, builder)
+
+    deadline = time.time() + _KG_VIEW_CACHE_WAIT_SECONDS
+    while time.time() < deadline:
+        time.sleep(0.25)
+        warmed = _kg_view_cache_get(cache_key)
+        if warmed is not None and isinstance(warmed.get("payload"), dict):
+            return warmed["payload"]
+
+    raise HTTPException(
+        status_code=503,
+        detail="Knowledge graph view is warming. Please retry shortly.",
+    )
+
+
+def _kg_view_filtered_text_graph(
+    graph: Dict[str, Any],
+    *,
+    domains: Optional[List[str]] = None,
+    companies: Optional[List[str]] = None,
+    years: Optional[List[str]] = None,
+    limit: int = 5000,
+) -> Dict[str, Any]:
+    domain_set = {str(item).lower() for item in (domains or []) if str(item).strip()}
+    company_set = {str(item) for item in (companies or []) if str(item).strip()}
+    year_set = {str(item) for item in (years or []) if str(item).strip()}
+    if year_set & {"All", "all", "__all__"}:
+        year_set = set()
+    bounded_limit = max(10, min(int(limit or 5000), 30000))
+
+    nodes: List[Dict[str, Any]] = []
+    source_nodes = graph.get("nodes") or []
+    for row in source_nodes:
+        if not isinstance(row, dict):
+            continue
+        node_id = _kg_view_text(row.get("id"))
+        if not node_id:
+            continue
+        label = _kg_view_text(row.get("label") or row.get("name") or row.get("normalizedName"), node_id)
+        domain = _kg_view_domain(row.get("domain") or row.get("esg_domain"), row.get("type"), label, row.get("description"))
+        company = _kg_view_text(row.get("company") or row.get("metadata", {}).get("company")) or "Unknown"
+        year = _kg_view_text(row.get("year") or row.get("metadata", {}).get("year"))
+        if domain_set and domain not in domain_set:
+            continue
+        if company_set and company not in company_set:
+            continue
+        if year_set and year not in year_set:
+            continue
+        nodes.append(
+            {
+                "id": node_id,
+                "label": label,
+                "text": _kg_view_text(row.get("description") or label, label),
+                "type": _kg_view_text(row.get("type"), "Entity").upper(),
+                "esg_domain": domain,
+                "year": int(year) if year.isdigit() else year,
+                "company": company,
+            }
+        )
+        if len(nodes) >= bounded_limit:
+            break
+
+    node_ids = {node["id"] for node in nodes}
+    edges: List[Dict[str, Any]] = []
+    for index, row in enumerate(graph.get("edges") or []):
+        if not isinstance(row, dict):
+            continue
+        source = _kg_view_text(row.get("source"))
+        target = _kg_view_text(row.get("target"))
+        if source not in node_ids or target not in node_ids:
+            continue
+        rel_type = _kg_view_text(row.get("relationship_type") or row.get("type"), "RELATED_TO")
+        confidence = _safe_graph_float(row.get("confidence"), 0.75)
+        edges.append(
+            {
+                "id": _kg_view_text(row.get("id"), f"edge_{index}"),
+                "source": source,
+                "target": target,
+                "type": rel_type,
+                "action": _kg_view_text(row.get("relationship_action") or row.get("action")),
+                "category": _kg_view_text(row.get("category") or row.get("domain") or rel_type),
+                "nature": _kg_view_text(row.get("relationship_nature") or row.get("nature")),
+                "evidence": _kg_view_text(row.get("evidence")),
+                "direction": _kg_view_text(row.get("direction"), "e1_to_e2"),
+                "credibility_score": round(max(0.0, min(confidence * 5.0, 5.0)), 2),
+                "sentiment": _kg_view_text(row.get("sentiment"), "neutral"),
+            }
+        )
+    return {"nodes": nodes, "edges": edges}
+
+
+def _kg_view_filter_values(graph: Dict[str, Any]) -> Dict[str, List[Any]]:
+    text_graph = _kg_view_filtered_text_graph(graph, limit=30000)
+    companies = sorted({node["company"] for node in text_graph["nodes"] if node.get("company") and node.get("company") != "Unknown"})
+    years = sorted({str(node.get("year") or "").strip() for node in text_graph["nodes"] if str(node.get("year") or "").strip()})
+    domains = sorted({node["esg_domain"] for node in text_graph["nodes"] if node.get("esg_domain")})
+    return {
+        "companies": companies or ["Unknown"],
+        "years": years or ["All"],
+        "domains": domains or ["environmental", "social", "governance", "ai"],
+    }
+
+
+def _kg_view_llm_labels(domain: str, groups: List[Dict[str, Any]]) -> Dict[str, str]:
+    if not _KG_VIEW_LLM_CLUSTER_LABELS or not groups:
+        return {}
+    client = get_openai_client()
+    if client is None:
+        return {}
+    payload = [
+        {
+            "id": str(group["community_id"]),
+            "fallback": group["label"],
+            "members": group.get("members", [])[:16],
+            "types": group.get("types", [])[:6],
+        }
+        for group in groups
+        if group.get("community_id") != -1
+    ][:8]
+    if not payload:
+        return {}
+    cache_source = json.dumps({"domain": domain, "groups": payload}, ensure_ascii=False, sort_keys=True)
+    cache_key = hashlib.sha256(cache_source.encode("utf-8")).hexdigest()[:24]
+    if cache_key in _KG_VIEW_CLUSTER_LABEL_CACHE:
+        return _KG_VIEW_CLUSTER_LABEL_CACHE[cache_key]
+    try:
+        response = client.chat.completions.create(
+            model=_KG_VIEW_CLUSTER_LABEL_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You label ESG knowledge graph communities. Return only JSON: "
+                        "{\"labels\":[{\"id\":\"...\",\"label\":\"2-5 word label\"}]}."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Domain: {domain}\n"
+                        "Create concise business-readable labels for these graph communities. "
+                        "Avoid generic labels like 'Miscellaneous' unless unavoidable.\n"
+                        f"{json.dumps(payload, ensure_ascii=False)}"
+                    ),
+                },
+            ],
+            temperature=0,
+            **chat_token_kwargs(_KG_VIEW_CLUSTER_LABEL_MODEL, 500),
+        )
+        content = response.choices[0].message.content or ""
+        match = re.search(r"\{.*\}", content, flags=re.S)
+        parsed = json.loads(match.group(0) if match else content)
+        labels = {
+            _kg_view_text(item.get("id")): _kg_view_text(item.get("label"))[:48]
+            for item in parsed.get("labels", [])
+            if isinstance(item, dict) and _kg_view_text(item.get("id")) and _kg_view_text(item.get("label"))
+        }
+        _KG_VIEW_CLUSTER_LABEL_CACHE[cache_key] = labels
+        return labels
+    except Exception as exc:
+        print(f"[kg-view] LLM cluster labels skipped: {type(exc).__name__}: {exc}")
+        return {}
+
+
+def _kg_view_domain_grouping(
+    graph: Dict[str, Any],
+    domain: str,
+    *,
+    companies: Optional[List[str]] = None,
+    years: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    from collections import Counter, defaultdict
+
+    domain = _kg_view_domain(domain)
+    detail_graph = _kg_view_filtered_text_graph(
+        graph,
+        domains=[domain],
+        companies=companies,
+        years=years,
+        limit=5000,
+    )
+    nodes = detail_graph["nodes"]
+    edges = detail_graph["edges"]
+    if not nodes:
+        return {"nodes": [], "edges": [], "cluster": domain, "total_triples": 0, "_assignments": {}, "_detail": detail_graph}
+
+    node_by_id = {node["id"]: node for node in nodes}
+    adjacency: Dict[str, Counter] = defaultdict(Counter)
+    for edge in edges:
+        source = edge["source"]
+        target = edge["target"]
+        if source in node_by_id and target in node_by_id and source != target:
+            adjacency[source][target] += 1
+            adjacency[target][source] += 1
+
+    communities: List[List[str]] = []
+    try:
+        import networkx as nx
+
+        graph_obj = nx.Graph()
+        for node in nodes:
+            graph_obj.add_node(node["id"])
+        for source, targets in adjacency.items():
+            for target, weight in targets.items():
+                if source < target:
+                    graph_obj.add_edge(source, target, weight=weight)
+        if graph_obj.number_of_edges() > 0 and graph_obj.number_of_nodes() >= 3:
+            communities = [sorted(group) for group in nx.algorithms.community.greedy_modularity_communities(graph_obj, weight="weight")]
+    except Exception as exc:
+        print(f"[kg-view] community detection fallback: {type(exc).__name__}: {exc}")
+
+    if not communities:
+        grouped: Dict[str, List[str]] = defaultdict(list)
+        for node in nodes:
+            grouped[_kg_view_text(node.get("type"), "Entity")].append(node["id"])
+        communities = sorted(grouped.values(), key=len, reverse=True)
+
+    communities = sorted(communities, key=len, reverse=True)
+    named_groups = [group for group in communities if len(group) >= 2][:8]
+    named_ids = {node_id for group in named_groups for node_id in group}
+    other_group = [node["id"] for node in nodes if node["id"] not in named_ids]
+
+    assignments: Dict[str, int] = {}
+    response_nodes: List[Dict[str, Any]] = []
+    domain_color = {
+        "environmental": "#3fb950",
+        "social": "#58a6ff",
+        "governance": "#bc8cff",
+        "ai": "#f0883e",
+    }.get(domain, "#8b949e")
+
+    def build_group_payload(community_id: int, ids: List[str], *, is_other: bool = False) -> Dict[str, Any]:
+        members = [node_by_id[node_id]["label"] for node_id in ids if node_id in node_by_id]
+        type_counts = Counter(node_by_id[node_id]["type"] for node_id in ids if node_id in node_by_id)
+        top_type = type_counts.most_common(1)[0][0] if type_counts else "Entity"
+        degree_rank = sorted(ids, key=lambda node_id: sum(adjacency.get(node_id, {}).values()), reverse=True)
+        hub_label = node_by_id.get(degree_rank[0], {}).get("label") if degree_rank else ""
+        fallback_label = "Other" if is_other else (_kg_view_text(hub_label) or _kg_view_humanize(top_type)).title()
+        return {
+            "id": "comm_other" if is_other else f"comm_{community_id}",
+            "label": fallback_label[:48],
+            "color": "#8b949e" if is_other else domain_color,
+            "triple_count": sum(1 for edge in edges if edge["source"] in ids or edge["target"] in ids),
+            "concept_count": len(members),
+            "size": 20 + min(len(members) * 3, 45),
+            "community_id": -1 if is_other else community_id,
+            "members": members,
+            "types": [item for item, _ in type_counts.most_common(6)],
+            "is_other": is_other,
+        }
+
+    for community_id, group in enumerate(named_groups):
+        for node_id in group:
+            assignments[node_id] = community_id
+        response_nodes.append(build_group_payload(community_id, group))
+
+    if other_group:
+        for node_id in other_group:
+            assignments[node_id] = -1
+        response_nodes.append(build_group_payload(-1, other_group, is_other=True))
+
+    llm_labels = _kg_view_llm_labels(domain, response_nodes)
+    for node in response_nodes:
+        label = llm_labels.get(str(node["community_id"]))
+        if label:
+            node["label"] = label
+
+    cross_edges: Counter = Counter()
+    for edge in edges:
+        source_group = assignments.get(edge["source"], -1)
+        target_group = assignments.get(edge["target"], -1)
+        if source_group == target_group:
+            continue
+        cross_edges[(source_group, target_group)] += 1
+
+    def group_node_id(community_id: int) -> str:
+        return "comm_other" if community_id == -1 else f"comm_{community_id}"
+
+    response_edges = [
+        {
+            "source": group_node_id(source),
+            "target": group_node_id(target),
+            "weight": count,
+            "width": max(1, min(count // 2, 12)),
+        }
+        for (source, target), count in cross_edges.most_common()
+    ]
+
+    return {
+        "nodes": response_nodes,
+        "edges": response_edges,
+        "cluster": domain,
+        "total_triples": len(edges),
+        "_assignments": assignments,
+        "_detail": detail_graph,
+    }
+
+
+def _kg_view_public_grouping_payload(grouping: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: value for key, value in grouping.items() if not key.startswith("_")}
+
+
+def _kg_view_inject_scope_switcher(html: str, *, active_scope: str, has_document_scope: bool) -> str:
+    if "kg-scope-switcher" in html:
+        return html
+    active_scope_json = json.dumps(active_scope)
+    has_document_json = json.dumps(bool(has_document_scope))
+    snippet = f"""
+<style>
+  #kg-scope-switcher {{
+    position: fixed;
+    top: 14px;
+    right: 18px;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    background: rgba(13, 17, 23, 0.92);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+    color: #c9d1d9;
+    font: 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }}
+  #kg-scope-switcher .kg-scope-label {{
+    color: #8b949e;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }}
+  #kg-scope-switcher button {{
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    background: #161b22;
+    color: #c9d1d9;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 700;
+    padding: 7px 10px;
+  }}
+  #kg-scope-switcher button.active {{
+    border-color: #58a6ff;
+    background: #1f6feb;
+    color: #fff;
+  }}
+  #kg-scope-switcher button:disabled {{
+    cursor: not-allowed;
+    opacity: 0.45;
+  }}
+</style>
+<script>
+(function() {{
+  var activeScope = {active_scope_json};
+  var hasDocumentScope = {has_document_json};
+  function setCookie(name, value) {{
+    document.cookie = name + '=' + encodeURIComponent(value) + '; path=/; max-age=3600; SameSite=Lax';
+  }}
+  function setScope(scope) {{
+    if (scope === 'document' && !hasDocumentScope) return;
+    setCookie('kg_view_scope', scope);
+    var url = new URL(window.location.href);
+    url.searchParams.set('scope', scope);
+    window.location.href = url.toString();
+  }}
+  function addSwitcher() {{
+    if (document.getElementById('kg-scope-switcher')) return;
+    var el = document.createElement('div');
+    el.id = 'kg-scope-switcher';
+    el.innerHTML =
+      '<span class="kg-scope-label">Graph</span>' +
+      '<button type="button" data-scope="document">Current document</button>' +
+      '<button type="button" data-scope="all">All documents</button>';
+    document.body.appendChild(el);
+    var buttons = el.querySelectorAll('button[data-scope]');
+    buttons.forEach(function(button) {{
+      var scope = button.getAttribute('data-scope');
+      if (scope === activeScope) button.classList.add('active');
+      if (scope === 'document' && !hasDocumentScope) button.disabled = true;
+      button.addEventListener('click', function() {{ setScope(scope); }});
+    }});
+  }}
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', addSwitcher);
+  }} else {{
+    addSwitcher();
+  }}
+}})();
+</script>
+"""
+    marker = "</body>"
+    if marker in html:
+        return html.replace(marker, snippet + "\n" + marker, 1)
+    return html + snippet
+
+
 @app.get("/health")
 async def health() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
 
 
+@app.get("/healthz")
+async def healthz() -> JSONResponse:
+    return JSONResponse(content={"status": "ok"})
+
+
 @app.get("/kg-view", response_class=HTMLResponse)
-async def kg_view(current_user: dict = Depends(require_admin)) -> HTMLResponse:
-    if not _KG_VIEW_TEMPLATE.exists():
+async def kg_view(
+    request: Request,
+    document_id: Optional[str] = None,
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+) -> HTMLResponse:
+    template = _TEXT_KG_VIEW_TEMPLATE if _TEXT_KG_VIEW_TEMPLATE.exists() else _KG_VIEW_TEMPLATE
+    if not template.exists():
         raise HTTPException(status_code=404, detail="KG view template not found")
-    return HTMLResponse(
-        _KG_VIEW_TEMPLATE.read_text(encoding="utf-8"),
+    raw_document_id = _kg_view_text(document_id or request.cookies.get("kg_document_id"))
+    has_document_scope = _kg_view_can_use_document_scope(request, current_user, raw_document_id)
+    active_scope = _kg_view_active_scope(request, current_user, raw_document_id)
+    html = _kg_view_inject_scope_switcher(
+        template.read_text(encoding="utf-8"),
+        active_scope=active_scope,
+        has_document_scope=has_document_scope,
+    )
+    response = HTMLResponse(
+        html,
         headers={"Cache-Control": "no-store, max-age=0"},
+    )
+    if document_id and has_document_scope:
+        response.set_cookie("kg_document_id", document_id, max_age=3600, httponly=True, samesite="lax")
+    elif not raw_document_id:
+        response.delete_cookie("kg_document_id")
+    response.set_cookie("kg_view_scope", active_scope, max_age=3600, httponly=False, samesite="lax")
+    return response
+
+
+@app.get("/api/filters")
+async def text_kg_filters(
+    request: Request,
+    companies: List[str] = Query(default=[]),
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    selected_companies = _kg_view_param_list(companies)
+
+    def build_payload() -> Dict[str, Any]:
+        graph = _kg_view_source_graph(request, current_user)
+        all_values = _kg_view_filter_values(graph)
+        active_graph = _kg_view_filtered_text_graph(
+            graph,
+            companies=selected_companies or None,
+            limit=30000,
+        )
+        active_years = sorted({str(node.get("year") or "").strip() for node in active_graph["nodes"] if str(node.get("year") or "").strip()})
+        active_domains = sorted({node["esg_domain"] for node in active_graph["nodes"] if node.get("esg_domain")})
+        return {
+            "companies": all_values["companies"],
+            "years": all_values["years"],
+            "domains": all_values["domains"],
+            "active_years": active_years or all_values["years"],
+            "active_domains": active_domains or all_values["domains"],
+        }
+
+    return await _kg_view_cached_json(
+        request,
+        current_user,
+        "filters",
+        {"companies": selected_companies},
+        build_payload,
+    )
+
+
+@app.get("/api/total_count")
+async def text_kg_total_count(
+    request: Request,
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    def build_payload() -> Dict[str, Any]:
+        graph = _kg_view_source_graph(request, current_user)
+        total_nodes = len(graph.get("nodes") or [])
+        return {
+            "total_nodes": min(total_nodes, _KG_VIEW_DETAIL_RENDER_NODE_LIMIT),
+            "available_nodes": total_nodes,
+        }
+
+    return await _kg_view_cached_json(
+        request,
+        current_user,
+        "total-count",
+        {},
+        build_payload,
+    )
+
+
+@app.get("/api/graph")
+async def text_kg_graph(
+    request: Request,
+    years: List[str] = Query(default=[]),
+    companies: List[str] = Query(default=[]),
+    domains: List[str] = Query(default=[]),
+    limit: int = Query(default=500, ge=10, le=30000),
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    normalized_years = _kg_view_param_list(years)
+    normalized_companies = _kg_view_param_list(companies)
+    normalized_domains = _kg_view_param_list(domains)
+    effective_limit = min(limit, _KG_VIEW_DETAIL_RENDER_NODE_LIMIT)
+
+    def build_payload() -> Dict[str, Any]:
+        graph = _kg_view_source_graph(request, current_user, node_limit=max(effective_limit, 5000), edge_limit=30000)
+        return _kg_view_filtered_text_graph(
+            graph,
+            domains=normalized_domains or None,
+            companies=normalized_companies or None,
+            years=normalized_years or None,
+            limit=effective_limit,
+        )
+
+    return await _kg_view_cached_json(
+        request,
+        current_user,
+        "graph",
+        {
+            "years": normalized_years,
+            "companies": normalized_companies,
+            "domains": normalized_domains,
+            "limit": effective_limit,
+        },
+        build_payload,
+    )
+
+
+@app.get("/api/cluster-graph")
+async def text_kg_cluster_graph(
+    request: Request,
+    years: List[str] = Query(default=[]),
+    companies: List[str] = Query(default=[]),
+    domains: List[str] = Query(default=[]),
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    normalized_years = _kg_view_param_list(years)
+    normalized_companies = _kg_view_param_list(companies)
+    normalized_domains = _kg_view_param_list(domains)
+
+    def build_payload() -> Dict[str, Any]:
+        from collections import Counter, defaultdict
+
+        graph = _kg_view_source_graph(request, current_user)
+        data = _kg_view_filtered_text_graph(
+            graph,
+            domains=normalized_domains or None,
+            companies=normalized_companies or None,
+            years=normalized_years or None,
+            limit=30000,
+        )
+        colors = {
+            "environmental": "#3fb950",
+            "social": "#58a6ff",
+            "governance": "#bc8cff",
+            "ai": "#f0883e",
+            "general": "#8b949e",
+        }
+        labels = {
+            "environmental": "Environmental",
+            "social": "Social",
+            "governance": "Governance",
+            "ai": "AI",
+            "general": "General",
+        }
+        node_domain = {node["id"]: node["esg_domain"] for node in data["nodes"]}
+        concept_sets: Dict[str, set] = defaultdict(set)
+        triple_counts: Counter = Counter()
+        edge_counts: Counter = Counter()
+        edge_relations: Dict[Tuple[str, str], Counter] = defaultdict(Counter)
+        for node in data["nodes"]:
+            concept_sets[node["esg_domain"]].add(node["label"])
+        for edge in data["edges"]:
+            d1 = node_domain.get(edge["source"], "general")
+            d2 = node_domain.get(edge["target"], "general")
+            triple_counts[d1] += 1
+            triple_counts[d2] += 1
+            key = (min(d1, d2), max(d1, d2))
+            edge_counts[key] += 1
+            edge_relations[key][edge.get("type") or "RELATED_TO"] += 1
+
+        domain_order = [domain for domain in ["environmental", "social", "governance", "ai", "general"] if domain in colors]
+        visible_domains = set(node_domain.values()) | set(normalized_domains)
+        nodes = []
+        for domain in domain_order:
+            if domain == "general" and domain not in visible_domains:
+                continue
+            nodes.append(
+                {
+                    "id": labels[domain],
+                    "label": labels[domain],
+                    "domain": domain,
+                    "color": colors[domain],
+                    "triple_count": triple_counts.get(domain, 0),
+                    "concept_count": len(concept_sets.get(domain, set())),
+                    "size": 30 + min(triple_counts.get(domain, 0) // 10, 40),
+                }
+            )
+        edges = [
+            {
+                "source": labels.get(src, _kg_view_humanize(src)),
+                "target": labels.get(tgt, _kg_view_humanize(tgt)),
+                "weight": count,
+                "top_relations": [{"type": rel, "count": rel_count} for rel, rel_count in edge_relations[(src, tgt)].most_common(3)],
+                "width": max(2, min(count / 5, 15)),
+            }
+            for (src, tgt), count in edge_counts.most_common()
+            if src in labels and tgt in labels
+        ]
+        return {"nodes": nodes, "edges": edges, "total_triples": len(data["edges"])}
+
+    return await _kg_view_cached_json(
+        request,
+        current_user,
+        "cluster-graph",
+        {
+            "years": normalized_years,
+            "companies": normalized_companies,
+            "domains": normalized_domains,
+        },
+        build_payload,
+    )
+
+
+@app.get("/api/cluster-detail")
+async def text_kg_cluster_detail(
+    request: Request,
+    cluster: str,
+    years: List[str] = Query(default=[]),
+    companies: List[str] = Query(default=[]),
+    limit: int = Query(default=500, ge=10, le=30000),
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    domain = _kg_view_domain(cluster)
+    normalized_years = _kg_view_param_list(years)
+    normalized_companies = _kg_view_param_list(companies)
+
+    def build_payload() -> Dict[str, Any]:
+        graph = _kg_view_source_graph(request, current_user)
+        return _kg_view_filtered_text_graph(
+            graph,
+            domains=[domain],
+            companies=normalized_companies or None,
+            years=normalized_years or None,
+            limit=limit,
+        )
+
+    return await _kg_view_cached_json(
+        request,
+        current_user,
+        "cluster-detail",
+        {
+            "cluster": domain,
+            "years": normalized_years,
+            "companies": normalized_companies,
+            "limit": limit,
+        },
+        build_payload,
+    )
+
+
+@app.get("/api/cluster-subgraph")
+async def text_kg_cluster_subgraph(
+    request: Request,
+    cluster: str,
+    years: List[str] = Query(default=[]),
+    companies: List[str] = Query(default=[]),
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    domain = _kg_view_domain(cluster)
+    normalized_years = _kg_view_param_list(years)
+    normalized_companies = _kg_view_param_list(companies)
+
+    def build_payload() -> Dict[str, Any]:
+        graph = _kg_view_source_graph(request, current_user)
+        grouping = _kg_view_domain_grouping(
+            graph,
+            domain,
+            companies=normalized_companies or None,
+            years=normalized_years or None,
+        )
+        return _kg_view_public_grouping_payload(grouping)
+
+    return await _kg_view_cached_json(
+        request,
+        current_user,
+        "cluster-subgraph",
+        {
+            "cluster": domain,
+            "years": normalized_years,
+            "companies": normalized_companies,
+        },
+        build_payload,
+    )
+
+
+@app.get("/api/cross-domain-communities")
+async def text_kg_cross_domain_communities(
+    request: Request,
+    domain1: str,
+    domain2: str,
+    years: List[str] = Query(default=[]),
+    companies: List[str] = Query(default=[]),
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    d1 = _kg_view_domain(domain1)
+    d2 = _kg_view_domain(domain2)
+    normalized_years = _kg_view_param_list(years)
+    normalized_companies = _kg_view_param_list(companies)
+
+    def build_payload() -> Dict[str, Any]:
+        from collections import Counter
+
+        graph = _kg_view_source_graph(request, current_user)
+        g1 = _kg_view_domain_grouping(graph, d1, companies=normalized_companies or None, years=normalized_years or None)
+        g2 = _kg_view_domain_grouping(graph, d2, companies=normalized_companies or None, years=normalized_years or None)
+        data = _kg_view_filtered_text_graph(
+            graph,
+            domains=[d1, d2],
+            companies=normalized_companies or None,
+            years=normalized_years or None,
+            limit=30000,
+        )
+        node_domain = {node["id"]: node["esg_domain"] for node in data["nodes"]}
+        edge_counts: Counter = Counter()
+        d1_counts: Counter = Counter()
+        d2_counts: Counter = Counter()
+        for edge in data["edges"]:
+            source_domain = node_domain.get(edge["source"])
+            target_domain = node_domain.get(edge["target"])
+            if {source_domain, target_domain} != {d1, d2}:
+                continue
+            source_id = edge["source"] if source_domain == d1 else edge["target"]
+            target_id = edge["target"] if target_domain == d2 else edge["source"]
+            c1 = g1["_assignments"].get(source_id, -1)
+            c2 = g2["_assignments"].get(target_id, -1)
+            if c1 == -1 or c2 == -1:
+                continue
+            edge_counts[(c1, c2)] += 1
+            d1_counts[c1] += 1
+            d2_counts[c2] += 1
+
+        def make_node(domain: str, group_node: Dict[str, Any], count: int) -> Dict[str, Any]:
+            cid = group_node["community_id"]
+            return {
+                "id": f"{domain}_{cid}",
+                "label": group_node["label"],
+                "domain": domain,
+                "color": group_node["color"],
+                "concept_count": count,
+                "same_domain_count": group_node["concept_count"],
+                "members": group_node.get("members", []),
+                "cross_members": group_node.get("members", []),
+                "community_id": cid,
+            }
+
+        g1_by_cid = {node["community_id"]: node for node in g1["nodes"]}
+        g2_by_cid = {node["community_id"]: node for node in g2["nodes"]}
+        nodes_d1 = [make_node(d1, g1_by_cid[cid], count) for cid, count in d1_counts.items() if cid in g1_by_cid]
+        nodes_d2 = [make_node(d2, g2_by_cid[cid], count) for cid, count in d2_counts.items() if cid in g2_by_cid]
+        edges = [
+            {"source": f"{d1}_{c1}", "target": f"{d2}_{c2}", "weight": weight}
+            for (c1, c2), weight in edge_counts.most_common()
+        ]
+        return {
+            "domain1": d1,
+            "domain2": d2,
+            "nodes_d1": nodes_d1,
+            "nodes_d2": nodes_d2,
+            "edges": edges,
+            "cross_triple_count": sum(edge_counts.values()),
+        }
+
+    return await _kg_view_cached_json(
+        request,
+        current_user,
+        "cross-domain-communities",
+        {
+            "domain1": d1,
+            "domain2": d2,
+            "years": normalized_years,
+            "companies": normalized_companies,
+        },
+        build_payload,
+    )
+
+
+@app.get("/api/cross-cluster-detail")
+async def text_kg_cross_cluster_detail(
+    request: Request,
+    cluster1: str,
+    cluster2: str,
+    years: List[str] = Query(default=[]),
+    companies: List[str] = Query(default=[]),
+    limit: int = Query(default=500, ge=10, le=30000),
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    d1 = _kg_view_domain(cluster1)
+    d2 = _kg_view_domain(cluster2)
+    normalized_years = _kg_view_param_list(years)
+    normalized_companies = _kg_view_param_list(companies)
+
+    def build_payload() -> Dict[str, Any]:
+        graph = _kg_view_source_graph(request, current_user)
+        data = _kg_view_filtered_text_graph(
+            graph,
+            domains=[d1, d2],
+            companies=normalized_companies or None,
+            years=normalized_years or None,
+            limit=limit,
+        )
+        node_domain = {node["id"]: node["esg_domain"] for node in data["nodes"]}
+        data["edges"] = [
+            edge for edge in data["edges"]
+            if {node_domain.get(edge["source"]), node_domain.get(edge["target"])} == {d1, d2}
+        ]
+        return data
+
+    return await _kg_view_cached_json(
+        request,
+        current_user,
+        "cross-cluster-detail",
+        {
+            "cluster1": d1,
+            "cluster2": d2,
+            "years": normalized_years,
+            "companies": normalized_companies,
+            "limit": limit,
+        },
+        build_payload,
+    )
+
+
+@app.get("/api/stats")
+async def text_kg_stats(
+    request: Request,
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    def build_payload() -> Dict[str, Any]:
+        from collections import Counter
+
+        graph = _kg_view_source_graph(request, current_user)
+        data = _kg_view_filtered_text_graph(graph, limit=30000)
+        return {
+            "by_domain": dict(Counter(node["esg_domain"] for node in data["nodes"])),
+            "by_type": dict(Counter(node["type"] for node in data["nodes"]).most_common(20)),
+            "by_relationship": dict(Counter(edge["type"] for edge in data["edges"]).most_common(20)),
+        }
+
+    return await _kg_view_cached_json(
+        request,
+        current_user,
+        "stats",
+        {},
+        build_payload,
+    )
+
+
+@app.get("/api/greenwashing")
+async def text_kg_greenwashing(
+    request: Request,
+    company: Optional[str] = None,
+    current_user: Optional[dict] = Depends(get_optional_current_user),
+):
+    normalized_company = _kg_view_text(company)
+
+    def build_payload() -> Dict[str, Any]:
+        graph = _kg_view_source_graph(request, current_user)
+        data = _kg_view_filtered_text_graph(graph, companies=[normalized_company] if normalized_company else None, limit=30000)
+        scores = [float(edge.get("credibility_score") or 0) for edge in data["edges"]]
+        quantitative = sum(1 for edge in data["edges"] if re.search(r"\d", edge.get("evidence") or ""))
+        total = len(data["edges"])
+        avg = round(sum(scores) / len(scores), 2) if scores else 0
+        weak = sum(1 for score in scores if score < 2)
+        index = round((weak / max(total, 1)) * 100, 1)
+        risk = "HIGH" if index >= 45 else "MEDIUM" if index >= 20 else "LOW"
+        return {
+            "company": company or "All",
+            "total_triples": total,
+            "greenwashing_index": index,
+            "risk_level": risk,
+            "credibility_avg": avg,
+            "credibility_high": sum(1 for score in scores if score >= 3),
+            "credibility_low": weak,
+            "quantitative_ratio": round((quantitative / max(total, 1)) * 100, 1),
+        }
+
+    return await _kg_view_cached_json(
+        request,
+        current_user,
+        "greenwashing",
+        {"company": normalized_company},
+        build_payload,
     )
 
 
@@ -2538,13 +4507,66 @@ async def public_knowledge_graph(
     edge_limit: int = Query(default=30000, ge=0, le=_PUBLIC_GRAPH_MAX_EDGES),
     current_user: Optional[dict] = Depends(get_optional_current_user),
 ):
+    node_limit = _bounded_graph_limit(limit, 25000, _PUBLIC_GRAPH_MAX_NODES)
+    bounded_edge_limit = _bounded_graph_limit(edge_limit, 30000, _PUBLIC_GRAPH_MAX_EDGES, minimum=0)
     try:
-        graph = _load_real_knowledge_graph(
+        if not _public_graph_cache_enabled() or not chat_memory_service.is_available():
+            graph = _load_real_knowledge_graph(
+                current_user=current_user,
+                node_limit=node_limit,
+                edge_limit=bounded_edge_limit,
+            )
+            return JSONResponse(content=graph, headers={"X-Graph-Cache": "bypass"})
+
+        cache_key = _public_graph_cache_key(
             current_user=current_user,
-            node_limit=_bounded_graph_limit(limit, 25000, _PUBLIC_GRAPH_MAX_NODES),
-            edge_limit=_bounded_graph_limit(edge_limit, 30000, _PUBLIC_GRAPH_MAX_EDGES, minimum=0),
+            node_limit=node_limit,
+            edge_limit=bounded_edge_limit,
         )
-        return JSONResponse(content=graph)
+        cached = _public_graph_cache_get(cache_key)
+        if cached is not None:
+            graph = cached["graph"]
+            if _public_graph_cache_is_fresh(cached):
+                return JSONResponse(content=graph, headers={"X-Graph-Cache": "hit"})
+
+            lock_token = _public_graph_cache_acquire_lock()
+            if lock_token:
+                _GRAPH_CACHE_REFRESH_EXECUTOR.submit(
+                    _refresh_public_graph_cache_in_background,
+                    cache_key,
+                    dict(current_user or {}),
+                    node_limit,
+                    bounded_edge_limit,
+                    lock_token,
+                )
+            return JSONResponse(content=graph, headers={"X-Graph-Cache": "stale"})
+
+        lock_token = _public_graph_cache_acquire_lock()
+        if lock_token:
+            loop = asyncio.get_running_loop()
+            graph = await loop.run_in_executor(
+                _GRAPH_CACHE_REFRESH_EXECUTOR,
+                _load_and_store_public_graph_cache,
+                cache_key,
+                dict(current_user or {}),
+                node_limit,
+                bounded_edge_limit,
+                lock_token,
+            )
+            return JSONResponse(content=graph, headers={"X-Graph-Cache": "miss"})
+
+        warmed = await _wait_for_public_graph_cache(cache_key)
+        if warmed is not None:
+            return JSONResponse(content=warmed["graph"], headers={"X-Graph-Cache": "wait-hit"})
+
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "knowledge_graph_cache_warming",
+                "message": "Knowledge graph cache is warming. Please retry shortly.",
+            },
+            headers={"Retry-After": "3", "X-Graph-Cache": "warming"},
+        )
     except Exception as exc:
         return JSONResponse(
             status_code=500,
@@ -2761,7 +4783,7 @@ async def rag_ask(
             query=request.question,
             history_block=format_history(pre_history, current_query=request.question),
         )
-        if str(answer_intent.get("mode") or "") == "general":
+        if str(answer_intent.get("mode") or "") in {"general", "chitchat"}:
             context = _resolve_general_rag_request_context(request, current_user, pre_history, pre_memory_backend)
         else:
             context = _resolve_rag_request_context(request, current_user)
@@ -2871,7 +4893,7 @@ async def rag_ask_stream(
             query=request.question,
             history_block=format_history(pre_history, current_query=request.question),
         )
-        if str(answer_intent.get("mode") or "") == "general":
+        if str(answer_intent.get("mode") or "") in {"general", "chitchat"}:
             context = _resolve_general_rag_request_context(request, current_user, pre_history, pre_memory_backend)
         else:
             context = _resolve_rag_request_context(request, current_user)
@@ -3052,6 +5074,150 @@ async def desktop_screenshot_summarize(
         )
 
 
+@app.post("/desktop/word/review")
+async def desktop_word_review(
+    instruction: str = Form(""),
+    goal: str = Form("academic"),
+    template: str = Form("general"),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    try:
+        raw_name = Path(unquote(str(file.filename or ""))).name
+        if not raw_name.lower().endswith(".docx"):
+            raise HTTPException(status_code=400, detail="Only .docx Word documents are supported for AI editing.")
+        file_name = _safe_word_filename(file.filename)
+        file_bytes = await file.read()
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="Uploaded Word document is empty.")
+        if len(file_bytes) > _DESKTOP_WORD_EDIT_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Word document is too large for desktop editing.")
+
+        _, paragraphs = _parse_docx_paragraphs(file_bytes)
+        normalized_goal = _normalize_word_edit_goal(goal)
+        normalized_template = _normalize_word_edit_template(template)
+        quota = await _enforce_rag_rate_limit(db, current_user, "deep")
+        evidence_sources = _retrieve_word_review_evidence(
+            current_user=current_user,
+            paragraphs=paragraphs,
+            instruction=instruction,
+            goal=normalized_goal,
+            template=normalized_template,
+        )
+        suggestions, model_name = _generate_word_edit_suggestions(
+            instruction,
+            paragraphs,
+            goal=normalized_goal,
+            template=normalized_template,
+            evidence_sources=evidence_sources,
+        )
+
+        session_id = uuid.uuid4().hex
+        session_dir = _word_edit_session_dir(current_user, session_id)
+        session_dir.mkdir(parents=True, exist_ok=True)
+        original_path = session_dir / "original.docx"
+        original_path.write_bytes(file_bytes)
+
+        session_payload = {
+            "session_id": session_id,
+            "user_id": str(current_user.get("id") or ""),
+            "file_name": file_name,
+            "instruction": str(instruction or "").strip(),
+            "goal": normalized_goal,
+            "goal_label": _WORD_EDIT_GOAL_LABELS[normalized_goal],
+            "template": normalized_template,
+            "template_label": _WORD_EDIT_TEMPLATE_LABELS[normalized_template],
+            "model": model_name,
+            "created_at": _utc_now_iso(),
+            "paragraph_count": len(paragraphs),
+            "paragraphs": paragraphs,
+            "suggestions": suggestions,
+            "evidence_sources": evidence_sources,
+        }
+        (session_dir / "session.json").write_text(json.dumps(session_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        response_payload: Dict[str, Any] = {
+            "session_id": session_id,
+            "file_name": file_name,
+            "goal": normalized_goal,
+            "goal_label": _WORD_EDIT_GOAL_LABELS[normalized_goal],
+            "template": normalized_template,
+            "template_label": _WORD_EDIT_TEMPLATE_LABELS[normalized_template],
+            "paragraph_count": len(paragraphs),
+            "reviewed_paragraph_count": min(len(_select_word_paragraphs_for_review(paragraphs)), len(paragraphs)),
+            "suggestions": suggestions,
+            "evidence_sources": evidence_sources,
+            "category_labels": _WORD_EDIT_CATEGORY_LABELS,
+            "evidence_gap_labels": _WORD_EDIT_EVIDENCE_GAP_LABELS,
+            "model": model_name,
+        }
+        if quota and not quota.get("bypassed"):
+            response_payload["quota"] = quota
+        return JSONResponse(content=response_payload)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "word_review_failed", "message": str(exc)},
+        )
+
+
+@app.post("/desktop/word/export")
+async def desktop_word_export(
+    request: DesktopWordEditExportRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        session = _load_word_edit_session(current_user, request.session_id)
+        session_dir = _word_edit_session_dir(current_user, request.session_id)
+        original_path = session_dir / "original.docx"
+        if not original_path.is_file():
+            raise HTTPException(status_code=404, detail="Original Word document was not found.")
+
+        accepted_ids = {str(item) for item in (request.accepted_suggestion_ids or [])}
+        suggestions = session.get("suggestions") if isinstance(session.get("suggestions"), list) else []
+        replacements = {
+            str(item.get("paragraph_id") or ""): str(item.get("replacement") or "")
+            for item in suggestions
+            if isinstance(item, dict) and str(item.get("id") or "") in accepted_ids
+        }
+
+        document = DocxDocument(str(original_path))
+        applied_count = 0
+        visible_index = 0
+        for paragraph in document.paragraphs:
+            if not str(paragraph.text or "").strip():
+                continue
+            visible_index += 1
+            paragraph_id = f"p_{visible_index:03d}"
+            replacement = replacements.get(paragraph_id)
+            if replacement:
+                _replace_paragraph_text(paragraph, replacement)
+                applied_count += 1
+
+        output_name = _unique_output_name(str(session.get("file_name") or "document.docx"))
+        output_path = session_dir / output_name
+        document.save(str(output_path))
+        encoded = base64.b64encode(output_path.read_bytes()).decode("ascii")
+        return JSONResponse(
+            content={
+                "file_name": output_name,
+                "mime_type": _WORD_DOCX_MIME,
+                "data_base64": encoded,
+                "applied_count": applied_count,
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "word_export_failed", "message": str(exc)},
+        )
+
+
 @app.post("/pipeline/pdf")
 async def pipeline_pdf(request: PipelinePdfRequest, current_user: dict = Depends(get_current_user)):
     try:
@@ -3135,7 +5301,6 @@ async def upload_document_async(
     current_user: dict = Depends(get_current_user),
 ):
     try:
-        assert_neo4j_ready()
         file_bytes = await file.read() if file is not None else None
         is_admin = _is_admin_user(current_user)
         document_group = "global_kb" if is_admin else "user_private"

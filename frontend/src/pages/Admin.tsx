@@ -121,6 +121,7 @@ const Admin: React.FC = () => {
   const [actionMessage, setActionMessage] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [inviteExpiresAt, setInviteExpiresAt] = useState('');
+  const [showAccessControls, setShowAccessControls] = useState(false);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [unlimitedEmail, setUnlimitedEmail] = useState('');
   const [unlimitedNote, setUnlimitedNote] = useState('');
@@ -392,19 +393,30 @@ const Admin: React.FC = () => {
         <section className="mt-4 rounded-2xl border border-hairline bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-ink">Admin registration invite codes</h2>
-              <p className="text-sm text-ink-steel">One-time code valid for 5 minutes.</p>
+              <h2 className="text-lg font-semibold text-ink">Access controls</h2>
+              <p className="text-sm text-ink-steel">Invite codes and unlimited AI users are hidden until needed.</p>
             </div>
-            <button
-              onClick={createInviteCode}
-              disabled={creatingInvite}
-              className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink-charcoal disabled:opacity-50"
-            >
-              <Ticket className="h-4 w-4" />
-              {creatingInvite ? 'Generating…' : 'Generate code'}
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setShowAccessControls(prev => !prev)}
+                className="inline-flex items-center justify-center gap-2 rounded-full border border-hairline bg-canvas px-4 py-2 text-sm font-semibold text-ink-charcoal transition hover:border-ink"
+              >
+                {showAccessControls ? 'Hide controls' : 'Show controls'}
+              </button>
+              {showAccessControls && (
+                <button
+                  onClick={createInviteCode}
+                  disabled={creatingInvite}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink-charcoal disabled:opacity-50"
+                >
+                  <Ticket className="h-4 w-4" />
+                  {creatingInvite ? 'Generating…' : 'Generate code'}
+                </button>
+              )}
+            </div>
           </div>
-          {inviteCode && (
+          {showAccessControls && inviteCode && (
             <div className="mt-4 rounded-xl border border-hairline bg-surface px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink-steel">Current code</p>
               <p className="mt-1 font-mono text-base font-semibold text-ink">{inviteCode}</p>
@@ -413,6 +425,7 @@ const Admin: React.FC = () => {
           )}
         </section>
 
+        {showAccessControls && (
         <section className="mt-4 rounded-2xl border border-hairline bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
@@ -486,6 +499,7 @@ const Admin: React.FC = () => {
             </table>
           </div>
         </section>
+        )}
 
         <section className="mt-4 rounded-2xl border border-hairline bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-hairline px-5 py-4">

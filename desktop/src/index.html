@@ -94,66 +94,148 @@
         </section>
 
         <section id="workView" class="work-view">
-          <section id="quickStartPanel" class="quick-start-panel" aria-label="Quick start">
-            <button id="primaryCaptureButton" class="quick-action" type="button">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
-              </svg>
-              <span>Capture screen</span>
-            </button>
-            <button id="primaryUploadButton" class="quick-action" type="button">
+          <section id="homePanel" class="home-panel">
+            <section id="quickStartPanel" class="quick-start-panel" aria-label="Quick start">
+              <button id="primaryAskButton" class="quick-action primary" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+                </svg>
+                <span class="action-copy">
+                  <strong>Ask</strong>
+                  <small>Chat with context</small>
+                </span>
+              </button>
+              <button id="primaryCaptureButton" class="quick-action" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+                </svg>
+                <span class="action-copy">
+                  <strong>Screen</strong>
+                  <small>Summarize view</small>
+                </span>
+              </button>
+              <button id="primaryUploadButton" class="quick-action" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 16V4" />
+                  <path d="m7 9 5-5 5 5" />
+                  <path d="M5 20h14" />
+                </svg>
+                <span class="action-copy">
+                  <strong>Report</strong>
+                  <small>Add to knowledge</small>
+                </span>
+              </button>
+              <button id="primaryWordButton" class="quick-action" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M9 15h6" />
+                  <path d="M9 18h4" />
+                </svg>
+                <span class="action-copy">
+                  <strong>Word</strong>
+                  <small>Review edits</small>
+                </span>
+              </button>
+            </section>
+
+            <section id="dropZone" class="drop-zone">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 16V4" />
                 <path d="m7 9 5-5 5 5" />
                 <path d="M5 20h14" />
               </svg>
-              <span>Add report</span>
-            </button>
-            <button id="primaryAskButton" class="quick-action primary" type="button">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-              </svg>
-              <span>Ask</span>
-            </button>
+              <div>
+                <strong>Drop files here</strong>
+                <p>PDF, DOCX, TXT, MD, PNG, JPG</p>
+              </div>
+            </section>
           </section>
 
-          <section id="dropZone" class="drop-zone">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 16V4" />
-              <path d="m7 9 5-5 5 5" />
-              <path d="M5 20h14" />
-            </svg>
-            <strong>Drop a report</strong>
-            <p>PDF, DOCX, TXT, MD, PNG, JPG</p>
-          </section>
+          <section id="detailPanel" class="detail-panel hidden">
+            <header class="detail-header">
+              <button id="detailBackButton" class="icon-button flat" type="button" aria-label="Back to tasks">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
+              <div>
+                <h2 id="detailTitle">Task</h2>
+                <p id="detailSubtitle">Review the current task.</p>
+              </div>
+            </header>
 
-          <section id="contextCard" class="context-card hidden">
-            <div class="context-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8 13h8M8 17h5" /></svg>
-            </div>
-            <div>
-              <p class="eyebrow">Current context</p>
-              <h2 id="contextTitle">No active context</h2>
-              <p id="contextDetail">Drop a file or capture the screen to begin.</p>
-            </div>
-            <img id="contextPreview" class="hidden" alt="Current context preview" />
-          </section>
+            <section id="contextCard" class="context-card hidden">
+              <div class="context-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8 13h8M8 17h5" /></svg>
+              </div>
+              <div>
+                <p class="eyebrow">Current context</p>
+                <h2 id="contextTitle">No active context</h2>
+                <p id="contextDetail">Drop a file or capture the screen to begin.</p>
+              </div>
+              <img id="contextPreview" class="hidden" alt="Current context preview" />
+            </section>
 
-          <section id="suggestionPanel" class="suggestion-panel hidden">
-            <h2>Suggested next questions</h2>
-            <div id="suggestionList" class="suggestion-list"></div>
-          </section>
+            <section id="screenshotPanel" class="screenshot-panel hidden">
+              <textarea
+                id="screenshotPrompt"
+                rows="2"
+                placeholder="Extract useful work or academic information from this screen"
+              ></textarea>
+              <button id="summarizeScreenButton" class="primary-button" type="button">Summarize</button>
+            </section>
 
-          <section id="screenshotPanel" class="screenshot-panel hidden">
-            <textarea
-              id="screenshotPrompt"
-              rows="2"
-              placeholder="Extract useful work or academic information from this screen"
-            ></textarea>
-            <button id="summarizeScreenButton" class="primary-button" type="button">Summarize screen</button>
-          </section>
+            <section id="wordSetupPanel" class="word-setup-panel hidden">
+              <div class="word-setup-copy">
+                <h2>Review a Word draft</h2>
+                <p>Choose how the draft should be improved before selecting a .docx file.</p>
+              </div>
+              <label class="word-goal-field" for="wordGoalSelect">
+                <span>Writing goal</span>
+                <select id="wordGoalSelect">
+                  <option value="academic">Academic analysis</option>
+                  <option value="business">Business report</option>
+                  <option value="executive">Executive summary</option>
+                  <option value="esg">ESG analysis</option>
+                </select>
+              </label>
+              <label class="word-goal-field" for="wordTemplateSelect">
+                <span>Template</span>
+                <select id="wordTemplateSelect">
+                  <option value="general">General review</option>
+                  <option value="esg_report">ESG analysis report</option>
+                  <option value="company_comparison">Company comparison report</option>
+                  <option value="risk_assessment">Risk assessment</option>
+                  <option value="sustainability_strategy">Sustainability strategy analysis</option>
+                  <option value="causal_impact">Causal impact analysis</option>
+                  <option value="literature_paragraph">Literature-style paragraph</option>
+                  <option value="executive_summary">Executive summary</option>
+                </select>
+              </label>
+              <button id="chooseWordButton" class="primary-button wide-button" type="button">Choose Word file</button>
+            </section>
 
-          <button id="switchToChatButton" class="primary-button wide-button" type="button">Ask a follow-up</button>
+            <section id="wordEditPanel" class="word-edit-panel hidden">
+              <div class="word-edit-header">
+                <div>
+                  <h2 id="wordEditTitle">Word edit suggestions</h2>
+                  <p id="wordEditMeta">Review paragraph changes before exporting.</p>
+                </div>
+                <div class="word-edit-actions">
+                  <button id="acceptAllWordButton" class="secondary-button" type="button">Accept all</button>
+                  <button id="undoWordButton" class="secondary-button" type="button">Undo</button>
+                  <button id="exportWordButton" class="primary-button" type="button">Export</button>
+                </div>
+              </div>
+              <div id="wordSuggestionList" class="word-suggestion-list"></div>
+            </section>
+
+            <section id="suggestionPanel" class="suggestion-panel hidden">
+              <h2>Suggested next questions</h2>
+              <div id="suggestionList" class="suggestion-list"></div>
+            </section>
+
+            <button id="switchToChatButton" class="primary-button wide-button" type="button">Ask a follow-up</button>
+          </section>
         </section>
 
         <section id="chatView" class="chat-view">
@@ -207,6 +289,7 @@
         </footer>
 
         <input id="fileInput" class="hidden" type="file" />
+        <input id="wordFileInput" class="hidden" type="file" accept=".docx" />
       </section>
     </main>
     <script src="./renderer.js"></script>

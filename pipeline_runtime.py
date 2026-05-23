@@ -41,7 +41,7 @@ from document_processing.chunker import chunk_text
 from document_processing.text_cleaner import clean_text
 from graph.graph_builder import build_graph_from_extractions
 from graph.graph_utils import normalize_entity_name
-from graph.neo4j_store import assert_neo4j_ready, get_neo4j_store, maybe_sync_to_neo4j
+from graph.neo4j_store import get_neo4j_store, maybe_sync_to_neo4j
 from graph.graph_store import load_graph, save_graph
 from rag.bm25_index import build_bm25_index
 from rag.pinecone_store import delete_vectors_by_document_id, pinecone_available
@@ -64,8 +64,6 @@ def ingest_uploaded_document(
 ) -> Dict:
     """Parse uploaded content, append it to the corpus, and return frontend-friendly data."""
     ensure_directories()
-    _report_progress(progress_callback, "neo4j", "Checking Neo4j connection", 2)
-    assert_neo4j_ready()
     _report_progress(progress_callback, "reading", "Reading uploaded content", 5)
     owner_value = str(owner_user_id or "").strip()
     scope_value = str(visibility_scope or "global").strip().lower()

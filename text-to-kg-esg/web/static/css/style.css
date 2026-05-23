@@ -1,0 +1,235 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    height: 100vh;
+    background: #0d1117;
+    color: #c9d1d9;
+}
+
+.sidebar {
+    width: 280px;
+    background: #161b22;
+    padding: 20px;
+    overflow-y: auto;
+    border-right: 1px solid #30363d;
+}
+
+.sidebar h2 {
+    font-size: 18px;
+    margin-bottom: 20px;
+    color: #58a6ff;
+}
+
+.filter-group {
+    margin-bottom: 20px;
+}
+
+.filter-group h3 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    color: #8b949e;
+}
+
+.filter-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.filter-item input[type="checkbox"] {
+    accent-color: #58a6ff;
+}
+
+.color-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+input[type="range"] {
+    width: 100%;
+    margin: 8px 0;
+}
+
+#limit-value {
+    font-size: 13px;
+    color: #8b949e;
+}
+
+.btn {
+    width: 100%;
+    padding: 10px;
+    background: #238636;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    margin-top: 10px;
+}
+
+.btn:hover { background: #2ea043; }
+
+.toggle-buttons {
+    display: flex;
+    gap: 6px;
+}
+
+.toggle-btn {
+    flex: 1;
+    padding: 8px;
+    background: #21262d;
+    color: #8b949e;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    text-align: center;
+    transition: all 0.2s;
+}
+
+.toggle-btn.active {
+    background: #388bfd20;
+    color: #58a6ff;
+    border-color: #58a6ff;
+}
+
+.toggle-btn:hover:not(.active) {
+    background: #30363d;
+    color: #c9d1d9;
+}
+
+.cluster-link {
+    stroke: #58a6ff;
+}
+
+.cluster-node circle {
+    transition: fill-opacity 0.2s;
+}
+
+.btn-small {
+    padding: 4px 10px;
+    background: #30363d;
+    color: #c9d1d9;
+    border: 1px solid #484f58;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    margin-top: 6px;
+}
+.btn-small:hover { background: #484f58; }
+
+.stats-panel {
+    margin-top: 20px;
+    font-size: 12px;
+    color: #8b949e;
+}
+
+.stats-panel .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+}
+
+.main {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+
+#graph {
+    width: 100%;
+    height: 100%;
+}
+
+.node circle {
+    stroke: #30363d;
+    stroke-width: 1.5px;
+    cursor: pointer;
+    transition: stroke-width 0.2s;
+}
+
+.node circle:hover {
+    stroke-width: 3px;
+    stroke: #fff;
+}
+
+.node text {
+    font-size: 10px;
+    fill: #8b949e;
+    pointer-events: none;
+}
+
+.link {
+    stroke-opacity: 0.4;
+    stroke: #484f58;
+}
+
+.link:hover {
+    stroke-opacity: 1;
+    stroke: #58a6ff;
+}
+
+.tooltip {
+    position: absolute;
+    padding: 8px 12px;
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    font-size: 12px;
+    pointer-events: none;
+    display: none;
+    z-index: 100;
+    max-width: 500px;
+    line-height: 1.5;
+}
+
+
+/* Domain colors */
+.domain-environmental { color: #3fb950; }
+.domain-social { color: #58a6ff; }
+.domain-governance { color: #bc8cff; }
+.domain-ai { color: #f0883e; }
+
+/* Legend */
+.legend {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #30363d;
+}
+
+.legend-item {
+    font-size: 12px;
+    color: #8b949e;
+    padding: 2px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.legend-line {
+    display: inline-block;
+    width: 24px;
+    height: 0;
+    border-top-color: #484f58;
+}
+
+.legend-line.solid.thick { border-top: 2.5px solid #484f58; }
+.legend-line.solid.thin { border-top: 1.5px solid #484f58; }
+.legend-line.dashed.thin { border-top: 1px dashed #484f58; }
+
+.legend-arrow {
+    display: inline-block;
+    width: 24px;
+    text-align: center;
+    color: #484f58;
+    font-size: 14px;
+}

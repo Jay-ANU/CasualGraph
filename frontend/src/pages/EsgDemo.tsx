@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Activity, Database, FileText, Network, Search, Workflow } from 'lucide-react';
+import { Database, FileText, Network, Search, Workflow } from 'lucide-react';
 import type { RagResponse, RagStreamEvent } from '../types/api';
 
 type HealthState = {
@@ -65,6 +65,7 @@ const EsgDemo: React.FC = () => {
   const [question, setQuestion] = useState(SAMPLE_QUESTION);
   const [ragLoading, setRagLoading] = useState(false);
   const [ragResult, setRagResult] = useState<any>(null);
+  const [activeDemoTab, setActiveDemoTab] = useState<'ask' | 'extract'>('ask');
 
   const serviceTargets = useMemo(
     () => [
@@ -193,10 +194,6 @@ const EsgDemo: React.FC = () => {
       <section className="tech-hero app-grid">
         <div className="mx-auto max-w-[1600px] px-4 py-16 sm:px-6 lg:px-8">
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45 }} className="max-w-4xl">
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white/72 px-3 py-2 text-sm font-semibold text-slate-700">
-              <Activity className="h-4 w-4" />
-              Live evidence pipeline
-            </div>
             <h1 className="text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">
               Inspect the pipeline from report text to cited answer.
             </h1>
@@ -239,58 +236,118 @@ const EsgDemo: React.FC = () => {
           </div>
         </section>
 
-        <section className="grid gap-6 lg:grid-cols-2">
-          <div className="app-panel p-6">
-            <div className="mb-4 flex items-center gap-3">
-              <Workflow className="h-5 w-5 text-slate-500" />
-              <h2 className="text-2xl font-semibold text-slate-950">ESG extraction</h2>
+        <section className="app-panel overflow-hidden">
+          <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-2xl font-semibold text-slate-950">Demo workflow</h2>
+              <p className="mt-1 text-sm text-slate-600">Run one step at a time.</p>
             </div>
-            <p className="mb-4 text-sm leading-6 text-slate-600">
-              Extract entities and relationships from report text before sending them into the graph workflow.
-            </p>
-            <textarea
-              value={extractText}
-              onChange={(e) => setExtractText(e.target.value)}
-              className="min-h-[260px] w-full rounded-xl border border-slate-300 bg-white/70 p-4 text-sm text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-            />
-            <button
-              onClick={runExtraction}
-              disabled={extractLoading}
-              className="tech-button mt-4 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <FileText className="h-4 w-4" />
-              {extractLoading ? 'Extracting...' : 'Run extraction'}
-            </button>
-            <pre className="mt-4 min-h-[220px] whitespace-pre-wrap rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-              {extractResult ? JSON.stringify(extractResult, null, 2) : 'Extraction output will appear here.'}
-            </pre>
+            <div className="inline-flex rounded-full border border-slate-200 bg-white p-1">
+              {[
+                { id: 'ask', label: 'Ask' },
+                { id: 'extract', label: 'Extract' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveDemoTab(tab.id as 'ask' | 'extract')}
+                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                    activeDemoTab === tab.id ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="app-panel p-6">
-            <div className="mb-4 flex items-center gap-3">
-              <Search className="h-5 w-5 text-slate-500" />
-              <h2 className="text-2xl font-semibold text-slate-950">Evidence-backed query</h2>
-            </div>
-            <p className="mb-4 text-sm leading-6 text-slate-600">
-              Ask a question against the active report index and review the returned evidence alongside the answer.
-            </p>
-            <textarea
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              className="min-h-[110px] w-full rounded-xl border border-slate-300 bg-white/70 p-4 text-sm text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-            />
-            <button
-              onClick={runRag}
-              disabled={ragLoading}
-              className="tech-button mt-4 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Network className="h-4 w-4" />
-              {ragLoading ? 'Retrieving...' : 'Ask question'}
-            </button>
-            <pre className="mt-4 min-h-[370px] whitespace-pre-wrap rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-              {ragResult ? JSON.stringify(ragResult, null, 2) : 'Evidence-backed answer output will appear here.'}
-            </pre>
-          </div>
+          <motion.div
+            key={activeDemoTab}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.24 }}
+            className="grid gap-6 p-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(320px,0.65fr)]"
+          >
+            {activeDemoTab === 'extract' ? (
+              <>
+                <div>
+                  <div className="mb-4 flex items-center gap-3">
+                    <Workflow className="h-5 w-5 text-slate-500" />
+                    <h3 className="text-xl font-semibold text-slate-950">ESG extraction</h3>
+                  </div>
+                  <textarea
+                    value={extractText}
+                    onChange={(e) => setExtractText(e.target.value)}
+                    className="min-h-[260px] w-full rounded-xl border border-slate-300 bg-white/70 p-4 text-sm text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                  />
+                  <button
+                    onClick={runExtraction}
+                    disabled={extractLoading}
+                    className="tech-button mt-4 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <FileText className="h-4 w-4" />
+                    {extractLoading ? 'Extracting...' : 'Run extraction'}
+                  </button>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-4">
+                  <div className="text-sm font-semibold text-slate-950">Result</div>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <div className="rounded-lg bg-white p-3">
+                      <div className="text-2xl font-semibold text-slate-950">{extractResult?.entities?.length || 0}</div>
+                      <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Entities</div>
+                    </div>
+                    <div className="rounded-lg bg-white p-3">
+                      <div className="text-2xl font-semibold text-slate-950">{extractResult?.relations?.length || 0}</div>
+                      <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Relations</div>
+                    </div>
+                  </div>
+                  <details className="mt-4">
+                    <summary className="cursor-pointer text-sm font-semibold text-slate-700">Raw JSON</summary>
+                    <pre className="mt-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">
+                      {extractResult ? JSON.stringify(extractResult, null, 2) : 'Run extraction to see raw output.'}
+                    </pre>
+                  </details>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <div className="mb-4 flex items-center gap-3">
+                    <Search className="h-5 w-5 text-slate-500" />
+                    <h3 className="text-xl font-semibold text-slate-950">Evidence-backed query</h3>
+                  </div>
+                  <textarea
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    className="min-h-[150px] w-full rounded-xl border border-slate-300 bg-white/70 p-4 text-sm text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                  />
+                  <button
+                    onClick={runRag}
+                    disabled={ragLoading}
+                    className="tech-button mt-4 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Network className="h-4 w-4" />
+                    {ragLoading ? 'Retrieving...' : 'Ask question'}
+                  </button>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-4">
+                  <div className="text-sm font-semibold text-slate-950">Answer</div>
+                  <p className="mt-3 min-h-[120px] whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                    {ragResult?.message || ragResult?.answer || 'Ask the sample question to see the grounded answer.'}
+                  </p>
+                  <div className="mt-4 rounded-lg bg-white p-3 text-sm text-slate-600">
+                    Sources: {Array.isArray(ragResult?.sources) ? ragResult.sources.length : 0}
+                  </div>
+                  <details className="mt-4">
+                    <summary className="cursor-pointer text-sm font-semibold text-slate-700">Raw JSON</summary>
+                    <pre className="mt-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">
+                      {ragResult ? JSON.stringify(ragResult, null, 2) : 'Run a query to see raw output.'}
+                    </pre>
+                  </details>
+                </div>
+              </>
+            )}
+          </motion.div>
         </section>
       </div>
     </div>

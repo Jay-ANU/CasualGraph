@@ -3,311 +3,199 @@ import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
-  BarChart3,
+  BookOpenCheck,
   BrainCircuit,
-  ChevronLeft,
-  ChevronRight,
   Database,
   Download,
   FileCheck2,
   FileSearch,
-  GitBranch,
-  Leaf,
-  Monitor,
+  Github,
+  MessageSquare,
   Network,
+  ScreenShare,
   ShieldCheck,
-  Sparkles,
-  Users,
 } from 'lucide-react';
-import { desktopMacArm64DownloadUrl, desktopReleaseNotesUrl } from '../config/downloads';
+import { githubRepositoryUrl } from '../config/downloads';
 
-const demoVideoUrl = 'https://www.youtube-nocookie.com/embed/vju2vpjyhsw?rel=0&modestbranding=1';
+const workflowSteps = [
+  {
+    step: '01',
+    title: 'Upload reports',
+    description: 'Add annual reports, ESG disclosures, coursework drafts, notes, or screenshots into one private workspace.',
+    icon: FileSearch,
+  },
+  {
+    step: '02',
+    title: 'Ask with context',
+    description: 'Ask business, ESG, strategy, finance, or academic questions without manually searching hundreds of pages.',
+    icon: MessageSquare,
+  },
+  {
+    step: '03',
+    title: 'Check the evidence',
+    description: 'Keep citations, chunks, graph nodes, and reasoning traces close enough to verify before using the answer.',
+    icon: FileCheck2,
+  },
+  {
+    step: '04',
+    title: 'Turn it into work',
+    description: 'Draft analysis, compare companies, review Word documents, and refine arguments from the same evidence base.',
+    icon: BookOpenCheck,
+  },
+];
 
-const Home: React.FC = () => {
-  const [activeShowcase, setActiveShowcase] = useState(0);
+const useCases = [
+  {
+    title: 'Business report writing',
+    description: 'Upload company reports and ask the agent to build a supported analysis outline, identify missing metrics, and refine claims.',
+  },
+  {
+    title: 'ESG disclosure review',
+    description: 'Track emissions, workforce, governance, risk, and strategy evidence across long reports with source-backed answers.',
+  },
+  {
+    title: 'Company comparison',
+    description: 'Compare disclosure quality, strategy signals, risks, and graph relationships across selected companies.',
+  },
+  {
+    title: 'Academic study support',
+    description: 'Turn screenshots and documents into study notes, concept explanations, follow-up questions, and evidence-aware drafts.',
+  },
+];
 
-  const showcaseSlides = [
-    {
-      key: 'agent',
-      label: 'Agent',
-      eyebrow: 'CausalGraph Agent',
-      title: 'Ask ESG questions. Get cited answers, graph context, and next steps.',
-      description:
-        'A research assistant that routes intent, searches private reports and global ESG knowledge, then returns evidence-backed responses in one workspace.',
-    },
-    {
-      key: 'matrix',
-      label: 'Matrix',
-      eyebrow: 'ESG Intelligence Matrix',
-      title: 'Four ESG lenses, one intelligence layer.',
-      description:
-        'Move between environment, social, governance, and AI reasoning without exposing raw database internals to end users.',
-    },
-    {
-      key: 'demo',
-      label: 'Demo',
-      eyebrow: 'Workflow Demo',
-      title: 'See the full loop from upload to answer.',
-      description:
-        'Watch reports become chunks, vectors, graph records, retrieved evidence, and final cited answers.',
-    },
-  ];
+const domains = [
+  { label: 'E', title: 'Environment', detail: 'Emissions, energy, climate risk, water, waste.', color: 'var(--cg-domain-e)' },
+  { label: 'S', title: 'Social', detail: 'Workforce, safety, diversity, suppliers, community.', color: 'var(--cg-domain-s)' },
+  { label: 'G', title: 'Governance', detail: 'Board oversight, audit controls, ethics, compliance.', color: 'var(--cg-domain-g)' },
+  { label: 'AI', title: 'AI Insight', detail: 'RAG routing, graph reasoning, prediction, review.', color: 'var(--cg-domain-ai)' },
+];
 
-  const agentHighlights = [
-    {
-      icon: GitBranch,
-      title: 'Plan the query',
-      description: 'Routes intent, rewrites follow-ups, and decomposes complex ESG questions only when needed.',
-    },
-    {
-      icon: FileSearch,
-      title: 'Know your corpus',
-      description: 'Searches private uploads plus global ESG knowledge with vector, BM25, layered, and graph retrieval.',
-    },
-    {
-      icon: FileCheck2,
-      title: 'Return the trail',
-      description: 'Keeps citations, graph sources, timings, and prediction reasoning attached to the response.',
-    },
-  ];
+const evidenceRules = [
+  'Answers should cite retrieved report chunks when evidence exists.',
+  'Unsupported claims should be softened or marked as needing evidence.',
+  'Graph context should show which concepts and relationships shaped the answer.',
+  'General guidance should remain useful instead of refusing harmless questions.',
+];
 
-  const domainCards = [
-    {
-      key: 'environmental',
-      label: 'Environmental',
-      title: 'Emissions',
-      caption: 'Range I-III GHG, energy mix, water stewardship.',
-      icon: Leaf,
-      to: '/agent',
-      background: 'var(--cg-domain-e)',
-    },
-    {
-      key: 'social',
-      label: 'Social',
-      title: 'Workforce',
-      caption: 'Diversity, safety, labour, community impact.',
-      icon: Users,
-      to: '/agent',
-      background: 'var(--cg-domain-s)',
-    },
-    {
-      key: 'governance',
-      label: 'Governance',
-      title: 'Controls',
-      caption: 'Board independence, audit posture, policies.',
-      icon: ShieldCheck,
-      to: '/agent',
-      background: 'var(--cg-domain-g)',
-    },
-    {
-      key: 'ai',
-      label: 'AI Insight',
-      title: 'Reasoning',
-      caption: 'RAG, graph context, prediction with evidence.',
-      icon: Sparkles,
-      to: '/causal-inference',
-      background: 'var(--cg-domain-ai)',
-    },
-  ];
+const ResearchDeskPreview: React.FC = () => (
+  <div className="cg-tool-panel overflow-hidden">
+    <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
+      <div className="flex items-center gap-2">
+        <span className="h-2.5 w-2.5 rounded-full bg-ink" />
+        <span className="h-2.5 w-2.5 rounded-full bg-hairline" />
+        <span className="h-2.5 w-2.5 rounded-full bg-hairline" />
+      </div>
+      <span className="font-mono text-[11px] font-medium text-ink-stone">CausalGraph Research Desk</span>
+    </div>
 
-  const capabilities = [
-    {
-      icon: FileSearch,
-      title: 'Evidence first',
-      description: 'Answers are grounded in source passages, citations, and selected report context.',
-    },
-    {
-      icon: Network,
-      title: 'Graph-aware',
-      description: 'Entities and relationships stay available for causal paths and graph-backed reasoning.',
-    },
-    {
-      icon: BrainCircuit,
-      title: 'Flash or deep',
-      description: 'Fast responses for simple requests, deeper planning for multi-hop research questions.',
-    },
-    {
-      icon: BarChart3,
-      title: 'Reviewable outputs',
-      description: 'Summaries, predictions, and answers keep enough structure for audit and iteration.',
-    },
-  ];
-
-  const changeSlide = (direction: number) => {
-    setActiveShowcase((current) => (current + direction + showcaseSlides.length) % showcaseSlides.length);
-  };
-
-  const renderAgentVisual = () => (
-    <div className="grid h-full overflow-hidden rounded-2xl border border-hairline bg-surface-soft p-3 lg:grid-cols-[210px_minmax(0,1fr)_240px]">
-      <div className="hidden min-h-0 border-r border-hairline pr-3 lg:block">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="cg-eyebrow text-ink-steel">Library</span>
-          <span className="font-mono text-[11px] text-ink-stone">18</span>
+    <div className="grid min-h-[430px] lg:grid-cols-[190px_minmax(0,1fr)]">
+      <aside className="hidden border-r border-hairline bg-surface-soft p-4 lg:block">
+        <div className="mb-4 flex items-center gap-2 text-[12px] font-semibold text-ink">
+          <Database className="h-4 w-4" />
+          Knowledge base
         </div>
-        {['NVIDIA FY2025 Sustainability Report', 'Climate risk controls', 'Supplier code review'].map((title, index) => (
-          <div key={title} className={`mb-2 rounded-lg border p-3 ${index === 0 ? 'border-ink bg-white' : 'border-hairline bg-white/70'}`}>
-            <div className="line-clamp-2 text-[12px] font-semibold leading-5 text-ink">{title}</div>
-            <div className="mt-2 flex items-center gap-2 text-[11px] text-ink-steel">
-              <Database className="h-3 w-3" />
-              <span>{index === 0 ? '42 concepts' : 'indexed'}</span>
-            </div>
+        {['Apple ESG Report', 'Coca-Cola Strategy', 'Costco Sustainability'].map((item, index) => (
+          <div
+            key={item}
+            className={`mb-2 border-b border-hairline pb-3 text-[12px] leading-5 ${
+              index === 0 ? 'font-semibold text-ink' : 'text-ink-steel'
+            }`}
+          >
+            {item}
+            <div className="mt-1 font-mono text-[10px] text-ink-stone">{index === 0 ? 'selected' : 'indexed'}</div>
           </div>
         ))}
-      </div>
-      <div className="min-w-0 px-0 sm:px-3">
-        <div className="rounded-xl border border-hairline bg-white p-4">
-          <div className="mb-4 flex items-center justify-between border-b border-hairline pb-3">
-            <div>
-              <span className="cg-eyebrow text-ink-steel">Research answer</span>
-              <h3 className="mt-1 text-[18px] font-semibold leading-6 text-ink">How did emissions change?</h3>
-            </div>
-            <span className="rounded-full bg-success-bg px-2.5 py-1 text-[11px] font-semibold text-success">Cited</span>
-          </div>
-          <div className="space-y-2 text-[13px] leading-6 text-ink-charcoal">
-            <p>NVIDIA reports reduced market-based scope 2 emissions and connects the movement to renewable electricity procurement.</p>
-            <p className="rounded-lg bg-surface-soft p-3 text-[12px] text-ink-steel">
-              Evidence: sustainability report excerpt, emissions table, renewable electricity target.
-            </p>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {['Report p.14', 'Scope 2', 'Renewables'].map((label) => (
-              <span key={label} className="rounded-md border border-hairline bg-white px-2 py-1 text-[11px] font-medium text-ink-charcoal">
-                {label}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-3">
-          {agentHighlights.map((item) => {
-            const Icon = item.icon;
-            return (
-              <div key={item.title} className="rounded-xl border border-hairline bg-white p-4">
-                <Icon className="mb-3 h-4 w-4 text-ink-steel" />
-                <h3 className="text-[14px] font-semibold">{item.title}</h3>
-                <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-ink-steel">{item.description}</p>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div className="hidden min-h-0 border-l border-hairline pl-3 lg:block">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="cg-eyebrow text-ink-steel">Evidence</span>
-          <span className="font-mono text-[11px] text-ink-stone">3 hits</span>
-        </div>
-        <div className="space-y-2">
-          {['Scope 2 market-based emissions', 'Renewable electricity target', 'Board climate oversight'].map((item, index) => (
-            <div key={item} className="rounded-lg border border-hairline bg-white p-3">
-              <div className="text-[12px] font-semibold text-ink">{item}</div>
-              <div className="mt-1 text-[11px] text-ink-steel">{82 - index * 9}% relevance</div>
-            </div>
+      </aside>
+
+      <div className="min-w-0 p-4 sm:p-5">
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          {domains.map((domain) => (
+            <span key={domain.label} className="inline-flex items-center gap-2 rounded-full border border-hairline px-3 py-1 text-[12px] font-semibold text-ink-charcoal">
+              <span className="h-2 w-2 rounded-full" style={{ background: domain.color }} />
+              {domain.title}
+            </span>
           ))}
         </div>
-      </div>
-    </div>
-  );
 
-  const renderMatrixVisual = () => (
-    <div className="grid h-full grid-cols-2 gap-4 lg:grid-cols-4">
-      {domainCards.map((card) => {
-        const Icon = card.icon;
-        return (
-          <Link
-            key={card.key}
-            to={card.to}
-            className="group relative overflow-hidden rounded-2xl p-5 text-white transition hover:-translate-y-0.5"
-            style={{ background: card.background }}
-          >
-            <div className="relative flex h-full min-h-[250px] flex-col">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/90">{card.label}</span>
-                <span className="rounded-full bg-white/95 px-2.5 py-1 text-[10px] font-bold text-ink">NEW</span>
-              </div>
-              <h3 className="mt-16 font-display text-[32px] font-semibold leading-none tracking-normal text-white">
-                {card.title}
-              </h3>
-              <div className="mt-auto">
-                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/10 backdrop-blur">
-                  <Icon className="h-5 w-5" />
-                </div>
-                <p className="text-[13px] font-medium leading-6 text-white">{card.caption}</p>
-              </div>
+        <div className="ml-auto w-fit max-w-[82%] rounded-2xl rounded-br-md bg-ink px-4 py-3 text-[13px] leading-5 text-white">
+          What evidence supports Apple's ESG strategy improving financial performance?
+        </div>
+
+        <div className="mt-5 grid gap-4 border-l border-hairline pl-4">
+          <div>
+            <div className="mb-2 inline-flex items-center gap-2 text-[12px] font-semibold text-ink">
+              <BrainCircuit className="h-4 w-4" />
+              Evidence-aware answer
             </div>
-          </Link>
-        );
-      })}
-    </div>
-  );
+            <p className="text-[14px] leading-6 text-ink-charcoal">
+              The current evidence supports a cautious claim: ESG strategy may improve long-term resilience,
+              but a direct financial-performance claim needs revenue, margin, cost-saving, or risk-mitigation evidence.
+            </p>
+          </div>
 
-  const renderDemoVisual = () => (
-    <div className="relative mx-auto max-w-4xl overflow-hidden rounded-2xl border border-hairline bg-ink">
-      <div className="aspect-video">
-        <iframe
-          className="h-full w-full"
-          src={demoVideoUrl}
-          title="CausalGraphAI demonstration video"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          referrerPolicy="strict-origin-when-cross-origin"
-          allowFullScreen
-        />
+          <div className="grid gap-2 sm:grid-cols-3">
+            {[
+              ['Cited chunks', '6'],
+              ['Graph nodes', '24'],
+              ['Evidence gaps', '3'],
+            ].map(([value, label]) => (
+              <div key={label} className="border-y border-hairline py-3">
+                <div className="font-display text-[30px] font-semibold leading-none text-ink">{value}</div>
+                <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-stone">{label}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-xl bg-surface-soft p-4">
+            <div className="mb-3 text-[12px] font-semibold uppercase tracking-[0.12em] text-ink-stone">Suggested next move</div>
+            <p className="text-[13px] leading-6 text-ink-charcoal">
+              Add financial metrics or rewrite the claim into a more defensible paragraph before using it in a report.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
-  );
+  </div>
+);
 
-  const renderShowcaseVisual = () => {
-    if (activeShowcase === 1) return renderMatrixVisual();
-    if (activeShowcase === 2) return renderDemoVisual();
-    return renderAgentVisual();
-  };
-
-  const activeSlide = showcaseSlides[activeShowcase];
+const Home: React.FC = () => {
+  const [activeUseCase, setActiveUseCase] = useState(useCases[0].title);
+  const [activeDomain, setActiveDomain] = useState(domains[0].label);
+  const [activeEvidenceRule, setActiveEvidenceRule] = useState(0);
+  const currentUseCase = useCases.find((item) => item.title === activeUseCase) || useCases[0];
+  const currentDomain = domains.find((item) => item.label === activeDomain) || domains[0];
+  const currentEvidenceRule = evidenceRules[activeEvidenceRule] || evidenceRules[0];
 
   return (
-    <div className="min-h-screen bg-canvas text-ink">
-      <section className="relative overflow-hidden border-b border-hairline-soft bg-canvas">
-        <div className="mx-auto max-w-page-wide px-4 py-9 sm:px-6 lg:px-8 lg:py-11 xl:max-w-page-xl 2xl:max-w-page-2xl">
+    <div className="min-h-screen overflow-x-hidden bg-canvas text-ink">
+      <section className="border-b border-hairline-soft bg-canvas">
+        <div className="mx-auto grid max-w-page-wide gap-10 px-4 py-14 sm:px-6 lg:grid-cols-[0.86fr_1.14fr] lg:items-center lg:px-8 lg:py-16 xl:max-w-page-xl xl:gap-14 xl:px-12 2xl:max-w-page-2xl 2xl:px-16">
           <motion.div
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.42 }}
-            className="mx-auto max-w-4xl text-center"
+            className="max-w-3xl"
           >
-            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-hairline bg-white/80 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-steel shadow-sm backdrop-blur">
-              <BrainCircuit className="h-3.5 w-3.5 text-ink" />
-              <span>{activeSlide.eyebrow}</span>
-            </div>
-            <h1 className="font-display text-[46px] font-semibold leading-[1.02] tracking-normal text-ink sm:text-[64px] lg:text-[78px]">
-              {activeShowcase === 1
-                ? 'ESG Intelligence Matrix'
-                : activeShowcase === 2
-                  ? 'CausalGraph Demo'
-                  : 'CausalGraph Agent'}
+            <h1 className="font-display text-[54px] font-semibold leading-[1.02] tracking-normal text-ink sm:text-[72px] xl:text-[88px]">
+              CausalGraph AI
             </h1>
-            <p className="mx-auto mt-5 max-w-3xl text-[16px] leading-7 text-ink-steel sm:text-[18px]">
-              {activeShowcase === 1
-                ? 'Unified intelligence across Environment, Social, Governance, and AI Insight. Actionable data, smarter decisions, and sustainable impact.'
-                : activeShowcase === 2
-                  ? 'Watch the ESG intelligence workflow in action: upload reports, retrieve evidence, reason over graph context, and generate cited answers.'
-                  : 'Intelligent ESG research assistant for report search, evidence-backed answers, graph reasoning, and scenario analysis.'}
+            <p className="mt-6 max-w-2xl text-[18px] leading-8 text-ink-steel">
+              Upload reports, ask questions, inspect the evidence, and turn ESG or business documents
+              into grounded analysis instead of unsupported AI text.
             </p>
-
-            <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
-              <Link to="/agent" className="cg-btn-primary justify-center sm:min-w-[160px]">
-                {activeShowcase === 2 ? 'Try Agent Now' : 'Open Agent'}
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Link to="/agent" className="cg-btn-primary justify-center">
+                Open research desk
+                <ArrowRight className="h-4 w-4" />
               </Link>
-              <a href={desktopMacArm64DownloadUrl} className="cg-btn-secondary justify-center sm:min-w-[190px]" download>
+              <Link to="/desktop" className="cg-btn-secondary justify-center">
                 <Download className="h-4 w-4" />
-                Download Desktop
+                Download desktop
+              </Link>
+              <a href={githubRepositoryUrl} target="_blank" rel="noreferrer" className="cg-btn-tertiary justify-center">
+                <Github className="h-4 w-4" />
+                GitHub
               </a>
-              <Link
-                to={activeShowcase === 1 ? '/agent' : '/agent?tier=deep'}
-                className="cg-btn-primary justify-center sm:min-w-[160px]"
-              >
-                {activeShowcase === 1 ? 'Start Research' : 'Try Deep Mode'}
-              </Link>
-              <Link to="/about" className="cg-btn-secondary justify-center sm:min-w-[160px]">
-                Learn More
-              </Link>
             </div>
           </motion.div>
 
@@ -315,195 +203,221 @@ const Home: React.FC = () => {
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.46, delay: 0.06 }}
-            className="relative mx-auto mt-9 max-w-6xl"
+            className="min-w-0"
           >
-            <button
-              type="button"
-              onClick={() => changeSlide(-1)}
-              className="absolute -left-4 top-1/2 z-20 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-hairline bg-white/90 text-ink shadow-card transition hover:bg-white md:flex"
-              aria-label="Previous showcase"
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </button>
-            <div className="cg-tool-panel p-3">
-              <div className={activeShowcase === 2 ? 'overflow-visible' : 'h-[330px] overflow-hidden lg:h-[370px]'}>
-                {renderShowcaseVisual()}
-              </div>
-              <div className="flex flex-col gap-3 px-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                <p className="max-w-3xl text-left text-[13px] leading-5 text-ink-steel">{activeSlide.description}</p>
-                <div className="flex shrink-0 items-center gap-2">
-                  {showcaseSlides.map((slide, index) => (
-                    <button
-                      key={slide.key}
-                      type="button"
-                      onClick={() => setActiveShowcase(index)}
-                      className={`h-2 rounded-full transition-all ${
-                        activeShowcase === index ? 'w-8 bg-ink' : 'w-2 bg-ink/25 hover:bg-ink/45'
-                      }`}
-                      aria-label={`Show ${slide.label}`}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => changeSlide(1)}
-              className="absolute -right-4 top-1/2 z-20 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-hairline bg-white/90 text-ink shadow-card transition hover:bg-white md:flex"
-              aria-label="Next showcase"
-            >
-              <ChevronRight className="h-5 w-5" />
-            </button>
+            <ResearchDeskPreview />
           </motion.div>
         </div>
       </section>
 
       <section className="border-b border-hairline-soft bg-surface-soft">
-        <div className="mx-auto max-w-page-wide px-4 py-14 sm:px-6 lg:px-8 xl:max-w-page-xl 2xl:max-w-page-2xl">
-          <div className="mb-8 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-            <div className="max-w-2xl">
-              <p className="cg-eyebrow">Built for review</p>
+        <div className="mx-auto max-w-page-wide px-4 py-12 sm:px-6 lg:px-8 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16">
+          <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl">
+              <p className="cg-eyebrow">What it does</p>
               <h2 className="mt-3 text-heading-lg tracking-normal lg:text-[52px]">
-                Every answer keeps the evidence close.
+                One workspace from raw report to usable analysis.
               </h2>
             </div>
             <p className="max-w-xl text-[16px] leading-7 text-ink-steel">
-              CausalGraph separates private user uploads from the global ESG knowledge layer while preserving retrieval breadth for questions that need external context.
+              CausalGraph is built for the moment after you receive a long document and need to write,
+              compare, explain, or verify something from it.
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {capabilities.map((capability, idx) => {
-              const Icon = capability.icon;
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {workflowSteps.map((item) => {
+              const Icon = item.icon;
               return (
-                <motion.div
-                  key={capability.title}
-                  initial={{ opacity: 0, y: 12 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.35, delay: idx * 0.04 }}
-                  viewport={{ once: true }}
-                  className="cg-tool-panel p-6"
-                >
-                  <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-full bg-surface-soft text-ink">
-                    <Icon className="h-5 w-5" />
+                <div key={item.title} className="cg-tool-panel p-5">
+                  <div className="mb-7 flex items-center justify-between">
+                    <span className="font-mono text-[12px] font-semibold text-ink-stone">{item.step}</span>
+                    <Icon className="h-5 w-5 text-ink" />
                   </div>
-                  <h3 className="text-[20px] font-semibold tracking-normal">{capability.title}</h3>
-                  <p className="mt-2 text-[14px] leading-6 text-ink-steel">{capability.description}</p>
-                </motion.div>
+                  <h3 className="text-[21px] font-semibold tracking-normal text-ink">{item.title}</h3>
+                  <p className="mt-3 text-[14px] leading-6 text-ink-steel">{item.description}</p>
+                </div>
               );
             })}
           </div>
         </div>
       </section>
 
-      <section className="border-b border-hairline-soft bg-canvas">
-        <div className="mx-auto grid max-w-page-wide gap-8 px-4 py-14 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:px-8 xl:max-w-page-xl 2xl:max-w-page-2xl">
-          <div>
-            <p className="cg-eyebrow">Desktop companion</p>
+      <section className="mx-auto max-w-page-wide px-4 py-14 sm:px-6 lg:px-8 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16">
+        <div className="grid gap-8 lg:grid-cols-[0.86fr_1.14fr] lg:items-start">
+          <div className="lg:sticky lg:top-28">
+            <p className="cg-eyebrow">Use cases</p>
             <h2 className="mt-3 text-heading-lg tracking-normal lg:text-[52px]">
-              Keep CausalGraph on your desktop while you work.
+              Built for business and academic work, not just chat.
             </h2>
             <p className="mt-4 max-w-xl text-[16px] leading-7 text-ink-steel">
-              The macOS companion stays at the screen edge, accepts report drops, captures visible work when you ask, and sends the result back into the same CausalGraph agent workflow.
-            </p>
-            <div className="mt-7 flex flex-col gap-3 sm:flex-row">
-              <a href={desktopMacArm64DownloadUrl} className="cg-btn-primary justify-center" download>
-                <Download className="h-4 w-4" />
-                Download for macOS
-              </a>
-              <a href={desktopReleaseNotesUrl} className="cg-btn-secondary justify-center">
-                Release notes
-              </a>
-            </div>
-            <p className="mt-3 text-[12px] leading-5 text-ink-steel">
-              Beta build for Apple Silicon Macs. Unsigned builds may require opening from Finder with Control-click.
-            </p>
-          </div>
-
-          <div className="cg-tool-panel p-4">
-            <div className="rounded-2xl border border-hairline bg-surface-soft p-5">
-              <div className="mb-8 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-ink text-white">
-                    <Monitor className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <div className="text-[15px] font-semibold text-ink">CausalGraph Pet</div>
-                    <div className="text-[12px] text-ink-steel">macOS desktop assistant</div>
-                  </div>
-                </div>
-                <span className="rounded-full bg-success-bg px-2.5 py-1 text-[11px] font-semibold text-success">Beta</span>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                {[
-                  ['Drop', 'Upload reports without leaving your workspace.'],
-                  ['Capture', 'Summarize visible work and continue asking.'],
-                  ['Follow', 'Stay available across macOS Spaces and full-screen apps.'],
-                ].map(([title, body]) => (
-                  <div key={title} className="rounded-xl bg-white p-4">
-                    <h3 className="text-[16px] font-semibold text-ink">{title}</h3>
-                    <p className="mt-2 text-[13px] leading-5 text-ink-steel">{body}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-page-wide px-4 py-14 sm:px-6 lg:px-8 xl:max-w-page-xl 2xl:max-w-page-2xl">
-        <div className="grid gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
-          <div>
-            <p className="cg-eyebrow">Operating model</p>
-            <h2 className="mt-3 text-heading-lg tracking-normal lg:text-[52px]">
-              From disclosure text to reviewable intelligence.
-            </h2>
-            <p className="mt-4 max-w-xl text-[16px] leading-7 text-ink-steel">
-              Uploads become searchable chunks, vectors, and graph records. The agent decides when to answer directly, when to retrieve more evidence, and when deeper reasoning is needed.
+              The product is useful when the answer must become a report paragraph, a defensible claim,
+              a comparison table, or a study explanation.
             </p>
             <Link to="/agent" className="cg-btn-primary mt-7 inline-flex">
-              Try the workspace
+              Start with your reports
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
 
-          <div className="cg-tool-panel p-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              {[
-                ['01', 'Ingest', 'Parse files, chunk report text, preserve document ownership.'],
-                ['02', 'Retrieve', 'Search private corpus and global ESG knowledge with hybrid retrieval.'],
-                ['03', 'Reason', 'Use flash or deep routing depending on query complexity.'],
-                ['04', 'Review', 'Return answer, citations, graph traces, and timing signals.'],
-              ].map(([step, title, body]) => (
-                <div key={step} className="rounded-xl bg-surface-soft p-5">
-                  <div className="mb-6 flex items-center justify-between">
-                    <span className="font-mono text-[12px] font-semibold text-ink-stone">{step}</span>
-                    <Database className="h-4 w-4 text-ink-stone" />
-                  </div>
-                  <h3 className="text-[22px] font-semibold tracking-normal">{title}</h3>
-                  <p className="mt-2 text-[14px] leading-6 text-ink-steel">{body}</p>
-                </div>
+          <div className="grid gap-4 rounded-2xl border border-hairline bg-white p-3 sm:grid-cols-[220px_minmax(0,1fr)]">
+            <div className="flex gap-2 overflow-x-auto sm:block sm:space-y-1 sm:overflow-visible">
+              {useCases.map((item) => {
+                const active = item.title === activeUseCase;
+                return (
+                  <button
+                    key={item.title}
+                    type="button"
+                    onClick={() => setActiveUseCase(item.title)}
+                    className={`shrink-0 rounded-xl px-4 py-3 text-left text-[13px] font-semibold transition sm:w-full ${
+                      active ? 'bg-ink text-white' : 'text-ink-charcoal hover:bg-surface-soft'
+                    }`}
+                  >
+                    {item.title}
+                  </button>
+                );
+              })}
+            </div>
+            <motion.div
+              key={currentUseCase.title}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24 }}
+              className="min-h-[190px] rounded-xl bg-surface-soft p-5"
+            >
+              <h3 className="text-[24px] font-semibold tracking-normal text-ink">{currentUseCase.title}</h3>
+              <p className="mt-3 max-w-2xl text-[15px] leading-7 text-ink-steel">{currentUseCase.description}</p>
+              <Link to="/agent" className="cg-btn-secondary mt-6 inline-flex">
+                Try this workflow
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-y border-hairline-soft bg-canvas">
+        <div className="mx-auto grid max-w-page-wide gap-8 px-4 py-14 sm:px-6 lg:grid-cols-[1fr_1fr] lg:px-8 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16">
+          <div>
+            <p className="cg-eyebrow">Knowledge graph</p>
+            <h2 className="mt-3 text-heading-lg tracking-normal lg:text-[52px]">
+              E, S, G, and AI stay separated enough to inspect.
+            </h2>
+            <p className="mt-4 max-w-2xl text-[16px] leading-7 text-ink-steel">
+              The graph view groups extracted report entities into practical review lenses, then lets users
+              drill down into real nodes and relationships.
+            </p>
+          </div>
+
+          <div className="rounded-3xl p-4 text-white" style={{ background: currentDomain.color }}>
+            <div className="flex flex-wrap gap-2">
+              {domains.map((domain) => (
+                <button
+                  key={domain.label}
+                  type="button"
+                  onClick={() => setActiveDomain(domain.label)}
+                  className={`h-10 min-w-10 rounded-full border px-3 text-[13px] font-semibold transition ${
+                    domain.label === activeDomain
+                      ? 'border-white bg-white text-ink'
+                      : 'border-white/35 text-white hover:bg-white/10'
+                  }`}
+                >
+                  {domain.label}
+                </button>
+              ))}
+            </div>
+            <motion.div
+              key={currentDomain.label}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24 }}
+              className="mt-16"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <h3 className="font-display text-[44px] font-semibold leading-none text-white">{currentDomain.title}</h3>
+                <Network className="h-7 w-7 opacity-80" />
+              </div>
+              <p className="mt-4 max-w-lg text-[15px] leading-7 text-white/82">{currentDomain.detail}</p>
+              <Link to="/causal-inference" className="mt-7 inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-[13px] font-semibold text-ink transition hover:bg-white/90">
+                Explore graph
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-page-wide px-4 py-14 sm:px-6 lg:px-8 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16">
+        <div className="grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+          <div>
+            <p className="cg-eyebrow">Evidence contract</p>
+            <h2 className="mt-3 text-heading-lg tracking-normal lg:text-[52px]">
+              Every useful answer should tell you what it knows and what is missing.
+            </h2>
+            <p className="mt-4 max-w-2xl text-[16px] leading-7 text-ink-steel">
+              This is the difference between a generic assistant and an ESG research system.
+              CausalGraph keeps the source trail visible so users can use the output in real work.
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-ink p-6 text-white">
+            <div className="mb-6 flex items-center justify-between gap-4">
+              <ShieldCheck className="h-8 w-8 text-white/80" />
+              <span className="font-mono text-[12px] text-white/55">
+                {activeEvidenceRule + 1}/{evidenceRules.length}
+              </span>
+            </div>
+            <motion.p
+              key={currentEvidenceRule}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.22 }}
+              className="min-h-[96px] text-[20px] font-semibold leading-8 text-white"
+            >
+              {currentEvidenceRule}
+            </motion.p>
+            <div className="mt-7 grid grid-cols-4 gap-2">
+              {evidenceRules.map((rule, index) => (
+                <button
+                  key={rule}
+                  type="button"
+                  onClick={() => setActiveEvidenceRule(index)}
+                  className={`h-2 rounded-full transition ${
+                    index === activeEvidenceRule ? 'bg-white' : 'bg-white/25 hover:bg-white/45'
+                  }`}
+                  aria-label={`Show evidence rule ${index + 1}`}
+                />
               ))}
             </div>
           </div>
         </div>
       </section>
 
-      <section className="mx-auto max-w-page-wide px-4 pb-16 sm:px-6 lg:px-8 xl:max-w-page-xl 2xl:max-w-page-2xl">
-        <div className="overflow-hidden rounded-2xl bg-ink p-8 text-white sm:p-10 lg:flex lg:items-center lg:justify-between lg:gap-10">
-          <div className="max-w-3xl">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-white/55">Get started</p>
-            <h2 className="mt-3 font-display text-[38px] font-semibold leading-tight tracking-normal text-white sm:text-[48px]">
-              Bring reports in. Ask questions out. Keep the evidence attached.
-            </h2>
-          </div>
-          <div className="mt-7 flex flex-col gap-3 sm:flex-row lg:mt-0">
-            <Link to="/login" className="cg-btn-tertiary justify-center">
-              Sign in
-            </Link>
-            <Link to="/agent" className="inline-flex items-center justify-center gap-2 rounded-full border border-white/30 px-6 py-3 text-[14px] font-semibold text-white transition hover:bg-white/10">
-              Open Agent
+      <section className="border-t border-hairline-soft bg-surface-soft">
+        <div className="mx-auto grid max-w-page-wide gap-8 px-4 py-14 sm:px-6 lg:grid-cols-[1fr_1fr] lg:px-8 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16">
+          <div className="cg-tool-panel p-6">
+            <Github className="mb-8 h-8 w-8 text-ink" />
+            <h2 className="text-[30px] font-semibold tracking-normal text-ink">Open source by default.</h2>
+            <p className="mt-3 text-[15px] leading-7 text-ink-steel">
+              The public repository contains the app code and configuration templates. Private keys,
+              databases, vector indexes, and uploaded documents stay outside the repository.
+            </p>
+            <a href={githubRepositoryUrl} target="_blank" rel="noreferrer" className="cg-btn-secondary mt-6 inline-flex">
+              View GitHub
               <ArrowRight className="h-4 w-4" />
+            </a>
+          </div>
+
+          <div className="cg-tool-panel p-6">
+            <ScreenShare className="mb-8 h-8 w-8 text-ink" />
+            <h2 className="text-[30px] font-semibold tracking-normal text-ink">Desktop companion for active work.</h2>
+            <p className="mt-3 text-[15px] leading-7 text-ink-steel">
+              Drop reports, summarize screens, review Word drafts, and continue asking without returning
+              to the browser every time your research context changes.
+            </p>
+            <Link to="/desktop" className="cg-btn-primary mt-6 inline-flex">
+              Download desktop
+              <Download className="h-4 w-4" />
             </Link>
           </div>
         </div>

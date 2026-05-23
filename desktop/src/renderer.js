@@ -11,6 +11,31 @@ const WORK_ACADEMIC_SCREEN_PROMPT = [
   "Prefer concise Markdown with sections: Key information, Useful evidence, Next steps.",
   "Clearly separate visible evidence from inference."
 ].join(" ");
+const WORD_EDIT_INSTRUCTION = [
+  "Improve this Word document for business, ESG, finance, or academic analysis.",
+  "Preserve factual meaning and named entities.",
+  "Suggest paragraph-level replacements that improve clarity, structure, analytical strength, and evidence-aware phrasing.",
+  "Do not invent data or citations."
+].join(" ");
+const WORK_SCREENS = new Set(["home", "document", "screenshot", "word"]);
+const DETAIL_SCREEN_COPY = {
+  document: {
+    title: "Report ready",
+    subtitle: "Ask focused questions from this uploaded evidence."
+  },
+  screenshot: {
+    title: "Screen capture",
+    subtitle: "Summarize the visible work or academic context."
+  },
+  word: {
+    title: "Word review",
+    subtitle: "Accept paragraph edits, then export a revised document."
+  },
+  default: {
+    title: "Current task",
+    subtitle: "Review this context and continue in chat."
+  }
+};
 
 const elements = {
   dockView: document.getElementById("dockView"),
@@ -40,8 +65,14 @@ const elements = {
   logoutButton: document.getElementById("logoutButton"),
   userLabel: document.getElementById("userLabel"),
   workView: document.getElementById("workView"),
+  homePanel: document.getElementById("homePanel"),
+  detailPanel: document.getElementById("detailPanel"),
+  detailBackButton: document.getElementById("detailBackButton"),
+  detailTitle: document.getElementById("detailTitle"),
+  detailSubtitle: document.getElementById("detailSubtitle"),
   primaryCaptureButton: document.getElementById("primaryCaptureButton"),
   primaryUploadButton: document.getElementById("primaryUploadButton"),
+  primaryWordButton: document.getElementById("primaryWordButton"),
   primaryAskButton: document.getElementById("primaryAskButton"),
   dropZone: document.getElementById("dropZone"),
   openWebButton: document.getElementById("openWebButton"),
@@ -55,6 +86,17 @@ const elements = {
   contextPreview: document.getElementById("contextPreview"),
   suggestionPanel: document.getElementById("suggestionPanel"),
   suggestionList: document.getElementById("suggestionList"),
+  wordSetupPanel: document.getElementById("wordSetupPanel"),
+  wordGoalSelect: document.getElementById("wordGoalSelect"),
+  wordTemplateSelect: document.getElementById("wordTemplateSelect"),
+  chooseWordButton: document.getElementById("chooseWordButton"),
+  wordEditPanel: document.getElementById("wordEditPanel"),
+  wordEditTitle: document.getElementById("wordEditTitle"),
+  wordEditMeta: document.getElementById("wordEditMeta"),
+  wordSuggestionList: document.getElementById("wordSuggestionList"),
+  acceptAllWordButton: document.getElementById("acceptAllWordButton"),
+  undoWordButton: document.getElementById("undoWordButton"),
+  exportWordButton: document.getElementById("exportWordButton"),
   screenshotPanel: document.getElementById("screenshotPanel"),
   screenshotPrompt: document.getElementById("screenshotPrompt"),
   summarizeScreenButton: document.getElementById("summarizeScreenButton"),
@@ -68,7 +110,8 @@ const elements = {
   sendButton: document.getElementById("sendButton"),
   tierFlashButton: document.getElementById("tierFlashButton"),
   tierDeepButton: document.getElementById("tierDeepButton"),
-  fileInput: document.getElementById("fileInput")
+  fileInput: document.getElementById("fileInput"),
+  wordFileInput: document.getElementById("wordFileInput")
 };
 
 let token = localStorage.getItem(TOKEN_KEY) || "";
@@ -78,7 +121,16 @@ let currentScreenshot = null;
 let tier = normalizeTier(localStorage.getItem(TIER_KEY));
 let busy = false;
 let appMode = "pet";
+let activeWorkScreen = "home";
 let activeContext = null;
+let activeWordReview = null;
+let wordDecisionUndoStack = [];
+
+function showElement(element, visible) {
+  if (element) {
+    element.classList.toggle("hidden", !visible);
+  }
+}
 
 function isSignedIn() {
   return Boolean(token && currentUser);
@@ -98,7 +150,7 @@ function saveJson(key, value) {
 }
 
 function apiBase() {
-  return DEFAULT_API_BASE;
+  return (window.desktopAPI && window.desktopAPI.apiBase) || DEFAULT_API_BASE;
 }
 
 function normalizeTier(value) {
@@ -138,13 +190,21 @@ function setBusy(nextBusy, label) {
     elements.primaryCaptureButton,
     elements.petCaptureButton,
     elements.primaryUploadButton,
+    elements.primaryWordButton,
     elements.petUploadButton,
     elements.petAskButton,
     elements.petDockButton,
-    elements.summarizeScreenButton
+    elements.chooseWordButton,
+    elements.acceptAllWordButton,
+    elements.undoWordButton,
+    elements.summarizeScreenButton,
+    elements.exportWordButton
   ]) {
-    button.disabled = busy;
+    if (button) {
+      button.disabled = busy;
+    }
   }
+  updateWordActionStates();
   elements.statusDot.classList.toggle("busy", busy);
   if (label) {
     setStatus(label, "busy");
@@ -220,11 +280,66 @@ function setActiveContext(context) {
   activeContext = context || null;
   renderContext();
   renderSuggestions();
+  renderWorkScreen();
+}
+
+function setWorkScreen(screen) {
+  activeWorkScreen = WORK_SCREENS.has(screen) ? screen : "home";
+  renderWorkScreen();
+}
+
+function isHomeScreen() {
+  return activeWorkScreen === "home";
+}
+
+function isWordSetupScreen() {
+  return activeWorkScreen === "word" && !activeWordReview;
+}
+
+function isWordReviewScreen() {
+  return activeWorkScreen === "word" && Boolean(activeWordReview);
+}
+
+function shouldShowContextCard() {
+  return Boolean(activeContext) && !isWordReviewScreen();
+}
+
+function shouldShowSuggestions(suggestions) {
+  return !isHomeScreen() && !isWordReviewScreen() && suggestions.length > 0;
+}
+
+function renderWorkScreen() {
+  const isHome = isHomeScreen();
+  const isWordReview = isWordReviewScreen();
+
+  showElement(elements.homePanel, isHome);
+  showElement(elements.detailPanel, !isHome);
+  showElement(elements.screenshotPanel, activeWorkScreen === "screenshot");
+  showElement(elements.wordSetupPanel, isWordSetupScreen());
+  showElement(elements.wordEditPanel, isWordReview);
+  showElement(elements.contextCard, shouldShowContextCard());
+  showElement(elements.switchToChatButton, !isHome && !isWordSetupScreen());
+
+  if (elements.detailPanel) {
+    elements.detailPanel.dataset.screen = activeWorkScreen;
+    elements.detailPanel.classList.toggle("is-word-review", isWordReview);
+  }
+
+  const copy = DETAIL_SCREEN_COPY[activeWorkScreen] || DETAIL_SCREEN_COPY.default;
+
+  elements.detailTitle.textContent = copy.title;
+  elements.detailSubtitle.textContent = copy.subtitle;
+  renderSuggestions();
+  if (appMode === "work" && elements.workView) {
+    requestAnimationFrame(() => {
+      elements.workView.scrollTop = 0;
+    });
+  }
 }
 
 function renderContext() {
   if (!activeContext) {
-    elements.contextCard.classList.add("hidden");
+    showElement(elements.contextCard, false);
     elements.chatContextTitle.textContent = "General knowledge base";
     elements.sourcePill.textContent = "Sources";
     elements.knowledgeBaseLabel.textContent = "General knowledge base";
@@ -233,7 +348,7 @@ function renderContext() {
     return;
   }
 
-  elements.contextCard.classList.remove("hidden");
+  showElement(elements.contextCard, shouldShowContextCard());
   elements.contextTitle.textContent = activeContext.title || "Current context";
   elements.contextDetail.textContent = activeContext.detail || "";
   elements.chatContextTitle.textContent = activeContext.title || "Current context";
@@ -252,7 +367,7 @@ function renderContext() {
 function renderSuggestions() {
   const suggestions = activeContext && activeContext.suggestions
     ? activeContext.suggestions
-    : contextSuggestions(activeContext);
+    : [];
 
   elements.suggestionList.innerHTML = "";
   for (const suggestion of suggestions) {
@@ -263,7 +378,7 @@ function renderSuggestions() {
     button.addEventListener("click", () => switchToChat(suggestion));
     elements.suggestionList.appendChild(button);
   }
-  elements.suggestionPanel.classList.toggle("hidden", suggestions.length === 0);
+  showElement(elements.suggestionPanel, shouldShowSuggestions(suggestions));
 }
 
 async function apiRequest(path, options = {}) {
@@ -389,6 +504,370 @@ function switchToChat(prefill = "") {
 function openFilePicker() {
   setAppMode("work");
   elements.fileInput.click();
+}
+
+function openWordEditorFilePicker() {
+  setAppMode("work");
+  setWorkScreen("word");
+}
+
+function chooseWordFile() {
+  setAppMode("work");
+  setWorkScreen("word");
+  elements.wordFileInput.click();
+}
+
+function isDocxFile(file) {
+  return /\.docx$/i.test(String((file && file.name) || ""));
+}
+
+function setWordReview(review) {
+  activeWordReview = review;
+  wordDecisionUndoStack = [];
+  renderWordReview();
+  renderWorkScreen();
+}
+
+function updateWordActionStates() {
+  const suggestions = Array.isArray(activeWordReview && activeWordReview.suggestions)
+    ? activeWordReview.suggestions
+    : [];
+  if (elements.acceptAllWordButton) {
+    elements.acceptAllWordButton.disabled = busy || suggestions.length === 0;
+  }
+  if (elements.undoWordButton) {
+    elements.undoWordButton.disabled = busy || wordDecisionUndoStack.length === 0;
+  }
+  if (elements.exportWordButton) {
+    elements.exportWordButton.disabled = busy || !activeWordReview;
+  }
+}
+
+function currentWordDecisionState() {
+  const suggestions = Array.isArray(activeWordReview && activeWordReview.suggestions)
+    ? activeWordReview.suggestions
+    : [];
+  return suggestions.map((suggestion) => ({
+    id: suggestion.id,
+    accepted: suggestion.accepted !== false
+  }));
+}
+
+function pushWordDecisionState() {
+  if (!activeWordReview) {
+    return;
+  }
+  wordDecisionUndoStack.push(currentWordDecisionState());
+  wordDecisionUndoStack = wordDecisionUndoStack.slice(-8);
+}
+
+function restoreWordDecisionState(state) {
+  if (!activeWordReview || !Array.isArray(state)) {
+    return;
+  }
+  const lookup = new Map(state.map((item) => [String(item.id || ""), item.accepted !== false]));
+  for (const suggestion of activeWordReview.suggestions || []) {
+    if (lookup.has(String(suggestion.id || ""))) {
+      suggestion.accepted = lookup.get(String(suggestion.id || ""));
+    }
+  }
+  renderWordReview();
+}
+
+function acceptAllWordSuggestions() {
+  const suggestions = Array.isArray(activeWordReview && activeWordReview.suggestions)
+    ? activeWordReview.suggestions
+    : [];
+  if (!suggestions.length) {
+    return;
+  }
+  pushWordDecisionState();
+  for (const suggestion of suggestions) {
+    suggestion.accepted = true;
+  }
+  renderWordReview();
+}
+
+function undoWordSuggestionDecision() {
+  const previous = wordDecisionUndoStack.pop();
+  if (previous) {
+    restoreWordDecisionState(previous);
+  }
+}
+
+function appendTextBlock(parent, className, label, text) {
+  const block = document.createElement("div");
+  block.className = className;
+  const title = document.createElement("span");
+  title.textContent = label;
+  const body = document.createElement("p");
+  body.textContent = String(text || "");
+  block.append(title, body);
+  parent.appendChild(block);
+}
+
+function wordCategoryLabels() {
+  return {
+    clarity: "Clarity",
+    logic: "Logic",
+    evidence: "Evidence",
+    structure: "Structure",
+    tone: "Tone",
+    esg_concept: "ESG concept",
+    ...(activeWordReview && activeWordReview.category_labels ? activeWordReview.category_labels : {})
+  };
+}
+
+function wordEvidenceSourceMap() {
+  const sources = Array.isArray(activeWordReview && activeWordReview.evidence_sources)
+    ? activeWordReview.evidence_sources
+    : [];
+  return new Map(sources.map((source) => [String(source.id || ""), source]));
+}
+
+function appendEvidenceRefs(parent, suggestion, sourceMap) {
+  const refs = Array.isArray(suggestion.evidence_refs) ? suggestion.evidence_refs : [];
+  const gapTypes = Array.isArray(suggestion.evidence_gap_types) ? suggestion.evidence_gap_types : [];
+  if (!refs.length && !suggestion.evidence_needed && !gapTypes.length) {
+    return;
+  }
+
+  const row = document.createElement("div");
+  row.className = `word-evidence-row ${suggestion.evidence_needed ? "warning" : ""}`;
+  const label = document.createElement("span");
+  label.textContent = refs.length ? "Evidence" : "Evidence gap";
+  row.appendChild(label);
+
+  if (refs.length) {
+    const list = document.createElement("div");
+    list.className = "word-evidence-chips";
+    for (const ref of refs) {
+      const source = sourceMap.get(String(ref));
+      const chip = document.createElement("span");
+      chip.className = "evidence-ref-chip";
+      chip.textContent = source
+        ? `${ref} · ${source.title || "source"}${source.chunk_id ? ` · ${source.chunk_id}` : ""}`
+        : String(ref);
+      list.appendChild(chip);
+    }
+    row.appendChild(list);
+  } else {
+    const text = document.createElement("p");
+    text.textContent = "This claim needs stronger support from the uploaded reports before it should be stated confidently.";
+    row.appendChild(text);
+  }
+
+  if (gapTypes.length) {
+    const gaps = document.createElement("div");
+    gaps.className = "word-gap-tags";
+    for (const gap of gapTypes) {
+      const tag = document.createElement("span");
+      tag.textContent = String(gap).replace(/_/g, " ");
+      gaps.appendChild(tag);
+    }
+    row.appendChild(gaps);
+  }
+
+  parent.appendChild(row);
+}
+
+function renderWordReview() {
+  if (!activeWordReview) {
+    showElement(elements.wordEditPanel, false);
+    elements.wordSuggestionList.innerHTML = "";
+    updateWordActionStates();
+    return;
+  }
+
+  const suggestions = Array.isArray(activeWordReview.suggestions) ? activeWordReview.suggestions : [];
+  const goalLabel = activeWordReview.goal_label || "Academic analysis";
+  const templateLabel = activeWordReview.template_label || "General review";
+  updateWordActionStates();
+  showElement(elements.wordEditPanel, isWordReviewScreen());
+  elements.wordEditTitle.textContent = activeWordReview.file_name || "Word edit suggestions";
+  elements.wordEditMeta.textContent = suggestions.length
+    ? `${goalLabel} · ${templateLabel}. ${suggestions.length} suggested ${suggestions.length === 1 ? "change" : "changes"} across ${activeWordReview.paragraph_count || 0} paragraphs.`
+    : `${goalLabel} · ${templateLabel}. No paragraph replacements were suggested. You can still export the original document.`;
+  elements.wordSuggestionList.innerHTML = "";
+
+  if (!suggestions.length) {
+    const empty = document.createElement("div");
+    empty.className = "word-empty";
+    empty.textContent = "No clear edits were found for this pass.";
+    elements.wordSuggestionList.appendChild(empty);
+    return;
+  }
+
+  const labels = wordCategoryLabels();
+  const sourceMap = wordEvidenceSourceMap();
+  const grouped = new Map();
+  for (const suggestion of suggestions) {
+    const key = suggestion.category && labels[suggestion.category] ? suggestion.category : "clarity";
+    if (!grouped.has(key)) {
+      grouped.set(key, []);
+    }
+    grouped.get(key).push(suggestion);
+  }
+
+  for (const [category, groupSuggestions] of grouped.entries()) {
+    const group = document.createElement("section");
+    group.className = "word-category-group";
+
+    const heading = document.createElement("div");
+    heading.className = "word-category-heading";
+    const title = document.createElement("h3");
+    title.textContent = labels[category] || "Clarity";
+    const count = document.createElement("span");
+    count.textContent = `${groupSuggestions.length}`;
+    heading.append(title, count);
+    group.appendChild(heading);
+
+    for (const suggestion of groupSuggestions) {
+      const card = document.createElement("article");
+      card.className = `word-suggestion-card ${suggestion.accepted === false ? "rejected" : ""}`;
+
+      const top = document.createElement("label");
+      top.className = "word-accept-row";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = suggestion.accepted !== false;
+      checkbox.addEventListener("change", () => {
+        pushWordDecisionState();
+        suggestion.accepted = checkbox.checked;
+        card.classList.toggle("rejected", !checkbox.checked);
+        updateWordActionStates();
+      });
+      const itemTitle = document.createElement("span");
+      itemTitle.textContent = `${suggestion.severity || "low"} · Apply change to ${suggestion.paragraph_id || "paragraph"}`;
+      top.append(checkbox, itemTitle);
+
+      appendTextBlock(card, "word-text-block problem", "Problem solved", suggestion.problem);
+      appendTextBlock(card, "word-text-block original", "Original", suggestion.original);
+      appendTextBlock(card, "word-text-block replacement", "Suggested", suggestion.replacement);
+      appendTextBlock(card, "word-text-block reason", "Why", suggestion.reason);
+      appendEvidenceRefs(card, suggestion, sourceMap);
+      card.prepend(top);
+      group.appendChild(card);
+    }
+
+    elements.wordSuggestionList.appendChild(group);
+  }
+}
+
+async function reviewWordFile(file) {
+  requireAuth();
+  if (!file) {
+    return;
+  }
+  if (!isDocxFile(file)) {
+    throw new Error("Choose a .docx Word document for AI editing.");
+  }
+
+  setAppMode("work");
+  setWorkScreen("word");
+  setBusy(true, `Reviewing ${file.name}`);
+  setProgress(8);
+  try {
+    const fields = {
+      instruction: WORD_EDIT_INSTRUCTION,
+      goal: (elements.wordGoalSelect && elements.wordGoalSelect.value) || "academic",
+      template: (elements.wordTemplateSelect && elements.wordTemplateSelect.value) || "general"
+    };
+    let data = null;
+    if (file.path && window.desktopAPI && window.desktopAPI.uploadFile) {
+      const response = await window.desktopAPI.uploadFile({
+        baseUrl: apiBase(),
+        path: "/desktop/word/review",
+        token,
+        fields,
+        file: {
+          path: file.path,
+          name: file.name,
+          type: file.type || "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        }
+      });
+      if (!response.ok) {
+        throw new Error(extractError(response));
+      }
+      data = response.data;
+    } else {
+      const bytes = await file.arrayBuffer();
+      data = await apiRequest("/desktop/word/review", {
+        method: "POST",
+        formData: {
+          fields,
+          file: {
+            name: file.name,
+            type: file.type || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            bytes
+          }
+        }
+      });
+    }
+
+    const review = {
+      ...data,
+      suggestions: (Array.isArray(data && data.suggestions) ? data.suggestions : []).map((suggestion) => ({
+        ...suggestion,
+        accepted: true
+      }))
+    };
+    setWordReview(review);
+    setActiveContext({
+      type: "document",
+      title: review.file_name || file.name,
+      detail: review.suggestions.length
+        ? "Word edit suggestions are ready. Accept or reject changes before exporting."
+        : "Word review finished. No clear replacements were suggested in this pass.",
+      suggestions: [
+        "Turn the accepted edits into a stronger analysis outline.",
+        "Explain the ESG or business concepts in this document.",
+        "What evidence is still missing from this draft?"
+      ]
+    });
+    setWorkScreen("word");
+    setProgress(72);
+    setStatus("Word review ready");
+  } finally {
+    setBusy(false);
+    setProgress(100);
+    elements.wordFileInput.value = "";
+  }
+}
+
+async function exportWordEdits() {
+  requireAuth();
+  if (!activeWordReview || !activeWordReview.session_id) {
+    throw new Error("Review a Word document before exporting.");
+  }
+  const suggestions = Array.isArray(activeWordReview.suggestions) ? activeWordReview.suggestions : [];
+  const acceptedIds = suggestions
+    .filter((suggestion) => suggestion.accepted !== false)
+    .map((suggestion) => suggestion.id);
+  setBusy(true, "Exporting Word document");
+  try {
+    const data = await apiRequest("/desktop/word/export", {
+      method: "POST",
+      json: {
+        session_id: activeWordReview.session_id,
+        accepted_suggestion_ids: acceptedIds
+      }
+    });
+    if (!window.desktopAPI || !window.desktopAPI.saveBase64File) {
+      throw new Error("Desktop file export bridge is unavailable.");
+    }
+    const saved = await window.desktopAPI.saveBase64File({
+      fileName: data.file_name || "document.edited.docx",
+      dataBase64: data.data_base64 || "",
+      mimeType: data.mime_type || "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    });
+    setStatus(`Saved ${data.applied_count || 0} edits`);
+    if (saved && saved.path) {
+      addMessage("assistant", `Edited Word document saved to ${saved.path}`);
+    }
+  } finally {
+    setBusy(false);
+  }
 }
 
 function appendInlineMarkdown(parent, text) {
@@ -530,6 +1009,8 @@ function handleLogout() {
   localStorage.removeItem(USER_KEY);
   renderAuth();
   setActiveContext(null);
+  setWordReview(null);
+  setWorkScreen("home");
   setStatus("Signed out");
   setAppMode("work");
 }
@@ -591,6 +1072,7 @@ async function uploadFile(file) {
         detail: "Upload was accepted. I will help extract useful ESG, strategy, and study evidence.",
         suggestions: contextSuggestions({ type: "document" })
       });
+      setWorkScreen("document");
       setStatus("Upload accepted");
       return;
     }
@@ -623,6 +1105,7 @@ async function pollUploadJob(jobId, file) {
         documentId,
         suggestions: contextSuggestions({ type: "document" })
       });
+      setWorkScreen("document");
       setStatus("Document is ready");
       break;
     }
@@ -679,7 +1162,7 @@ async function captureScreen() {
     suggestions: contextSuggestions({ type: "screenshot" })
   });
   setAppMode("work");
-  elements.screenshotPanel.classList.remove("hidden");
+  setWorkScreen("screenshot");
   if (!elements.screenshotPrompt.value.trim()) {
     elements.screenshotPrompt.value = "Extract useful work or academic information from this screen.";
   }
@@ -722,6 +1205,12 @@ async function startScreenshotSummary() {
 function handleFiles(files) {
   const file = Array.from(files || [])[0];
   if (!file) {
+    return;
+  }
+  if (activeWorkScreen === "word" && isDocxFile(file)) {
+    reviewWordFile(file).catch((error) => {
+      setStatus(error.message, "error");
+    });
     return;
   }
   uploadFile(file).catch((error) => {
@@ -779,6 +1268,7 @@ function bindEvents() {
   elements.petDockButton.addEventListener("click", () => setAppMode("dock"));
   elements.petModeButton.addEventListener("click", () => setAppMode("dock"));
   elements.switchToChatButton.addEventListener("click", () => switchToChat());
+  elements.detailBackButton.addEventListener("click", () => setWorkScreen("home"));
   elements.backToWorkButton.addEventListener("click", () => setAppMode("work"));
 
   elements.loginButton.addEventListener("click", handleLogin);
@@ -791,9 +1281,24 @@ function bindEvents() {
 
   elements.petUploadButton.addEventListener("click", openFilePicker);
   elements.primaryUploadButton.addEventListener("click", openFilePicker);
+  elements.primaryWordButton.addEventListener("click", openWordEditorFilePicker);
+  elements.chooseWordButton.addEventListener("click", chooseWordFile);
+  elements.acceptAllWordButton.addEventListener("click", acceptAllWordSuggestions);
+  elements.undoWordButton.addEventListener("click", undoWordSuggestionDecision);
   elements.petAskButton.addEventListener("click", () => switchToChat());
   elements.primaryAskButton.addEventListener("click", () => switchToChat());
   elements.fileInput.addEventListener("change", (event) => handleFiles(event.target.files));
+  elements.wordFileInput.addEventListener("change", (event) => {
+    const file = Array.from(event.target.files || [])[0];
+    reviewWordFile(file).catch((error) => {
+      setStatus(error.message, "error");
+    });
+  });
+  elements.exportWordButton.addEventListener("click", () => {
+    exportWordEdits().catch((error) => {
+      setStatus(error.message, "error");
+    });
+  });
 
   for (const target of [document.body, elements.dockView, elements.dropZone, elements.petView]) {
     target.addEventListener("dragover", handleDragOver);
@@ -851,6 +1356,8 @@ function init() {
   renderEvidence([]);
   renderContext();
   renderSuggestions();
+  renderWordReview();
+  renderWorkScreen();
   bindEvents();
   setStatus(isSignedIn() ? "Ready" : "Sign in");
   setAppMode(isSignedIn() ? "dock" : "work");

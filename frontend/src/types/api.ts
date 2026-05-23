@@ -80,6 +80,13 @@ export interface RagTimingsMs {
   total?: number;
 }
 
+export interface RagReasoningTraceStep {
+  title: string;
+  detail: string;
+  items?: string[];
+  meta?: Record<string, unknown>;
+}
+
 export interface RagResponse {
   answer: string;
   // Deprecated: the backend always returns "ask" now; tier lives on reasoning_mode.
@@ -99,6 +106,7 @@ export interface RagResponse {
     regulatory?: RagSource[];
   };
   backend: string;
+  reasoning_trace?: RagReasoningTraceStep[];
   timings_ms?: RagTimingsMs;
   retrieval_strategy?: string;
   rewritten_query?: string;

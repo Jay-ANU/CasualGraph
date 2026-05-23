@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
@@ -6,7 +6,6 @@ import {
   FileUp,
   MessageSquare,
   ScreenShare,
-  ShieldCheck,
 } from 'lucide-react';
 import { desktopMacArm64DownloadUrl, desktopReleaseNotesUrl } from '../config/downloads';
 
@@ -81,6 +80,8 @@ const ProductMockup: React.FC = () => (
 );
 
 const DesktopDownload: React.FC = () => {
+  const [activeInfoTab, setActiveInfoTab] = useState<'download' | 'install' | 'release'>('download');
+
   return (
     <div className="min-h-screen overflow-x-hidden bg-canvas text-ink">
       <section className="border-b border-hairline-soft bg-canvas">
@@ -115,25 +116,75 @@ const DesktopDownload: React.FC = () => {
       </section>
 
       <section className="mx-auto max-w-page-wide px-4 py-12 sm:px-6 lg:px-8 xl:max-w-page-xl 2xl:max-w-page-2xl">
-        <div className="grid gap-6 rounded-2xl border border-hairline bg-white p-6 lg:grid-cols-[0.72fr_1.28fr] lg:p-8">
-          <div className="border-b border-hairline pb-6 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-8">
-            <h2 className="text-[26px] font-semibold tracking-normal text-ink">macOS Apple Silicon beta</h2>
-            <p className="mt-3 max-w-md text-[14px] leading-6 text-ink-steel">
-              Optimized for Apple Silicon Macs. The public beta is distributed through GitHub Releases so updates stay transparent and auditable.
-            </p>
-            <a href={desktopReleaseNotesUrl} className="mt-6 inline-flex items-center gap-2 text-[14px] font-semibold text-ink">
-              View on GitHub Release
-              <ArrowRight className="h-4 w-4" />
-            </a>
+        <div className="rounded-2xl border border-hairline bg-white p-4 lg:p-5">
+          <div className="flex flex-col gap-3 border-b border-hairline pb-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-[26px] font-semibold tracking-normal text-ink">Release information</h2>
+              <p className="mt-1 text-[14px] leading-6 text-ink-steel">Download, install notes, and release highlights in one place.</p>
+            </div>
+            <div className="inline-flex rounded-full border border-hairline bg-surface-soft p-1">
+              {[
+                ['download', 'Download'],
+                ['install', 'Install'],
+                ['release', 'New'],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActiveInfoTab(id as 'download' | 'install' | 'release')}
+                  className={`rounded-full px-4 py-2 text-[13px] font-semibold transition ${
+                    activeInfoTab === id ? 'bg-ink text-white' : 'text-ink-steel hover:bg-white hover:text-ink'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="grid gap-3">
-            {downloadDetails.map(([label, value]) => (
-              <div key={label} className="grid gap-1 rounded-lg bg-surface-soft px-4 py-3 sm:grid-cols-[150px_1fr] sm:gap-4">
-                <div className="text-[13px] font-semibold text-ink">{label}</div>
-                <div className="break-words text-[13px] leading-5 text-ink-steel">{value}</div>
+          <div className="mt-5">
+            {activeInfoTab === 'download' && (
+              <div className="grid gap-3">
+                {downloadDetails.map(([label, value]) => (
+                  <div key={label} className="grid gap-1 rounded-lg bg-surface-soft px-4 py-3 sm:grid-cols-[150px_1fr] sm:gap-4">
+                    <div className="text-[13px] font-semibold text-ink">{label}</div>
+                    <div className="break-words text-[13px] leading-5 text-ink-steel">{value}</div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
+
+            {activeInfoTab === 'install' && (
+              <div className="grid gap-3 lg:grid-cols-3">
+                {installNotes.map((item, index) => (
+                  <div key={item.title} className="rounded-xl bg-surface-soft p-5">
+                    <div className="mb-4 flex items-center gap-3">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink text-[12px] font-semibold text-white">
+                        {index + 1}
+                      </span>
+                      <h3 className="text-[16px] font-semibold text-ink">{item.title}</h3>
+                    </div>
+                    <p className="text-[14px] leading-6 text-ink-steel">{item.description}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {activeInfoTab === 'release' && (
+              <div className="grid gap-0 border-y border-hairline lg:grid-cols-3">
+                {releaseHighlights.map((item, index) => (
+                  <div
+                    key={item.title}
+                    className={`py-6 ${index > 0 ? 'border-t border-hairline lg:border-l lg:border-t-0 lg:pl-8' : ''} ${
+                      index < releaseHighlights.length - 1 ? 'lg:pr-8' : ''
+                    }`}
+                  >
+                    <h3 className="text-[18px] font-semibold tracking-normal text-ink">{item.title}</h3>
+                    <p className="mt-3 text-[14px] leading-6 text-ink-steel">{item.description}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -172,37 +223,6 @@ const DesktopDownload: React.FC = () => {
         </div>
       </section>
 
-      <section className="mx-auto max-w-page-wide px-4 py-12 sm:px-6 lg:px-8 xl:max-w-page-xl 2xl:max-w-page-2xl">
-        <div className="rounded-2xl border border-hairline bg-white p-6 lg:p-8">
-          <div className="mb-7 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-            <div>
-              <h2 className="text-[30px] font-semibold tracking-normal text-ink">Installation and notes</h2>
-              <p className="mt-3 max-w-2xl text-[15px] leading-7 text-ink-steel">
-                The beta keeps installation simple while macOS security prompts remain explicit.
-              </p>
-            </div>
-            <ShieldCheck className="hidden h-9 w-9 text-ink-steel lg:block" />
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-3">
-            {installNotes.map((item, index) => (
-              <div key={item.title} className="rounded-xl bg-surface-soft p-5">
-                <div className="mb-5 flex items-center gap-3">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink text-[12px] font-semibold text-white">
-                    {index + 1}
-                  </span>
-                  <h3 className="text-[16px] font-semibold text-ink">{item.title}</h3>
-                </div>
-                <p className="text-[14px] leading-6 text-ink-steel">{item.description}</p>
-                <div className="mt-5 inline-flex rounded-md border border-hairline bg-white px-2.5 py-1 text-[12px] text-ink-steel">
-                  {item.meta}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       <section className="mx-auto max-w-page-wide px-4 pb-16 sm:px-6 lg:px-8 xl:max-w-page-xl 2xl:max-w-page-2xl">
         <div className="overflow-hidden rounded-2xl bg-ink p-8 text-white sm:p-10 lg:flex lg:items-center lg:justify-between lg:gap-10">
           <div className="max-w-3xl">
@@ -226,34 +246,6 @@ const DesktopDownload: React.FC = () => {
         </div>
       </section>
 
-      <section className="mx-auto max-w-page-wide px-4 pb-16 sm:px-6 lg:px-8 xl:max-w-page-xl 2xl:max-w-page-2xl">
-        <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-          <div>
-            <h2 className="text-[30px] font-semibold tracking-normal text-ink">What's new in this release</h2>
-            <p className="mt-3 max-w-2xl text-[15px] leading-7 text-ink-steel">
-              The beta focuses on the desktop workflows that should feel identical to the web research desk.
-            </p>
-          </div>
-          <a href={desktopReleaseNotesUrl} className="inline-flex items-center gap-2 text-[14px] font-semibold text-ink">
-            View release notes
-            <ArrowRight className="h-4 w-4" />
-          </a>
-        </div>
-
-        <div className="grid gap-0 border-y border-hairline lg:grid-cols-3">
-          {releaseHighlights.map((item, index) => (
-            <div
-              key={item.title}
-              className={`py-6 ${index > 0 ? 'border-t border-hairline lg:border-l lg:border-t-0 lg:pl-8' : ''} ${
-                index < releaseHighlights.length - 1 ? 'lg:pr-8' : ''
-              }`}
-            >
-              <h3 className="text-[18px] font-semibold tracking-normal text-ink">{item.title}</h3>
-              <p className="mt-3 text-[14px] leading-6 text-ink-steel">{item.description}</p>
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 };

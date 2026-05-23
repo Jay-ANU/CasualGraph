@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Iterator, List
 
 from configs.settings import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, OPENAI_TIMEOUT, openai_configured
@@ -10,8 +11,57 @@ from rag.openai_compat import chat_token_kwargs
 from rag.query_rewriter import _contains_cjk
 
 
+_QUICK_CHITCHAT_EXACT = {
+    "hi",
+    "hello",
+    "hey",
+    "hi there",
+    "hello there",
+    "hey there",
+    "thanks",
+    "thank you",
+    "thx",
+    "bye",
+    "goodbye",
+    "what can you do",
+    "who are you",
+    "help",
+    "你好",
+    "您好",
+    "在吗",
+    "谢谢",
+    "感谢",
+    "再见",
+    "拜拜",
+    "你是谁",
+    "你能做什么",
+    "帮助",
+}
+
+
+def is_quick_chitchat_query(query: str) -> bool:
+    """Return true for small talk that should not call a model."""
+
+    normalized = _normalize_quick_text(query)
+    if not normalized:
+        return False
+    if normalized in _QUICK_CHITCHAT_EXACT:
+        return True
+    if normalized.endswith("!") or normalized.endswith("?"):
+        return _normalize_quick_text(normalized[:-1]) in _QUICK_CHITCHAT_EXACT
+    return False
+
+
+def generate_quick_chitchat_reply(query: str) -> str:
+    """Instant local reply for trivial small talk."""
+
+    return _canned_reply(query)
+
+
 def generate_chitchat_reply(query: str, history_block: str = "") -> str:
     """Short reply with no retrieval."""
+    if is_quick_chitchat_query(query):
+        return _canned_reply(query)
     reply = _reply_with_openai(query=query, history_block=history_block)
     if reply:
         return reply
@@ -68,6 +118,9 @@ def _reply_with_openai(query: str, history_block: str) -> str:
 
 def stream_chitchat_reply(query: str, history_block: str = "") -> Iterator[str]:
     """Stream a short chitchat reply when OpenAI streaming is available."""
+    if is_quick_chitchat_query(query):
+        yield _canned_reply(query)
+        return
     if not openai_configured():
         yield _canned_reply(query)
         return
@@ -139,3 +192,10 @@ def _canned_reply(query: str) -> str:
             else "I can answer questions about uploaded ESG reports and provide evidence-based scenario analysis."
         )
     return "你好，可以问我已上传 ESG 报告里的问题。" if cjk else "Hi. Ask me anything about your uploaded ESG reports."
+
+
+def _normalize_quick_text(query: str) -> str:
+    text = str(query or "").strip().lower()
+    text = re.sub(r"[\s\u3000]+", " ", text)
+    text = re.sub(r"^[,.;:!?。！？、，\s]+|[,.;:!?。！？、，\s]+$", "", text)
+    return text.strip()

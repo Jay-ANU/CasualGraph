@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, CheckCircle2, FileText, Mail, MapPin, Network, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -32,6 +32,10 @@ const About: React.FC = () => {
     'Portfolio and company comparison workflows',
     'Governance, risk, and compliance research',
   ];
+  const [activePrinciple, setActivePrinciple] = useState(principles[0].title);
+  const [activeArea, setActiveArea] = useState(operatingAreas[0]);
+  const currentPrinciple = principles.find((principle) => principle.title === activePrinciple) || principles[0];
+  const CurrentPrincipleIcon = currentPrinciple.icon;
 
   return (
     <div className="min-h-screen bg-canvas text-ink">
@@ -44,9 +48,8 @@ const About: React.FC = () => {
             transition={{ duration: 0.45 }}
             className="max-w-4xl"
           >
-            <p className="cg-eyebrow">Company</p>
             <h1
-              className="mt-4 font-display text-[40px] font-semibold sm:text-[56px] xl:text-[80px] 2xl:text-[96px]"
+              className="font-display text-[40px] font-semibold sm:text-[56px] xl:text-[80px] 2xl:text-[96px]"
               style={{ lineHeight: 1.10, letterSpacing: 0 }}
             >
               We build evidence systems for ESG and risk teams.
@@ -71,29 +74,36 @@ const About: React.FC = () => {
             What we anchor every decision to.
           </h2>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          {principles.map((principle, idx) => {
-            const Icon = principle.icon;
-            return (
-              <motion.div
+        <div className="grid gap-4 rounded-2xl border border-hairline bg-white p-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <div className="flex gap-2 overflow-x-auto lg:block lg:space-y-1 lg:overflow-visible">
+            {principles.map((principle) => (
+              <button
                 key={principle.title}
-                initial={{ opacity: 0, y: 12 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.35, delay: idx * 0.05 }}
-                viewport={{ once: true }}
-                className="cg-tile"
+                type="button"
+                onClick={() => setActivePrinciple(principle.title)}
+                className={`shrink-0 rounded-xl px-4 py-3 text-left text-[13px] font-semibold transition lg:w-full ${
+                  activePrinciple === principle.title
+                    ? 'bg-ink text-white'
+                    : 'text-ink-charcoal hover:bg-surface-soft'
+                }`}
               >
-                <div
-                  className="mb-5 flex h-10 w-10 items-center justify-center rounded-full"
-                  style={{ background: 'var(--cg-surface-soft)', color: 'var(--cg-ink)' }}
-                >
-                  <Icon className="h-5 w-5" />
-                </div>
-                <h3 className="text-card-title font-semibold text-ink">{principle.title}</h3>
-                <p className="mt-2 text-body-sm text-ink-steel">{principle.description}</p>
-              </motion.div>
-            );
-          })}
+                {principle.title}
+              </button>
+            ))}
+          </div>
+          <motion.div
+            key={currentPrinciple.title}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.24 }}
+            className="min-h-[220px] rounded-xl bg-surface-soft p-6"
+          >
+            <div className="mb-6 flex h-11 w-11 items-center justify-center rounded-full bg-white text-ink">
+              <CurrentPrincipleIcon className="h-5 w-5" />
+            </div>
+            <h3 className="text-[28px] font-semibold tracking-normal text-ink">{currentPrinciple.title}</h3>
+            <p className="mt-3 max-w-2xl text-body-md text-ink-steel">{currentPrinciple.description}</p>
+          </motion.div>
         </div>
       </section>
 
@@ -116,17 +126,38 @@ const About: React.FC = () => {
               matters as much as the final answer.
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {operatingAreas.map((area) => (
-              <div
-                key={area}
-                className="flex items-start gap-3 rounded-xl border bg-canvas p-4"
-                style={{ borderColor: 'var(--cg-hairline)' }}
-              >
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ink-steel" />
-                <span className="text-body-sm text-ink-charcoal">{area}</span>
+          <div className="rounded-2xl border border-hairline bg-canvas p-3">
+            <div className="flex flex-wrap gap-2">
+              {operatingAreas.map((area) => (
+                <button
+                  key={area}
+                  type="button"
+                  onClick={() => setActiveArea(area)}
+                  className={`rounded-full border px-3 py-2 text-[13px] font-semibold transition ${
+                    activeArea === area
+                      ? 'border-ink bg-ink text-white'
+                      : 'border-hairline bg-white text-ink-charcoal hover:border-ink'
+                  }`}
+                >
+                  {area}
+                </button>
+              ))}
+            </div>
+            <motion.div
+              key={activeArea}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.22 }}
+              className="mt-4 flex items-start gap-3 rounded-xl bg-surface-soft p-5"
+            >
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-ink-steel" />
+              <div>
+                <h3 className="text-[20px] font-semibold text-ink">{activeArea}</h3>
+                <p className="mt-2 text-body-sm text-ink-steel">
+                  This workflow stays evidence-first: source text, extracted relationships, and review context remain close to the final answer.
+                </p>
               </div>
-            ))}
+            </motion.div>
           </div>
         </div>
       </section>

@@ -41,11 +41,7 @@ def _neo4j_host_from_uri(uri: str) -> str:
 
 
 def assert_neo4j_ready() -> None:
-    """Fail fast when the configured Neo4j instance cannot be reached.
-
-    Upload ingestion requires Neo4j in this application, so this intentionally does
-    not fall back to local-only graph storage.
-    """
+    """Fail fast when the configured Neo4j instance cannot be reached."""
     if not neo4j_sdk_available():
         raise Neo4jConnectionError("Neo4j Python SDK is not installed.")
     if not neo4j_configured():
@@ -107,14 +103,20 @@ def maybe_sync_to_neo4j(
     """Sync into Neo4j when configured, otherwise return a structured skip status."""
     if not NEO4J_AUTO_SYNC:
         return {"enabled": False, "synced": False, "reason": "auto_sync_disabled"}
-    store = get_neo4j_store()
+    try:
+        store = get_neo4j_store()
+    except Exception as exc:
+        return {"enabled": True, "synced": False, "reason": f"{type(exc).__name__}: {exc}"}
     if store is None:
         if not neo4j_sdk_available():
             return {"enabled": False, "synced": False, "reason": "neo4j_sdk_missing"}
         if not neo4j_configured():
             return {"enabled": False, "synced": False, "reason": "neo4j_not_configured"}
         return {"enabled": False, "synced": False, "reason": "neo4j_unavailable"}
-    return store.sync_document(document=document, chunks=chunks, extractions=extractions, graph=graph)
+    try:
+        return store.sync_document(document=document, chunks=chunks, extractions=extractions, graph=graph)
+    except Exception as exc:
+        return {"enabled": True, "synced": False, "reason": f"{type(exc).__name__}: {exc}"}
 
 
 class Neo4jGraphStore:

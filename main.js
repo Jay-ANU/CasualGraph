@@ -1,8 +1,7 @@
 const { app, BrowserWindow, desktopCapturer, ipcMain, screen, shell } = require("electron");
-const fs = require("fs");
 const path = require("path");
 
-const DEFAULT_API_BASE = process.env.CASUALGRAPH_API_BASE || "https://casualgraph.fly.dev";
+const DEFAULT_API_BASE = "https://casualgraph.fly.dev";
 const WINDOW_MODES = {
   dock: { width: 82, height: 82, minWidth: 82, minHeight: 82 },
   pet: { width: 384, height: 158, minWidth: 348, minHeight: 138 },
@@ -130,89 +129,6 @@ async function handleApiRequest(_event, payload) {
   };
 }
 
-async function handleFileUpload(_event, payload) {
-  const request = payload || {};
-  const file = request.file || {};
-  const filePath = String(file.path || "");
-  if (!filePath) {
-    throw new Error("Missing file path for desktop upload.");
-  }
-
-  const headers = {};
-  appendSafeHeaders(headers, request.headers);
-  if (request.token) {
-    headers.authorization = `Bearer ${request.token}`;
-  }
-
-  const form = new FormData();
-  const fields = request.fields || {};
-  for (const [key, value] of Object.entries(fields)) {
-    form.append(key, value == null ? "" : String(value));
-  }
-
-  const buffer = await fs.promises.readFile(filePath);
-  const blob = new Blob([buffer], {
-    type: String(file.type || "application/octet-stream")
-  });
-  form.append("file", blob, String(file.name || path.basename(filePath) || "upload.bin"));
-
-  const response = await fetch(buildApiUrl(request.baseUrl, request.path || "/documents/upload-async"), {
-    method: "POST",
-    headers,
-    body: form
-  });
-  const text = await response.text();
-  let data = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch (_error) {
-      data = null;
-    }
-  }
-  return {
-    ok: response.ok,
-    status: response.status,
-    data,
-    text
-  };
-}
-
-function safeDownloadName(fileName) {
-  const name = path.basename(String(fileName || "document.docx")).replace(/[^A-Za-z0-9._ ()-]+/g, "_").trim();
-  return name || "document.docx";
-}
-
-async function uniqueDownloadPath(fileName) {
-  const downloadsDir = app.getPath("downloads");
-  const parsed = path.parse(safeDownloadName(fileName));
-  let candidate = path.join(downloadsDir, `${parsed.name}${parsed.ext || ".docx"}`);
-  for (let index = 1; await fs.promises.stat(candidate).then(() => true).catch(() => false); index += 1) {
-    candidate = path.join(downloadsDir, `${parsed.name}-${index}${parsed.ext || ".docx"}`);
-  }
-  return candidate;
-}
-
-async function handleSaveBase64File(_event, payload) {
-  const request = payload || {};
-  const dataBase64 = String(request.dataBase64 || "");
-  if (!dataBase64) {
-    throw new Error("No file data was returned for export.");
-  }
-  const buffer = Buffer.from(dataBase64, "base64");
-  if (!buffer.length) {
-    throw new Error("Exported file is empty.");
-  }
-  const targetPath = await uniqueDownloadPath(request.fileName || "document.edited.docx");
-  await fs.promises.writeFile(targetPath, buffer);
-  const openError = await shell.openPath(targetPath);
-  return {
-    path: targetPath,
-    opened: !openError,
-    openError: openError || ""
-  };
-}
-
 app.whenReady().then(() => {
   createWindow();
   registerDisplayTracking();
@@ -230,8 +146,6 @@ app.on("window-all-closed", () => {
 });
 
 ipcMain.handle("api:request", handleApiRequest);
-ipcMain.handle("api:uploadFile", handleFileUpload);
-ipcMain.handle("file:saveBase64", handleSaveBase64File);
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));

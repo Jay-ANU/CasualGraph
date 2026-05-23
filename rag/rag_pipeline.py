@@ -237,9 +237,17 @@ def _prepare_answer_context(
     # (originally keyed on mode=="predict") fires for Deep.
     route_mode = "predict" if tier == "deep" else "ask"
     resolved_mode = "ask"
+    provided_answer_mode = str((answer_intent or {}).get("mode") or "").strip().lower()
 
     rewrite_started = time.perf_counter()
-    if _should_skip_rewrite_for_query(query=query, history=history):
+    if provided_answer_mode == "chitchat":
+        rewrite_result = {
+            "query": query,
+            "rewrite_applied": False,
+            "rewrite_backend": "skipped_chitchat",
+            "history_used": [],
+        }
+    elif _should_skip_rewrite_for_query(query=query, history=history):
         rewrite_result = {
             "query": query,
             "rewrite_applied": False,
@@ -256,10 +264,10 @@ def _prepare_answer_context(
     answer_mode = str((answer_intent or {}).get("mode") or "evidence").strip().lower()
 
     route_started = time.perf_counter()
-    if answer_mode == "general":
+    if answer_mode in {"general", "chitchat"}:
         routing = {
             "strategy": "no_retrieval",
-            "reason": "answer_intent_general",
+            "reason": f"answer_intent_{answer_mode}",
             "backend": str(answer_intent.get("backend") or "answer_intent"),
             "fallback_chain": [],
         }
@@ -376,6 +384,8 @@ def _prepare_answer_context(
 
 def _intent_from_context(prepared: Dict, *, fallback: str) -> str:
     answer_mode = str((prepared.get("answer_intent") or {}).get("mode") or "").lower()
+    if answer_mode == "chitchat":
+        return "chitchat"
     if answer_mode == "general":
         return "general_guidance"
     if answer_mode == "hybrid":
@@ -453,6 +463,122 @@ def _build_answer_blocks(*, answer: str, sources: List[Dict], graph_sources: Dic
     return blocks
 
 
+def _source_trace_labels(sources: List[Dict], limit: int = 3) -> List[str]:
+    labels: List[str] = []
+    seen = set()
+    for source in sources:
+        title = str(source.get("document_title") or source.get("document_id") or "report").strip()
+        chunk = str(source.get("chunk_id") or "").strip()
+        label = f"{title} · {chunk}" if chunk else title
+        if label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+        if len(labels) >= limit:
+            break
+    return labels
+
+
+def _build_reasoning_trace(prepared: Dict, *, backend: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Build a user-facing reasoning trace from executed pipeline decisions.
+
+    This deliberately exposes observable routing, retrieval, graph, and model
+    choices rather than hidden model chain-of-thought.
+    """
+
+    answer_intent = dict(prepared.get("answer_intent") or {})
+    mode = str(answer_intent.get("mode") or "evidence")
+    intent_reason = str(answer_intent.get("reason") or "classified from the request")
+    intent_backend = str(answer_intent.get("backend") or "router")
+    routing = dict(prepared.get("routing") or {})
+    retrieval_result = dict(prepared.get("retrieval_result") or {})
+    graph_ctx = dict(prepared.get("graph_ctx") or {})
+    sources = list(prepared.get("sources") or [])
+    timings = dict(prepared.get("timings") or {})
+    trace: List[Dict[str, Any]] = [
+        {
+            "title": "Question type",
+            "detail": f"Classified as {mode}. {intent_reason}",
+            "meta": {"backend": intent_backend, "mode": mode},
+        }
+    ]
+
+    rewrite_result = dict(prepared.get("rewrite_result") or {})
+    if rewrite_result.get("rewrite_applied"):
+        trace.append(
+            {
+                "title": "Query rewrite",
+                "detail": f"Rewritten for retrieval: {prepared.get('retrieval_query')}",
+                "meta": {"backend": rewrite_result.get("rewrite_backend"), "timing_ms": timings.get("rewrite")},
+            }
+        )
+    else:
+        trace.append(
+            {
+                "title": "Query rewrite",
+                "detail": "Used the original wording because no rewrite was needed.",
+                "meta": {"backend": rewrite_result.get("rewrite_backend"), "timing_ms": timings.get("rewrite")},
+            }
+        )
+
+    strategy = str(retrieval_result.get("strategy") or routing.get("strategy") or "vector_only")
+    if strategy == "no_retrieval":
+        trace.append(
+            {
+                "title": "Retrieval",
+                "detail": "Skipped report retrieval because the question can be answered as general guidance.",
+                "meta": {"strategy": strategy, "timing_ms": timings.get("retrieval")},
+            }
+        )
+    else:
+        sub_queries = list(prepared.get("queries") or [])
+        detail = f"Used {strategy} over accessible reports and kept {len(sources)} source chunk"
+        detail += "" if len(sources) == 1 else "s"
+        if len(sub_queries) > 1:
+            detail += f" across {len(sub_queries)} sub-queries"
+        detail += "."
+        trace.append(
+            {
+                "title": "Evidence search",
+                "detail": detail,
+                "items": _source_trace_labels(sources),
+                "meta": {"strategy": strategy, "timing_ms": timings.get("retrieval")},
+            }
+        )
+
+    graph_edges = list(graph_ctx.get("edges") or [])
+    matched_entities = list(graph_ctx.get("matched_entities") or [])
+    if graph_edges or matched_entities:
+        trace.append(
+            {
+                "title": "Graph context",
+                "detail": f"Added {len(graph_edges)} graph edge"
+                + ("" if len(graph_edges) == 1 else "s")
+                + f" and {len(matched_entities)} matched entit"
+                + ("y." if len(matched_entities) == 1 else "ies."),
+                "meta": {"timing_ms": timings.get("graph")},
+            }
+        )
+    else:
+        skipped = str(graph_ctx.get("skipped_reason") or "not used")
+        trace.append(
+            {
+                "title": "Graph context",
+                "detail": f"No graph context was added ({skipped}).",
+                "meta": {"timing_ms": timings.get("graph")},
+            }
+        )
+
+    trace.append(
+        {
+            "title": "Answer generation",
+            "detail": f"Generated with {backend or 'selected model'} in {prepared.get('tier') or 'flash'} mode; citations are shown separately when sources were used.",
+            "meta": {"backend": backend, "timing_ms": timings.get("generate")},
+        }
+    )
+    return trace
+
+
 def _build_ask_payload(prepared: Dict, *, answer: str, backend: str) -> Dict:
     tier = prepared.get("tier") or prepared.get("reasoning_mode") or "flash"
     answer_intent = dict(prepared.get("answer_intent") or {})
@@ -504,6 +630,7 @@ def _build_stream_meta_payload(prepared: Dict) -> Dict:
         "answer_mode": (prepared.get("answer_intent") or {}).get("mode") or "evidence",
         "answer_intent": dict(prepared.get("answer_intent") or {}),
         "intent": _intent_from_context(prepared, fallback="answer"),
+        "reasoning_trace": _build_reasoning_trace(prepared),
         "stream_stage": "context_ready",
     }
 
@@ -537,6 +664,16 @@ def answer_question(
     resolved_mode = prepared["resolved_mode"]
 
     answer_intent_mode = str((prepared.get("answer_intent") or {}).get("mode") or "evidence").lower()
+
+    if (retrieval_filters or {}).get("entity_scope_miss"):
+        timings["generate"] = 0.0
+        return _finalize_response(
+            payload=_build_ask_payload(prepared, answer=INSUFFICIENT_CONTEXT_ANSWER, backend="no_context"),
+            timings=timings,
+            total_started=prepared["total_started"],
+            mode=resolved_mode,
+            strategy=prepared["strategy"],
+        )
 
     if prepared["routing"].get("strategy") == "no_retrieval" and answer_intent_mode != "general":
         generate_started = time.perf_counter()

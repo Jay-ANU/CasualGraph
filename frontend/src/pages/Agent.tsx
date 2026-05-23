@@ -530,6 +530,7 @@ const Agent: React.FC = () => {
   const [pendingSessionDocumentId, setPendingSessionDocumentId] = useState<string>('');
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showPipelineStatus, setShowPipelineStatus] = useState(false);
   const [loadingStepIndex, setLoadingStepIndex] = useState(0);
   const [loadingElapsedMs, setLoadingElapsedMs] = useState(0);
   // Tier selector: 'flash' (OpenAI gpt-5.4-mini, fast) vs 'deep' (Anthropic
@@ -591,6 +592,7 @@ const Agent: React.FC = () => {
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
   const [selectedGraphEdgeId, setSelectedGraphEdgeId] = useState<string | null>(null);
   const [highlightPath, setHighlightPath] = useState<GraphHighlightPath | null>(null);
+  const [isDocumentGraphOpen, setIsDocumentGraphOpen] = useState(false);
   const [repairingDocumentId, setRepairingDocumentId] = useState<string | null>(null);
   const attemptedGraphRepairRef = useRef<Set<string>>(new Set());
   const uploadStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -866,6 +868,7 @@ const Agent: React.FC = () => {
   const selectDocument = useCallback(async (document: Document) => {
     setSelectedDocument(document);
     setQueryDocumentIds(prev => [document.id, ...prev.filter(id => id !== document.id)].slice(0, 3));
+    setIsDocumentGraphOpen(false);
     persistSelectedDocumentId(document.id);
 
     if (currentSessionId) {
@@ -994,12 +997,6 @@ const Agent: React.FC = () => {
       console.error('Failed to persist evidence panel visibility:', error);
     }
   }, [isEvidencePanelOpen]);
-
-  useEffect(() => {
-    if (!isAdmin && activeTab === 'upload') {
-      setActiveTab('chat');
-    }
-  }, [activeTab, isAdmin]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -1398,7 +1395,8 @@ ${isDuplicate
     query: string,
     historyMessages: ChatMessage[] = [],
     sessionId?: string,
-    onStepChange?: (stepIndex: number) => void
+    onStepChange?: (stepIndex: number) => void,
+    onAnswerStart?: () => void,
   ) => {
     // User text is always sent to RAG. Navigation should only happen through
     // explicit UI controls, not keyword hijacks like "upload" or "graph".
@@ -1514,7 +1512,7 @@ ${isDuplicate
             if (event.payload.stream_stage === 'routing') {
               onStepChange?.(0);
             } else if (event.payload.stream_stage === 'context_ready') {
-              onStepChange?.(tier === 'deep' ? 4 : 2);
+              onStepChange?.(tier === 'deep' ? 5 : 3);
             }
             const nextData: Partial<NonNullable<ChatMessage['data']>> = {
               mode: event.payload.mode || latestMessageData?.mode || 'ask',
@@ -1531,7 +1529,7 @@ ${isDuplicate
           if (event.type === 'token') {
             if (!sawFirstToken) {
               sawFirstToken = true;
-              onStepChange?.(tier === 'deep' ? 5 : 3);
+              onAnswerStart?.();
             }
             streamedAnswer += event.text;
             updateStreamingMessage(streamedAnswer);
@@ -1598,6 +1596,7 @@ ${isDuplicate
     const query = inputText;
     setInputText('');
     setIsLoading(true);
+    setShowPipelineStatus(true);
     setLoadingStepIndex(0);
     try {
       let sessionId = currentSessionId;
@@ -1654,13 +1653,20 @@ ${isDuplicate
         }
       }
 
-      await processUserQuery(query, nextHistory, sessionId, (step) => setLoadingStepIndex(step));
+      await processUserQuery(
+        query,
+        nextHistory,
+        sessionId,
+        (step) => setLoadingStepIndex(step),
+        () => setShowPipelineStatus(false),
+      );
       if (sessionIdToActivateAfterFirstTurn && sessionId === sessionIdToActivateAfterFirstTurn) {
         setCurrentSessionId(sessionIdToActivateAfterFirstTurn);
         persistCurrentSessionId(sessionIdToActivateAfterFirstTurn);
       }
     } finally {
       setIsLoading(false);
+      setShowPipelineStatus(false);
     }
   };
   const handleNewSession = () => {
@@ -1830,34 +1836,27 @@ ${isDuplicate
   };
 
   const handleUploadEntry = () => {
-    if (isAdmin) {
-      setActiveTab('upload');
-      return;
-    }
     if (!isAuthenticated) {
       addAgentMessage("Please log in to upload documents.", "error");
       return;
     }
-    if (isUploading || isProcessingFile) {
-      return;
-    }
-    quickUploadInputRef.current?.click();
+    setActiveTab('upload');
   };
 
   const totalDocuments = documents.length;
   const agentStarterCards: Array<{ title: string; prompt: string; tier: RagReasoningMode }> = [
     {
-      title: 'Summarise a report',
+      title: 'Summarise',
       prompt: 'Summarise the ESG strategy, targets, risks, and evidence from the most relevant reports.',
       tier: 'flash',
     },
     {
-      title: 'Compare companies',
+      title: 'Compare',
       prompt: 'Compare the ESG strategy and climate targets across the uploaded reports.',
       tier: 'flash',
     },
     {
-      title: 'Reason on impact',
+      title: 'Assess risk',
       prompt: 'Predict how ESG strategy could affect business risk and share-price narrative using report evidence and graph context.',
       tier: 'deep',
     },
@@ -1872,6 +1871,19 @@ ${isDuplicate
       : (selectedQueryDocuments.length > 0
           ? selectedQueryDocuments.map((doc) => doc.id)
           : (selectedDocument?.id ? [selectedDocument.id] : []));
+  const scopedDocumentCount = effectiveQueryDocumentIds.length;
+  const queryScopeLabel =
+    queryScopeMode === 'all'
+      ? 'All reports'
+      : scopedDocumentCount > 0
+        ? `${scopedDocumentCount} selected`
+        : 'Current report';
+  const queryScopeDetail =
+    queryScopeMode === 'all'
+      ? `${totalDocuments} reports available`
+      : selectedQueryDocuments.length > 0
+        ? selectedQueryDocuments.map((doc) => doc.title).join(', ')
+        : selectedDocument?.title || 'No report selected';
   const loadingSteps = getLoadingSteps(tier);
   const currentLoadingStep = loadingSteps[Math.min(loadingStepIndex, loadingSteps.length - 1)];
   const showLongWaitHint = isLoading && loadingElapsedMs >= 8000;
@@ -1882,8 +1894,8 @@ ${isDuplicate
   const filteredSelectedRelationships = getFilteredRelationships(selectedDocument?.relationships || []);
   const navItems = [
     { id: 'chat', label: 'Chat', icon: MessageSquare },
-    ...(isAdmin ? [{ id: 'upload', label: 'Upload', icon: FileUp }] : []),
-    { id: 'documents', label: 'Results', icon: FolderOpen },
+    { id: 'upload', label: 'Upload', icon: FileUp },
+    { id: 'documents', label: 'Library', icon: FolderOpen },
   ];
   // MiniMax-style pill tabs for the mobile section switcher.
   const mobileTabButtonClass = (tab: string) =>
@@ -2178,18 +2190,16 @@ ${isDuplicate
           </div>
 
           <div className="border-t border-hairline bg-surface-soft p-2">
-            {isAdmin && (
-              <button
-                onClick={handleUploadEntry}
-                className={`mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition ${
-                  activeTab === 'upload' ? 'bg-white font-medium text-ink shadow-sm' : 'text-ink-charcoal hover:bg-white'
-                }`}
-              >
-                <FileUp className="h-4 w-4" />
-                Upload
-                {isUploading && <span className="ml-auto h-2 w-2 rounded-full bg-ink" />}
-              </button>
-            )}
+            <button
+              onClick={handleUploadEntry}
+              className={`mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition ${
+                activeTab === 'upload' ? 'bg-white font-medium text-ink shadow-sm' : 'text-ink-charcoal hover:bg-white'
+              }`}
+            >
+              <FileUp className="h-4 w-4" />
+              Upload
+              {isUploading && <span className="ml-auto h-2 w-2 rounded-full bg-ink" />}
+            </button>
             <button
               onClick={() => setActiveTab('documents')}
               className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition ${
@@ -2241,57 +2251,39 @@ ${isDuplicate
               {(() => {
                 const currentSession = chatSessions.find(s => s.id === currentSessionId);
                 const sessionTitle = currentSession?.title?.trim() || deriveSessionTitle(conversation) || 'New conversation';
-                const isActive = displayedConversation.length > 0;
                 return (
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <h1 className="truncate font-display text-[18px] font-semibold leading-[1.35] tracking-normal text-ink">
                         {sessionTitle}
                       </h1>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-steel">
-                        <span className="inline-flex items-center gap-1">
-                          <span
-                            className={`inline-block h-1.5 w-1.5 rounded-full ${
-                              isActive ? 'bg-emerald-500' : 'bg-hairline'
-                            }`}
-                          />
-                          <span className="cg-eyebrow text-ink-steel">
-                            {isActive ? 'Active' : 'Idle'}
-                          </span>
-                        </span>
-                        {queryScopeMode !== 'all' && selectedDocument && (
-                          <>
-                            <span className="text-ink-faint">·</span>
-                            <span className="truncate text-[12px] font-medium text-ink-charcoal">
-                              {selectedDocument.title}
-                            </span>
-                          </>
-                        )}
-                      </div>
+                      <p className="mt-0.5 truncate text-[12px] text-ink-steel" title={queryScopeDetail}>
+                        Scope: {queryScopeLabel}
+                      </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
-                      <button
-                        onClick={() => setIsEvidencePanelOpen(prev => !prev)}
-                        className="hidden h-8 items-center gap-1.5 rounded-full border border-hairline bg-canvas px-3 text-[12px] font-semibold text-ink-charcoal transition hover:border-ink xl:inline-flex"
-                        title={isEvidencePanelOpen ? 'Hide evidence panel' : 'Show evidence panel'}
-                      >
-                        {isEvidencePanelOpen ? (
-                          <ChevronRight className="h-3.5 w-3.5" />
-                        ) : (
-                          <ChevronLeft className="h-3.5 w-3.5" />
-                        )}
-                        <span>{isEvidencePanelOpen ? 'Hide evidence' : 'Show evidence'}</span>
-                      </button>
-                      {selectedDocument && (
+                      {latestSources.length > 0 && (
                         <button
-                          onClick={() => exportGraph(selectedDocument, 'json')}
-                          className="inline-flex h-8 items-center gap-1.5 rounded-full border border-hairline bg-canvas px-3 text-[12px] font-semibold text-ink-charcoal transition hover:border-ink"
-                          title="Export current report graph"
+                          onClick={() => setIsEvidencePanelOpen(prev => !prev)}
+                          className="hidden h-8 items-center gap-1.5 rounded-full border border-hairline bg-canvas px-3 text-[12px] font-semibold text-ink-charcoal transition hover:border-ink xl:inline-flex"
+                          title={isEvidencePanelOpen ? 'Hide evidence panel' : 'Show evidence panel'}
                         >
-                          <Download className="h-3.5 w-3.5" />
-                          <span className="hidden sm:inline">Export JSON</span>
+                          {isEvidencePanelOpen ? (
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronLeft className="h-3.5 w-3.5" />
+                          )}
+                          <span>Evidence</span>
                         </button>
                       )}
+                      <button
+                        onClick={handleUploadEntry}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-full border border-hairline bg-canvas px-3 text-[12px] font-semibold text-ink-charcoal transition hover:border-ink"
+                        title="Upload report"
+                      >
+                        <FileUp className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Upload</span>
+                      </button>
                     </div>
                   </div>
                 );
@@ -2311,18 +2303,35 @@ ${isDuplicate
                     transition={{ duration: 0.45 }}
                     className="flex flex-1 items-center justify-center"
                   >
-                    <div className="cg-empty-state w-full max-w-3xl px-6 py-10 text-center sm:px-10">
-                      <div className="mx-auto mb-5 flex h-11 w-11 items-center justify-center rounded-xl bg-white text-ink shadow-sm">
-                        <Network className="h-5 w-5" />
+                    <div className="w-full max-w-3xl px-4 py-10 text-center sm:px-8">
+                      <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-hairline bg-white text-ink shadow-sm">
+                        <MessageSquare className="h-5 w-5" />
                       </div>
-                      <h1 className="font-display text-[34px] font-semibold leading-[1.12] tracking-normal text-ink sm:text-[44px]">
-                        What would you like to know?
+                      <h1 className="font-display text-[30px] font-semibold leading-[1.16] tracking-normal text-ink sm:text-[38px]">
+                        Ask across your reports
                       </h1>
-                      <p className="mx-auto mt-4 max-w-2xl text-[15px] leading-[1.6] text-ink-slate sm:text-[17px]">
-                        Ask across the global ESG knowledge base and your private reports.
-                        Answers stay grounded with citations and graph context.
+                      <p className="mx-auto mt-3 max-w-xl text-[14px] leading-6 text-ink-steel sm:text-[15px]">
+                        Start with a question, upload a report, or choose a smaller document scope.
                       </p>
-                      <div className="mt-7 flex flex-wrap justify-center gap-2">
+                      <div className="mt-6 flex flex-wrap justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleUploadEntry}
+                          className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-ink-charcoal"
+                        >
+                          <FileUp className="h-4 w-4" />
+                          Upload report
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('documents')}
+                          className="inline-flex items-center gap-2 rounded-full border border-hairline bg-white px-4 py-2 text-[13px] font-semibold text-ink-charcoal shadow-sm transition hover:border-ink hover:text-ink"
+                        >
+                          <FolderOpen className="h-4 w-4" />
+                          Choose reports
+                        </button>
+                      </div>
+                      <div className="mt-5 flex flex-wrap justify-center gap-2">
                         {agentStarterCards.map((card) => (
                           <button
                             key={card.title}
@@ -2531,7 +2540,7 @@ ${isDuplicate
                     );
                   })}
 
-                  {isLoading && (
+                  {showPipelineStatus && (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-5">
                       <div className="cg-eyebrow mb-3 text-ink-charcoal">Assistant</div>
                       <div className="flex items-center gap-2 text-[15px] text-ink-steel">
@@ -2548,7 +2557,7 @@ ${isDuplicate
                       )}
                     </motion.div>
                   )}
-                  {isLoading && <div aria-hidden="true" className="h-[34vh] min-h-40 max-h-80 shrink-0" />}
+                  {showPipelineStatus && <div aria-hidden="true" className="h-[34vh] min-h-40 max-h-80 shrink-0" />}
                   <div ref={conversationEndRef} />
                 </div>
               </div>
@@ -2560,22 +2569,15 @@ ${isDuplicate
                   onSubmit={handleSubmit}
                   className="cg-agent-composer px-3 py-2 transition"
                 >
-                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                  <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
                     <button
                       type="button"
                       onClick={() => setQueryScopeMode(queryScopeMode === 'all' ? 'selected' : 'all')}
-                      className="inline-flex items-center rounded-full border border-hairline bg-canvas px-2.5 py-0.5 text-[11px] font-medium text-ink-steel transition hover:border-ink hover:text-ink"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-canvas px-2.5 py-1 text-[11px] font-semibold text-ink-charcoal transition hover:border-ink hover:text-ink"
                       title="Toggle document scope"
                     >
-                      {queryScopeMode === 'all' ? 'All docs' : 'Selected docs'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('documents')}
-                      className="inline-flex items-center rounded-full border border-hairline bg-canvas px-2.5 py-0.5 text-[11px] font-medium text-ink-steel transition hover:border-ink hover:text-ink"
-                      title="Pick query documents"
-                    >
-                      Library
+                      <FolderOpen className="h-3 w-3" />
+                      <span>Scope: {queryScopeLabel}</span>
                     </button>
                     {queryScopeMode !== 'all' && effectiveQueryDocumentIds.slice(0, 2).map((docId) => {
                       const doc = documents.find(item => item.id === docId);
@@ -2597,6 +2599,16 @@ ${isDuplicate
                         </span>
                       );
                     })}
+                    {queryScopeMode !== 'all' && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('documents')}
+                        className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold text-ink-steel transition hover:bg-surface-soft hover:text-ink"
+                        title="Pick query documents"
+                      >
+                        Change
+                      </button>
+                    )}
                   </div>
                   <textarea
                     value={inputText}
@@ -2631,7 +2643,7 @@ ${isDuplicate
                       <button
                         type="button"
                         onClick={handleUploadEntry}
-                        disabled={!isAdmin && (isUploading || isProcessingFile)}
+                        disabled={isUploading || isProcessingFile}
                         className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-hairline bg-white text-ink-charcoal shadow-sm transition hover:border-ink hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
                         title="Upload report"
                         aria-label="Upload report"
@@ -2640,68 +2652,39 @@ ${isDuplicate
                       </button>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <span className="hidden text-[11px] font-semibold tracking-[0.02em] text-ink-stone sm:inline">
-                        {tier === 'deep' ? 'CausalGraph-Deep' : 'CausalGraph-Flash'}
-                      </span>
                       <div
-                        className="inline-flex items-center gap-0.5 rounded-full"
+                        className="inline-flex items-center rounded-full border border-hairline bg-white p-0.5"
                         role="group"
                         aria-label="Reasoning tier"
                       >
-                        <div className="group relative">
-                          <button
-                            type="button"
-                            onClick={() => setTier('flash')}
-                            aria-pressed={tier === 'flash'}
-                            aria-label="CausalGraph-Flash"
-                            className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
-                              tier === 'flash'
-                                ? 'bg-ink text-white shadow-sm'
-                                : 'text-ink-steel hover:bg-surface-soft hover:text-ink'
-                            }`}
-                          >
-                            <Zap className="h-4 w-4" />
-                          </button>
-                          <div
-                            role="tooltip"
-                            className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 w-60 -translate-x-1/2 rounded-xl border border-hairline bg-white p-3 text-left opacity-0 shadow-card transition-opacity duration-150 group-hover:opacity-100"
-                          >
-                            <div className="flex items-center gap-2">
-                              <Zap className="h-4 w-4 text-ink" />
-                              <span className="text-[13px] font-semibold text-ink">CausalGraph-Flash</span>
-                            </div>
-                            <p className="mt-1 text-[12px] leading-[1.5] text-ink-steel">
-                              Fast grounded answers for direct ESG lookups.
-                            </p>
-                          </div>
-                        </div>
-                        <div className="group relative">
-                          <button
-                            type="button"
-                            onClick={() => setTier('deep')}
-                            aria-pressed={tier === 'deep'}
-                            aria-label="CausalGraph-Deep"
-                            className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
-                              tier === 'deep'
-                                ? 'bg-ink text-white shadow-sm'
-                                : 'text-ink-steel hover:bg-surface-soft hover:text-ink'
-                            }`}
-                          >
-                            <BrainCircuit className="h-4 w-4" />
-                          </button>
-                          <div
-                            role="tooltip"
-                            className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 w-60 -translate-x-1/2 rounded-xl border border-hairline bg-white p-3 text-left opacity-0 shadow-card transition-opacity duration-150 group-hover:opacity-100"
-                          >
-                            <div className="flex items-center gap-2">
-                              <BrainCircuit className="h-4 w-4 text-ink" />
-                              <span className="text-[13px] font-semibold text-ink">CausalGraph-Deep</span>
-                            </div>
-                            <p className="mt-1 text-[12px] leading-[1.5] text-ink-steel">
-                              Layered retrieval + graph reasoning for analysis and scenarios.
-                            </p>
-                          </div>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setTier('flash')}
+                          aria-pressed={tier === 'flash'}
+                          className={`inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] font-semibold transition ${
+                            tier === 'flash'
+                              ? 'bg-ink text-white shadow-sm'
+                              : 'text-ink-steel hover:bg-surface-soft hover:text-ink'
+                          }`}
+                          title="Fast grounded answers"
+                        >
+                          <Zap className="h-3.5 w-3.5" />
+                          <span>Fast</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTier('deep')}
+                          aria-pressed={tier === 'deep'}
+                          className={`inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] font-semibold transition ${
+                            tier === 'deep'
+                              ? 'bg-ink text-white shadow-sm'
+                              : 'text-ink-steel hover:bg-surface-soft hover:text-ink'
+                          }`}
+                          title="Deeper analysis and graph reasoning"
+                        >
+                          <BrainCircuit className="h-3.5 w-3.5" />
+                          <span>Deep</span>
+                        </button>
                       </div>
                       <button
                         type="submit"
@@ -2717,7 +2700,7 @@ ${isDuplicate
                 </form>
                 <div className="mt-1 px-1 text-right">
                   <span className="cg-eyebrow text-ink-stone">
-                    Enter to send · Shift+Enter for newline
+                    Enter to send
                   </span>
                 </div>
               </div>
@@ -2736,7 +2719,7 @@ ${isDuplicate
           </div>
         )}
 
-          {isAdmin && activeTab === 'upload' && (
+          {activeTab === 'upload' && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -2745,21 +2728,16 @@ ${isDuplicate
               <header className="cg-tool-panel px-6 py-5 sm:px-7">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                   <div className="min-w-0">
-                    <span className="cg-eyebrow block text-ink-steel">Index a report</span>
-                    <h2 className="mt-2 font-display text-[30px] font-semibold leading-[1.16] tracking-normal text-ink">
-                      Add a document to your research workspace
+                    <h2 className="font-display text-[28px] font-semibold leading-[1.16] tracking-normal text-ink">
+                      Upload a report
                     </h2>
-                    <p className="mt-2 max-w-2xl text-sm leading-6 text-ink-steel">
-                      Upload a disclosure or paste text. The backend will extract chunks, retrieval metadata, and graph relationships.
+                    <p className="mt-2 max-w-xl text-sm leading-6 text-ink-steel">
+                      Add a file or paste text, then index it for search.
                     </p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {['Private corpus', 'PDF / Word / Text', 'Up to 50MB'].map((label) => (
-                      <span key={label} className="rounded-full border border-hairline bg-surface-soft px-3 py-1.5 text-xs font-semibold text-ink-charcoal">
-                        {label}
-                      </span>
-                    ))}
-                  </div>
+                  <span className="rounded-full border border-hairline bg-surface-soft px-3 py-1.5 text-xs font-semibold text-ink-charcoal">
+                    PDF, Word, Text, RTF
+                  </span>
                 </div>
               </header>
 
@@ -2768,7 +2746,7 @@ ${isDuplicate
                   <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h3 className="text-base font-semibold text-ink">Source</h3>
-                      <p className="mt-1 text-sm text-ink-steel">Choose a file or paste report content directly.</p>
+                      <p className="mt-1 text-sm text-ink-steel">Choose one input method.</p>
                     </div>
                     <div className="inline-flex rounded-lg border border-hairline bg-surface-soft p-0.5">
                       {([
@@ -2836,7 +2814,7 @@ ${isDuplicate
                             const file = e.dataTransfer.files?.[0];
                             if (file) handleFileUpload(file);
                           }}
-                          className={`flex min-h-[320px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-10 text-center transition ${
+                          className={`flex min-h-[260px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-10 text-center transition ${
                             isDraggingFile
                               ? 'border-ink bg-white shadow-sm'
                               : 'border-hairline bg-surface-soft hover:border-ink-stone hover:bg-white'
@@ -2846,10 +2824,10 @@ ${isDuplicate
                             <FileUp className={`h-5 w-5 ${isDraggingFile ? 'text-ink' : 'text-ink-stone'}`} />
                           </div>
                           <p className="mt-4 text-[16px] font-semibold text-ink">
-                            {isDraggingFile ? 'Release to upload' : 'Drop a file here, or click to browse'}
+                            {isDraggingFile ? 'Release to upload' : 'Drop file or browse'}
                           </p>
                           <p className="mt-2 max-w-md text-sm leading-6 text-ink-steel">
-                            Supported formats: PDF, Word, Text, and RTF. Text files show a quick preview before indexing.
+                            Files up to 50MB. Text files show a quick preview.
                           </p>
                           {isProcessingFile && (
                             <div className="mt-4 flex items-center gap-2 text-xs text-ink-steel">
@@ -2911,8 +2889,8 @@ ${isDuplicate
                     <h3 className="text-base font-semibold text-ink">Report details</h3>
                     <p className="mt-1 text-sm leading-6 text-ink-steel">
                       {isAdmin
-                        ? 'Curate labels for managed corpus uploads.'
-                        : 'Name the report before indexing it into your private workspace.'}
+                        ? 'Labels are optional for managed uploads.'
+                        : 'Give the report a clear name.'}
                     </p>
                   </div>
 
@@ -3019,12 +2997,12 @@ ${isDuplicate
 	              className="grid min-w-0 gap-4 2xl:grid-cols-[minmax(280px,360px),minmax(0,1fr)]"
 	            >
 	              <div className="cg-tool-panel min-w-0 p-4 sm:p-5">
-	                <div className="flex items-center justify-between mb-6">
+	                <div className="mb-5 flex items-start justify-between gap-3">
                   <div>
-                    <span className="cg-eyebrow block text-ink-steel">Indexed corpus</span>
                     <h2 className="font-display text-[22px] font-semibold leading-[1.25] tracking-normal text-ink">
-                      Processed reports
+                      Library
                     </h2>
+                    <p className="mt-1 text-sm text-ink-steel">Pick reports for focused questions.</p>
                   </div>
                   <span className="cg-chip font-mono text-[11px] text-ink-charcoal">
                     {documents.length} items
@@ -3055,7 +3033,7 @@ ${isDuplicate
                     return (
                     <div
                       key={doc.id}
-                      className={`min-w-0 cursor-pointer p-4 ${
+                      className={`group min-w-0 cursor-pointer p-4 ${
                         selectedDocument?.id === doc.id
 	                          ? 'cg-list-row cg-list-row-active'
                           : 'cg-list-row'
@@ -3069,34 +3047,11 @@ ${isDuplicate
 	                          <h3 className="mb-2 line-clamp-2 break-words font-display text-[15px] font-semibold leading-[1.4] tracking-normal text-ink">
 	                            {doc.title}
 	                          </h3>
-	                          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-ink-charcoal">
-	                            <span className="flex min-w-0 items-center space-x-1">
-	                              <Database className="w-4 h-4 text-ink-steel" />
-	                              <span>{doc.graph?.metadata?.node_count || 0} concepts, {doc.graph?.metadata?.edge_count || 0} connections</span>
-	                            </span>
-                            <span className="inline-flex items-center gap-1.5">
-                              <Zap className="h-3.5 w-3.5 text-ink-stone" />
-                              <span className="font-mono text-[12px] text-ink-charcoal">
-                                {doc.relationship_count ?? (doc.relationships?.length || 0)}
-                              </span>
-                              <span>relationships</span>
-                            </span>
-                            <span
-                              className="rounded-md px-2 py-0.5 text-[11px] font-medium"
-                              style={(() => {
-                                const d = (doc.domain || '').toLowerCase();
-                                if (d.startsWith('environ')) return { color: 'var(--cg-domain-environmental)', background: 'var(--cg-domain-environmental-bg)' };
-                                if (d.startsWith('social')) return { color: 'var(--cg-domain-social)', background: 'var(--cg-domain-social-bg)' };
-                                if (d.startsWith('govern')) return { color: 'var(--cg-domain-governance)', background: 'var(--cg-domain-governance-bg)' };
-                                if (d.startsWith('ai')) return { color: 'var(--cg-domain-ai)', background: 'var(--cg-domain-ai-bg)' };
-                                return { color: 'var(--cg-domain-general)', background: 'var(--cg-domain-general-bg)' };
-                              })()}
-                            >
-                              {doc.domain}
-                            </span>
-	                          </div>
+	                          <p className="text-sm text-ink-steel">
+                              {doc.graph?.metadata?.node_count || 0} concepts · {doc.relationship_count ?? (doc.relationships?.length || 0)} relationships
+                            </p>
 	                          {doc.source && (
-	                            <p className="mt-2 line-clamp-2 break-words text-sm text-ink-steel">Source: {doc.source}</p>
+	                            <p className="mt-1 line-clamp-1 break-words text-xs text-ink-stone">{doc.source}</p>
 	                          )}
 	                        </div>
                         <div className="flex items-start gap-1">
@@ -3123,7 +3078,7 @@ ${isDuplicate
                             }`}
                             title={inQueryScope ? 'Remove from query scope' : canAddToScope ? 'Add to query scope' : 'You can select up to 3 documents'}
                           >
-                            {inQueryScope ? 'In scope' : canAddToScope ? 'Add scope' : 'Max 3'}
+                            {inQueryScope ? 'Selected' : canAddToScope ? 'Use' : 'Max 3'}
                           </button>
                           {isAdmin && (() => {
                             const isLoading = loadingDocumentId === doc.id;
@@ -3168,7 +3123,7 @@ ${isDuplicate
                               e.stopPropagation();
                               exportGraph(doc, 'json');
                             }}
-                            className="rounded-md p-1.5 text-ink-steel transition hover:bg-surface-soft hover:text-ink"
+                            className="rounded-md p-1.5 text-ink-steel opacity-100 transition hover:bg-surface-soft hover:text-ink sm:opacity-0 sm:group-hover:opacity-100"
                             title="Export graph"
                           >
                             <Download className="h-4 w-4" />
@@ -3178,7 +3133,7 @@ ${isDuplicate
                               e.stopPropagation();
                               deleteDocument(doc.id);
                             }}
-                            className="rounded-md p-1.5 text-ink-steel transition hover:bg-red-50 hover:text-red-600"
+                            className="rounded-md p-1.5 text-ink-steel opacity-100 transition hover:bg-red-50 hover:text-red-600 sm:opacity-0 sm:group-hover:opacity-100"
                             title="Delete report"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -3254,7 +3209,7 @@ ${isDuplicate
                       </div>
                       <div className="flex items-center gap-2">
                         <a
-                          href={`${esgApiBase}/kg-view${selectedNeo4jSync?.synced && selectedDocument ? `?document_id=${encodeURIComponent(selectedDocument.id)}` : ''}`}
+                          href={`${esgApiBase}/kg-view${selectedDocument ? `?document_id=${encodeURIComponent(selectedDocument.id)}&scope=document` : '?scope=all'}`}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center justify-center rounded-lg border border-hairline bg-white px-3 py-2 text-sm font-medium text-ink-charcoal transition hover:bg-surface-soft"
@@ -3301,7 +3256,24 @@ ${isDuplicate
                     </div>
                   )}
 
-			                  <div className="mb-6 space-y-4">
+                  <div className="mb-6">
+                    <div className="flex flex-col gap-3 border-b border-hairline pb-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h4 className="text-base font-semibold text-ink">Graph explorer</h4>
+                        <p className="mt-1 text-sm text-ink-steel">
+                          Open this only when you need node-level evidence.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsDocumentGraphOpen(prev => !prev)}
+                        className="inline-flex items-center justify-center rounded-full border border-hairline bg-white px-4 py-2 text-sm font-semibold text-ink-charcoal transition hover:border-ink hover:text-ink"
+                      >
+                        {isDocumentGraphOpen ? 'Hide graph' : 'Show graph'}
+                      </button>
+                    </div>
+                    {isDocumentGraphOpen && (
+                      <div className="mt-4 space-y-4">
                         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr),360px]">
                           <div className="min-w-0 space-y-4">
                             <div className="grid gap-3 lg:grid-cols-3">
@@ -3539,6 +3511,8 @@ ${isDuplicate
                           </div>
                         </div>
                       </div>
+                    )}
+                  </div>
 
                   <div>
                     <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
