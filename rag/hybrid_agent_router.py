@@ -43,6 +43,11 @@ _ESG_COMPLEX_PATTERN = re.compile(
     r"环境|社会|治理|排放|气候|风险|目标|供应链|战略",
     re.I,
 )
+_CROSS_DOCUMENT_SCOPE_PATTERN = re.compile(
+    r"\b(across|uploaded reports?|all reports?|multiple reports?|reports?|documents?)\b|"
+    r"所有报告|全部报告|多个报告|跨文档|跨报告|这些报告|上传的报告",
+    re.I,
+)
 
 
 def decide_hybrid_path(
@@ -93,7 +98,10 @@ def _is_fast_request(text: str, mode: str) -> bool:
 
 
 def _needs_agent(text: str, mode: str, document_count: int, preferred_document_id: Optional[str]) -> bool:
-    if document_count < 2:
+    explicit_cross_document_scope = bool(_CROSS_DOCUMENT_SCOPE_PATTERN.search(text))
+    unrestricted_all_documents_scope = document_count == 0 and preferred_document_id is None and explicit_cross_document_scope
+
+    if document_count < 2 and not unrestricted_all_documents_scope:
         return False
     if mode not in {"hybrid", "evidence"}:
         return False
@@ -102,7 +110,7 @@ def _needs_agent(text: str, mode: str, document_count: int, preferred_document_i
     has_judgment = bool(_JUDGMENT_PATTERN.search(text))
     has_multi_step = bool(_MULTI_STEP_PATTERN.search(text))
     has_complex_esg = bool(_ESG_COMPLEX_PATTERN.search(text))
-    has_cross_document_scope = preferred_document_id is None or bool(re.search(r"\b(across|uploaded reports?|reports?)\b", text, re.I))
+    has_cross_document_scope = preferred_document_id is None or explicit_cross_document_scope
 
     return has_cross_document_scope and has_complex_esg and (
         has_comparison

@@ -40,6 +40,18 @@ def test_cross_company_comparison_uses_agent_path():
     assert decision.confidence >= 0.65
 
 
+def test_unrestricted_all_reports_comparison_uses_agent_path():
+    decision = decide_hybrid_path(
+        question="Compare the climate transition risks across all reports and explain uncertainty with evidence.",
+        reasoning_mode="deep",
+        document_ids=[],
+        preferred_document_id=None,
+        answer_intent={"mode": "hybrid", "confidence": 0.8},
+    )
+    assert decision.path == "agent"
+    assert decision.reason == "complex_multi_document_evidence_task"
+
+
 def test_fast_complex_question_gets_smaller_agent_budget():
     decision = decide_hybrid_path(
         question="Compare these three ESG reports and identify governance risks with supporting evidence.",
