@@ -908,6 +908,13 @@ _KG_VIEW_CACHE_MEMORY: Dict[str, Dict[str, Any]] = {}
 _KG_VIEW_CACHE_MEMORY_LOCKS: Dict[str, threading.Lock] = {}
 _KG_VIEW_CACHE_MEMORY_GUARD = threading.Lock()
 _KG_VIEW_REDIS_DISABLED_UNTIL = 0.0
+_KG_VIEW_TICKET_TTL_SECONDS = max(60, int(os.getenv("KG_VIEW_TICKET_TTL_SECONDS", "3600")))
+_KG_VIEW_TICKETS: Dict[str, Dict[str, Any]] = {}
+_KG_VIEW_TICKETS_LOCK = threading.Lock()
+
+
+class KgViewTicketRequest(BaseModel):
+    document_id: Optional[str] = ""
 
 
 def _assert_embedding_dim_matches_pinecone() -> None:
@@ -3144,7 +3151,7 @@ async def _wait_for_public_graph_cache(cache_key: str) -> Optional[Dict[str, Any
 def _kg_view_cache_scope(request: Request, current_user: Optional[Dict[str, Any]]) -> str:
     effective_user = _kg_view_effective_user(request, current_user)
     document_id = _kg_view_request_document_id(request)
-    if document_id and (_is_admin_user(effective_user) or _is_local_request(request)):
+    if document_id and _kg_view_can_use_document_scope(request, effective_user, document_id):
         return f"document:{document_id}"
     return _public_graph_cache_scope(effective_user)
 
@@ -3402,6 +3409,125 @@ def _kg_view_text(value: Any, fallback: str = "") -> str:
     return text or fallback
 
 
+def _kg_view_ticket_key(ticket: str) -> str:
+    return f"kg-view-ticket:{ticket}"
+
+
+def _kg_view_public_user_payload(user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not user:
+        return {}
+    user_id = _kg_view_text(user.get("id"))
+    if not user_id:
+        return {}
+    return {
+        "id": user_id,
+        "email": _kg_view_text(user.get("email")),
+        "username": _kg_view_text(user.get("username")),
+        "role": _normalize_role(_kg_view_text(user.get("role"), "user")),
+    }
+
+
+def _kg_view_ticket_value(request: Request) -> str:
+    return _kg_view_text(request.query_params.get("ticket") or request.cookies.get("kg_view_ticket"))
+
+
+def _kg_view_ticket_payload_from_value(value: Any) -> Optional[Dict[str, Any]]:
+    if not value:
+        return None
+    if isinstance(value, bytes):
+        raw = value.decode("utf-8", errors="ignore")
+    elif isinstance(value, dict):
+        payload = value
+        raw = ""
+    else:
+        raw = str(value)
+    if not isinstance(value, dict):
+        try:
+            payload = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        expires_at = float(payload.get("expires_at") or 0)
+    except (TypeError, ValueError):
+        return None
+    if expires_at <= time.time():
+        return None
+    user = _kg_view_public_user_payload(payload.get("user") if isinstance(payload.get("user"), dict) else {})
+    if not user:
+        return None
+    return {
+        "user": user,
+        "document_id": _kg_view_text(payload.get("document_id")),
+        "expires_at": expires_at,
+    }
+
+
+def _kg_view_store_ticket(ticket: str, user: Dict[str, Any], document_id: str = "") -> Dict[str, Any]:
+    payload = {
+        "user": _kg_view_public_user_payload(user),
+        "document_id": _kg_view_text(document_id),
+        "expires_at": time.time() + _KG_VIEW_TICKET_TTL_SECONDS,
+    }
+    with _KG_VIEW_TICKETS_LOCK:
+        _KG_VIEW_TICKETS[ticket] = payload
+        now = time.time()
+        expired = [key for key, item in _KG_VIEW_TICKETS.items() if float(item.get("expires_at") or 0) <= now]
+        for key in expired[:128]:
+            _KG_VIEW_TICKETS.pop(key, None)
+    if _kg_view_redis_available_for_cache():
+        try:
+            chat_memory_service.client.execute(
+                "SET",
+                _kg_view_ticket_key(ticket),
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                "EX",
+                _KG_VIEW_TICKET_TTL_SECONDS,
+            )
+        except RedisUnavailableError:
+            _kg_view_note_redis_failure()
+    return payload
+
+
+def _kg_view_get_ticket_payload(request: Request) -> Optional[Dict[str, Any]]:
+    if hasattr(request.state, "kg_view_ticket_payload"):
+        return request.state.kg_view_ticket_payload
+    ticket = _kg_view_ticket_value(request)
+    payload: Optional[Dict[str, Any]] = None
+    if ticket:
+        with _KG_VIEW_TICKETS_LOCK:
+            payload = _kg_view_ticket_payload_from_value(_KG_VIEW_TICKETS.get(ticket))
+            if payload is None:
+                _KG_VIEW_TICKETS.pop(ticket, None)
+        if payload is None and _kg_view_redis_available_for_cache():
+            try:
+                payload = _kg_view_ticket_payload_from_value(
+                    chat_memory_service.client.execute("GET", _kg_view_ticket_key(ticket))
+                )
+            except RedisUnavailableError:
+                _kg_view_note_redis_failure()
+                payload = None
+            if payload is not None:
+                with _KG_VIEW_TICKETS_LOCK:
+                    _KG_VIEW_TICKETS[ticket] = payload
+    request.state.kg_view_ticket_payload = payload
+    return payload
+
+
+def _kg_view_ticket_user(request: Request) -> Optional[Dict[str, Any]]:
+    payload = _kg_view_get_ticket_payload(request)
+    user = payload.get("user") if isinstance(payload, dict) else None
+    return user if isinstance(user, dict) else None
+
+
+def _kg_view_ticket_document_id(request: Request) -> str:
+    payload = _kg_view_get_ticket_payload(request)
+    if not isinstance(payload, dict):
+        return ""
+    return _kg_view_text(payload.get("document_id"))
+
+
 def _kg_view_humanize(value: Any) -> str:
     text = _kg_view_text(value)
     text = re.sub(r"[_-]+", " ", text)
@@ -3437,7 +3563,12 @@ def _kg_view_requested_scope(request: Request) -> str:
 
 
 def _kg_view_raw_document_id(request: Request) -> str:
-    value = request.query_params.get("document_id") or request.cookies.get("kg_document_id") or ""
+    value = (
+        request.query_params.get("document_id")
+        or request.cookies.get("kg_document_id")
+        or _kg_view_ticket_document_id(request)
+        or ""
+    )
     return _kg_view_text(value)
 
 
@@ -3450,6 +3581,9 @@ def _kg_view_request_document_id(request: Request) -> str:
 def _kg_view_effective_user(request: Request, current_user: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if current_user is not None:
         return current_user
+    ticket_user = _kg_view_ticket_user(request)
+    if ticket_user is not None:
+        return ticket_user
     if _is_local_request(request):
         return {"id": "local-admin", "email": "local", "username": "Local Admin", "role": "admin"}
     return None
@@ -3958,6 +4092,13 @@ def _kg_view_inject_scope_switcher(html: str, *, active_scope: str, has_document
 (function() {{
   var activeScope = {active_scope_json};
   var hasDocumentScope = {has_document_json};
+  try {{
+    var cleanUrl = new URL(window.location.href);
+    if (cleanUrl.searchParams.has('ticket')) {{
+      cleanUrl.searchParams.delete('ticket');
+      window.history.replaceState({{}}, document.title, cleanUrl.toString());
+    }}
+  }} catch (err) {{}}
   function setCookie(name, value) {{
     document.cookie = name + '=' + encodeURIComponent(value) + '; path=/; max-age=3600; SameSite=Lax';
   }}
@@ -4009,6 +4150,23 @@ async def healthz() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
 
 
+@app.post("/kg-view/ticket")
+async def create_kg_view_ticket(
+    payload: KgViewTicketRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+) -> JSONResponse:
+    user_payload = _kg_view_public_user_payload(current_user)
+    if not user_payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    document_id = _kg_view_text(payload.document_id)
+    if document_id and not _kg_view_can_use_document_scope(request, current_user, document_id):
+        raise HTTPException(status_code=403, detail="Document is not accessible")
+    ticket = secrets.token_urlsafe(32)
+    _kg_view_store_ticket(ticket, current_user, document_id)
+    return JSONResponse(content={"ticket": ticket, "expires_in": _KG_VIEW_TICKET_TTL_SECONDS})
+
+
 @app.get("/kg-view", response_class=HTMLResponse)
 async def kg_view(
     request: Request,
@@ -4018,9 +4176,15 @@ async def kg_view(
     template = _TEXT_KG_VIEW_TEMPLATE if _TEXT_KG_VIEW_TEMPLATE.exists() else _KG_VIEW_TEMPLATE
     if not template.exists():
         raise HTTPException(status_code=404, detail="KG view template not found")
-    raw_document_id = _kg_view_text(document_id or request.cookies.get("kg_document_id"))
-    has_document_scope = _kg_view_can_use_document_scope(request, current_user, raw_document_id)
-    active_scope = _kg_view_active_scope(request, current_user, raw_document_id)
+    ticket_payload = _kg_view_get_ticket_payload(request)
+    effective_user = _kg_view_effective_user(request, current_user)
+    raw_document_id = _kg_view_text(
+        document_id
+        or request.cookies.get("kg_document_id")
+        or _kg_view_ticket_document_id(request)
+    )
+    has_document_scope = _kg_view_can_use_document_scope(request, effective_user, raw_document_id)
+    active_scope = _kg_view_active_scope(request, effective_user, raw_document_id)
     html = _kg_view_inject_scope_switcher(
         template.read_text(encoding="utf-8"),
         active_scope=active_scope,
@@ -4030,8 +4194,17 @@ async def kg_view(
         html,
         headers={"Cache-Control": "no-store, max-age=0"},
     )
-    if document_id and has_document_scope:
-        response.set_cookie("kg_document_id", document_id, max_age=3600, httponly=True, samesite="lax")
+    ticket = _kg_view_ticket_value(request)
+    if ticket and ticket_payload:
+        try:
+            max_age = max(1, int(float(ticket_payload.get("expires_at") or 0) - time.time()))
+        except (TypeError, ValueError):
+            max_age = _KG_VIEW_TICKET_TTL_SECONDS
+        response.set_cookie("kg_view_ticket", ticket, max_age=max_age, httponly=True, samesite="lax")
+    elif request.cookies.get("kg_view_ticket") and ticket_payload is None:
+        response.delete_cookie("kg_view_ticket")
+    if raw_document_id and has_document_scope:
+        response.set_cookie("kg_document_id", raw_document_id, max_age=3600, httponly=True, samesite="lax")
     elif not raw_document_id:
         response.delete_cookie("kg_document_id")
     response.set_cookie("kg_view_scope", active_scope, max_age=3600, httponly=False, samesite="lax")

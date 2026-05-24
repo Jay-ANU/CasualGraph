@@ -1377,6 +1377,45 @@ ${isDuplicate
     return message;
   }, [pushConversationMessage]);
 
+  const handleOpenFullGraph = useCallback(async () => {
+    const params = new URLSearchParams();
+    params.set('scope', selectedDocument?.id ? 'document' : 'all');
+    if (selectedDocument?.id) {
+      params.set('document_id', selectedDocument.id);
+    }
+    const graphWindow = window.open('about:blank', '_blank');
+    if (!graphWindow) {
+      addAgentMessage('The graph window was blocked by the browser. Please allow pop-ups and try again.', 'error');
+      return;
+    }
+    graphWindow.opener = null;
+
+    if (isAuthenticated && token) {
+      try {
+        const response = await fetch(`${esgApiBase}/kg-view/ticket`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ document_id: selectedDocument?.id || '' }),
+        });
+        const payload = await response.json().catch(() => ({} as { ticket?: string; detail?: string; message?: string }));
+        if (!response.ok || !payload.ticket) {
+          throw new Error(payload.detail || payload.message || 'Could not create graph access ticket');
+        }
+        params.set('ticket', payload.ticket);
+      } catch (error) {
+        console.error('Failed to create graph access ticket:', error);
+        graphWindow.close();
+        addAgentMessage('Could not open the authenticated graph view. Please refresh and try again.', 'error');
+        return;
+      }
+    }
+
+    graphWindow.location.href = `${esgApiBase}/kg-view?${params.toString()}`;
+  }, [addAgentMessage, esgApiBase, isAuthenticated, selectedDocument?.id, token]);
+
   const addAgentMessageToSession = useCallback(async (
     sessionId: string,
     content: string,
@@ -3208,15 +3247,14 @@ ${isDuplicate
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <a
-                          href={`${esgApiBase}/kg-view${selectedDocument ? `?document_id=${encodeURIComponent(selectedDocument.id)}&scope=document` : '?scope=all'}`}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={handleOpenFullGraph}
                           className="inline-flex items-center justify-center rounded-lg border border-hairline bg-white px-3 py-2 text-sm font-medium text-ink-charcoal transition hover:bg-surface-soft"
                         >
                           <Network className="mr-2 h-4 w-4" />
                           Open full graph
-                        </a>
+                        </button>
                         <button
                           onClick={() => setActiveTab('upload')}
                           className="inline-flex items-center justify-center rounded-lg border border-hairline bg-white px-3 py-2 text-sm font-medium text-ink-charcoal transition hover:bg-surface-soft"
