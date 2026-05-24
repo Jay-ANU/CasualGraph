@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, List, Optional
 
+from configs.settings import (
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL,
+    RAG_HYBRID_AGENT_ROUTER_LLM_ENABLED,
+    RAG_HYBRID_AGENT_ROUTER_MAX_TOKENS,
+    RAG_HYBRID_AGENT_ROUTER_MODEL,
+    RAG_HYBRID_AGENT_ROUTER_TIMEOUT,
+    deepseek_configured,
+)
 from rag.agent_types import AgentBudget, HybridRouteDecision
 
 
@@ -12,6 +22,7 @@ _FAST_BUDGET = AgentBudget(max_steps=0, deadline_seconds=4)
 _RAG_BUDGET = AgentBudget(max_steps=0, deadline_seconds=12)
 _FLASH_AGENT_BUDGET = AgentBudget(max_steps=3, deadline_seconds=20)
 _DEEP_AGENT_BUDGET = AgentBudget(max_steps=8, deadline_seconds=90)
+_VALID_PATHS = {"fast", "rag", "agent"}
 
 _QUICK_CHITCHAT_PATTERN = re.compile(
     r"^\s*(hi|hello|hey|hi there|hello there|thanks|thank you|thx|bye|goodbye|"
@@ -62,36 +73,173 @@ def decide_hybrid_path(
     preferred_document_id: Optional[str],
     answer_intent: Optional[Dict[str, Any]],
 ) -> HybridRouteDecision:
-    """Choose the least expensive path that can answer the request."""
+    """Choose the least expensive path that can answer the request.
+
+    DeepSeek is the primary semantic router. Local rules are intentionally
+    retained as a fallback when the LLM router is disabled, unconfigured, or
+    returns an invalid response.
+    """
 
     text = str(question or "").strip()
     mode = str((answer_intent or {}).get("mode") or "").strip().lower()
     intent_confidence = _safe_confidence((answer_intent or {}).get("confidence"), fallback=0.55)
     docs = [doc_id for doc_id in (document_ids or []) if doc_id]
     reasoning = str(reasoning_mode or "").strip().lower()
+    fallback = _decide_with_rules(
+        text=text,
+        mode=mode,
+        intent_confidence=intent_confidence,
+        document_count=len(docs),
+        preferred_document_id=preferred_document_id,
+        reasoning_mode=reasoning,
+    )
+    if RAG_HYBRID_AGENT_ROUTER_LLM_ENABLED:
+        llm_decision = _decide_with_deepseek(
+            text=text,
+            reasoning_mode=reasoning,
+            document_count=len(docs),
+            preferred_document_id=preferred_document_id,
+            answer_intent=answer_intent or {},
+        )
+        if llm_decision is not None:
+            return _apply_route_policy(llm_decision, text=text, mode=mode, fallback=fallback, reasoning_mode=reasoning)
 
+    return fallback
+
+
+def _decide_with_rules(
+    *,
+    text: str,
+    mode: str,
+    intent_confidence: float,
+    document_count: int,
+    preferred_document_id: Optional[str],
+    reasoning_mode: str,
+) -> HybridRouteDecision:
     if _is_fast_request(text, mode):
-        return HybridRouteDecision(
+        return _decision(
             path="fast",
             reason="chitchat_or_general_no_retrieval",
             confidence=max(intent_confidence, 0.9 if mode == "chitchat" else 0.72),
-            budget=_FAST_BUDGET,
+            reasoning_mode=reasoning_mode,
         )
 
-    if _needs_agent(text=text, mode=mode, document_count=len(docs), preferred_document_id=preferred_document_id):
-        return HybridRouteDecision(
+    if _needs_agent(text=text, mode=mode, document_count=document_count, preferred_document_id=preferred_document_id):
+        return _decision(
             path="agent",
             reason="complex_multi_document_evidence_task",
             confidence=max(intent_confidence, 0.68),
-            budget=_agent_budget(reasoning),
+            reasoning_mode=reasoning_mode,
         )
 
-    return HybridRouteDecision(
+    return _decision(
         path="rag",
         reason="grounded_retrieval_sufficient",
-        confidence=max(intent_confidence, 0.64 if docs else 0.55),
-        budget=_RAG_BUDGET,
+        confidence=max(intent_confidence, 0.64 if document_count else 0.55),
+        reasoning_mode=reasoning_mode,
     )
+
+
+def _decide_with_deepseek(
+    *,
+    text: str,
+    reasoning_mode: str,
+    document_count: int,
+    preferred_document_id: Optional[str],
+    answer_intent: Dict[str, Any],
+) -> Optional[HybridRouteDecision]:
+    if not deepseek_configured():
+        return None
+    try:
+        import openai
+    except Exception:
+        return None
+
+    prompt = f"""You are the routing controller for an ESG report assistant.
+
+Choose exactly one path:
+- fast: small talk or a simple general question that does not need uploaded reports.
+- rag: direct report-grounded lookup, summary, or single-document evidence question where one retrieval pass is sufficient.
+- agent: complex evidence work that benefits from multiple tool calls, including cross-report comparison, multi-source synthesis, uncertainty analysis, graph-context reasoning, ranking/judgment, or requests mentioning all/uploaded/multiple reports. If the user asks across all reports but only one document is currently visible, still choose agent so the system can verify evidence and state the limitation.
+
+Return JSON only:
+{{
+  "path": "fast|rag|agent",
+  "confidence": 0.0,
+  "reason": "short routing reason"
+}}
+
+Request context:
+- reasoning_mode: {reasoning_mode or "flash"}
+- accessible_document_count: {document_count}
+- preferred_document_id_present: {bool(preferred_document_id)}
+- answer_intent: {json.dumps(answer_intent or {}, ensure_ascii=False)}
+
+User question:
+{text}"""
+    messages = [
+        {"role": "system", "content": "You are a routing classifier. Return only a JSON object."},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        if hasattr(openai, "OpenAI"):
+            client = openai.OpenAI(
+                api_key=DEEPSEEK_API_KEY,
+                base_url=DEEPSEEK_BASE_URL,
+                timeout=RAG_HYBRID_AGENT_ROUTER_TIMEOUT,
+            )
+            response = client.chat.completions.create(
+                model=RAG_HYBRID_AGENT_ROUTER_MODEL,
+                temperature=0,
+                messages=messages,
+                response_format={"type": "json_object"},
+                max_tokens=RAG_HYBRID_AGENT_ROUTER_MAX_TOKENS,
+            )
+            raw = response.choices[0].message.content or ""
+        else:
+            openai.api_key = DEEPSEEK_API_KEY
+            openai.api_base = DEEPSEEK_BASE_URL
+            response = openai.ChatCompletion.create(
+                model=RAG_HYBRID_AGENT_ROUTER_MODEL,
+                temperature=0,
+                messages=messages,
+                response_format={"type": "json_object"},
+                request_timeout=RAG_HYBRID_AGENT_ROUTER_TIMEOUT,
+                max_tokens=RAG_HYBRID_AGENT_ROUTER_MAX_TOKENS,
+            )
+            raw = response["choices"][0]["message"]["content"] or ""
+        parsed = _parse_json_object(str(raw))
+        path = str(parsed.get("path") or "").strip().lower()
+        if path not in _VALID_PATHS:
+            return None
+        return _decision(
+            path=path,
+            reason=f"deepseek:{str(parsed.get('reason') or 'semantic_route')}",
+            confidence=_safe_confidence(parsed.get("confidence"), fallback=0.7),
+            reasoning_mode=reasoning_mode,
+        )
+    except Exception as exc:
+        print(f"[rag.hybrid_agent_router] DeepSeek router fell back: {type(exc).__name__}: {exc}")
+        return None
+
+
+def _apply_route_policy(
+    decision: HybridRouteDecision,
+    *,
+    text: str,
+    mode: str,
+    fallback: HybridRouteDecision,
+    reasoning_mode: str,
+) -> HybridRouteDecision:
+    if decision.path == "fast" and mode in {"evidence", "hybrid"} and not _is_fast_request(text, mode):
+        return _decision(
+            path="rag",
+            reason=f"policy_grounded_request_overrode_{decision.reason}",
+            confidence=max(decision.confidence, fallback.confidence),
+            reasoning_mode=reasoning_mode,
+        )
+    return decision
 
 
 def _is_fast_request(text: str, mode: str) -> bool:
@@ -127,6 +275,36 @@ def _agent_budget(reasoning_mode: str) -> AgentBudget:
     if reasoning_mode == "deep":
         return _DEEP_AGENT_BUDGET
     return _FLASH_AGENT_BUDGET
+
+
+def _decision(path: str, reason: str, confidence: float, reasoning_mode: str) -> HybridRouteDecision:
+    if path == "agent":
+        budget = _agent_budget(reasoning_mode)
+    elif path == "fast":
+        budget = _FAST_BUDGET
+    else:
+        budget = _RAG_BUDGET
+    return HybridRouteDecision(
+        path=path,  # type: ignore[arg-type]
+        reason=reason,
+        confidence=_safe_confidence(confidence, fallback=0.55),
+        budget=budget,
+    )
+
+
+def _parse_json_object(raw: str) -> Dict[str, Any]:
+    text = str(raw or "").strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{[\s\S]*\}", text)
+        if not match:
+            return {}
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _safe_confidence(value: Any, fallback: float) -> float:

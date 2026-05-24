@@ -643,6 +643,82 @@ def _has_grounding_context(prepared: Dict) -> bool:
     return bool(prepared.get("sources") or prepared.get("graph_context_text"))
 
 
+def _pre_route_hybrid_path(
+    *,
+    query: str,
+    history: Optional[List[Dict]],
+    retrieval_filters: Optional[Dict],
+    reasoning_mode: str,
+    answer_intent: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    timings = _initialize_timings()
+    total_started = time.perf_counter()
+    tier = _resolve_tier(reasoning_mode)
+    history_block = format_history(history, current_query=query)
+    route_started = time.perf_counter()
+    active_answer_intent = answer_intent
+    if active_answer_intent is None:
+        active_answer_intent = classify_answer_intent(query=query, history_block=history_block)
+    decision = decide_hybrid_path(
+        question=query,
+        reasoning_mode=tier,
+        document_ids=list((retrieval_filters or {}).get("document_ids") or []),
+        preferred_document_id=(retrieval_filters or {}).get("preferred_document_id"),
+        answer_intent=active_answer_intent,
+    )
+    timings["route"] = round((time.perf_counter() - route_started) * 1000, 2)
+    return {
+        "answer_intent": dict(active_answer_intent or {}),
+        "decision": decision,
+        "history_block": history_block,
+        "reasoning_mode": tier,
+        "timings": timings,
+        "total_started": total_started,
+    }
+
+
+def _agent_routing_payload(decision: HybridRouteDecision) -> Dict[str, Any]:
+    return {
+        "strategy": "agent",
+        "reason": decision.reason,
+        "backend": "hybrid_agent_router",
+        "fallback_chain": [],
+        "fallbacks_used": [],
+    }
+
+
+def _answer_with_agent_path(
+    *,
+    query: str,
+    retrieval_filters: Optional[Dict],
+    route_context: Dict[str, Any],
+) -> Dict:
+    timings = route_context["timings"]
+    decision = route_context["decision"]
+    answer_intent = route_context["answer_intent"]
+    answer_intent_mode = str((answer_intent or {}).get("mode") or "evidence").lower()
+    registry = AgentToolRegistry(filters=retrieval_filters or {}, history_block=route_context["history_block"])
+    runner = AgentRunner(registry=registry, budget=decision.budget)
+    generate_started = time.perf_counter()
+    agent_result = runner.run(
+        question=query,
+        reasoning_mode=route_context.get("reasoning_mode") or "flash",
+        history_block=route_context["history_block"],
+    )
+    timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
+    payload = agent_result_to_payload(agent_result, reasoning_mode=route_context.get("reasoning_mode") or "flash")
+    payload["routing"] = _agent_routing_payload(decision)
+    payload["answer_intent"] = answer_intent
+    payload["answer_mode"] = answer_intent_mode
+    return _finalize_response(
+        payload=payload,
+        timings=timings,
+        total_started=route_context["total_started"],
+        mode="ask",
+        strategy="agent",
+    )
+
+
 def answer_question(
     query: str,
     top_k: int = 5,
@@ -654,6 +730,23 @@ def answer_question(
     answer_intent: Optional[Dict[str, Any]] = None,
 ) -> Dict:
     """Answer a question using retrieved ESG report chunks."""
+    route_context: Optional[Dict[str, Any]] = None
+    if not (retrieval_filters or {}).get("entity_scope_miss"):
+        route_context = _pre_route_hybrid_path(
+            query=query,
+            history=history,
+            retrieval_filters=retrieval_filters,
+            reasoning_mode=reasoning_mode,
+            answer_intent=answer_intent,
+        )
+        if route_context["decision"].path == "agent":
+            return _answer_with_agent_path(
+                query=query,
+                retrieval_filters=retrieval_filters,
+                route_context=route_context,
+            )
+        answer_intent = route_context["answer_intent"]
+
     prepared = _prepare_answer_context(
         query=query,
         top_k=top_k,
@@ -677,41 +770,6 @@ def answer_question(
             total_started=prepared["total_started"],
             mode=resolved_mode,
             strategy=prepared["strategy"],
-        )
-
-    hybrid_decision = decide_hybrid_path(
-        question=query,
-        reasoning_mode=reasoning_mode,
-        document_ids=list((retrieval_filters or {}).get("document_ids") or []),
-        preferred_document_id=(retrieval_filters or {}).get("preferred_document_id"),
-        answer_intent=prepared.get("answer_intent"),
-    )
-    if hybrid_decision.path == "agent":
-        registry = AgentToolRegistry(filters=retrieval_filters or {}, history_block=prepared["history_block"])
-        runner = AgentRunner(registry=registry, budget=hybrid_decision.budget)
-        generate_started = time.perf_counter()
-        agent_result = runner.run(
-            question=query,
-            reasoning_mode=prepared.get("reasoning_mode") or "flash",
-            history_block=prepared["history_block"],
-        )
-        timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
-        payload = agent_result_to_payload(agent_result, reasoning_mode=prepared.get("reasoning_mode") or "flash")
-        payload["routing"] = {
-            "strategy": "agent",
-            "reason": hybrid_decision.reason,
-            "backend": "hybrid_agent_router",
-            "fallback_chain": [],
-            "fallbacks_used": [],
-        }
-        payload["answer_intent"] = dict(prepared.get("answer_intent") or {})
-        payload["answer_mode"] = answer_intent_mode
-        return _finalize_response(
-            payload=payload,
-            timings=timings,
-            total_started=prepared["total_started"],
-            mode=resolved_mode,
-            strategy="agent",
         )
 
     if prepared["routing"].get("strategy") == "no_retrieval" and answer_intent_mode != "general":
@@ -948,6 +1006,49 @@ def stream_answer_question(
         },
     }
 
+    route_context: Optional[Dict[str, Any]] = None
+    if not (retrieval_filters or {}).get("entity_scope_miss"):
+        route_context = _pre_route_hybrid_path(
+            query=query,
+            history=history,
+            retrieval_filters=retrieval_filters,
+            reasoning_mode=reasoning_mode,
+            answer_intent=answer_intent,
+        )
+        if route_context["decision"].path == "agent":
+            decision = route_context["decision"]
+            timings = route_context["timings"]
+            answer_intent = route_context["answer_intent"]
+            answer_intent_mode = str((answer_intent or {}).get("mode") or "evidence").lower()
+            registry = AgentToolRegistry(filters=retrieval_filters or {}, history_block=route_context["history_block"])
+            runner = AgentRunner(registry=registry, budget=decision.budget)
+            generate_started = time.perf_counter()
+            for event in stream_agent_run(
+                runner=runner,
+                question=query,
+                reasoning_mode=route_context.get("reasoning_mode") or "flash",
+                history_block=route_context["history_block"],
+            ):
+                if event.get("type") == "done":
+                    timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
+                    payload = dict(event.get("payload") or {})
+                    payload["routing"] = _agent_routing_payload(decision)
+                    payload["answer_intent"] = answer_intent
+                    payload["answer_mode"] = answer_intent_mode
+                    event = {
+                        "type": "done",
+                        "payload": _finalize_response(
+                            payload=payload,
+                            timings=timings,
+                            total_started=route_context["total_started"],
+                            mode="ask",
+                            strategy="agent",
+                        ),
+                    }
+                yield event
+            return
+        answer_intent = route_context["answer_intent"]
+
     prepared = _prepare_answer_context(
         query=query,
         top_k=top_k,
@@ -974,48 +1075,6 @@ def stream_answer_question(
             strategy=prepared["strategy"],
         )
         yield {"type": "done", "payload": done_payload}
-        return
-
-    hybrid_decision = decide_hybrid_path(
-        question=query,
-        reasoning_mode=reasoning_mode,
-        document_ids=list((retrieval_filters or {}).get("document_ids") or []),
-        preferred_document_id=(retrieval_filters or {}).get("preferred_document_id"),
-        answer_intent=prepared.get("answer_intent"),
-    )
-    if hybrid_decision.path == "agent":
-        registry = AgentToolRegistry(filters=retrieval_filters or {}, history_block=prepared["history_block"])
-        runner = AgentRunner(registry=registry, budget=hybrid_decision.budget)
-        generate_started = time.perf_counter()
-        for event in stream_agent_run(
-            runner=runner,
-            question=query,
-            reasoning_mode=prepared.get("reasoning_mode") or "flash",
-            history_block=prepared["history_block"],
-        ):
-            if event.get("type") == "done":
-                timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
-                payload = dict(event.get("payload") or {})
-                payload["routing"] = {
-                    "strategy": "agent",
-                    "reason": hybrid_decision.reason,
-                    "backend": "hybrid_agent_router",
-                    "fallback_chain": [],
-                    "fallbacks_used": [],
-                }
-                payload["answer_intent"] = dict(prepared.get("answer_intent") or {})
-                payload["answer_mode"] = answer_intent_mode
-                event = {
-                    "type": "done",
-                    "payload": _finalize_response(
-                        payload=payload,
-                        timings=timings,
-                        total_started=prepared["total_started"],
-                        mode="ask",
-                        strategy="agent",
-                    ),
-                }
-            yield event
         return
 
     if prepared["routing"].get("strategy") == "no_retrieval" and answer_intent_mode != "general":

@@ -23,11 +23,15 @@ def _prepared_context():
         "tier": "deep",
         "graph_context_text": "",
         "allow_speculation": True,
+        "query": "Compare Apple and Microsoft climate risks.",
     }
 
 
 def test_agent_path_delegates_to_runner(monkeypatch):
-    monkeypatch.setattr(pipeline, "_prepare_answer_context", lambda **kwargs: _prepared_context())
+    def fail_prepare(**kwargs):
+        raise AssertionError("agent path must not prepare retrieval context before routing")
+
+    monkeypatch.setattr(pipeline, "_prepare_answer_context", fail_prepare)
     monkeypatch.setattr(
         pipeline,
         "decide_hybrid_path",
@@ -68,7 +72,10 @@ def test_agent_path_delegates_to_runner(monkeypatch):
 
 
 def test_stream_agent_path_emits_agent_done_payload(monkeypatch):
-    monkeypatch.setattr(pipeline, "_prepare_answer_context", lambda **kwargs: _prepared_context())
+    def fail_prepare(**kwargs):
+        raise AssertionError("agent stream path must not prepare retrieval context before routing")
+
+    monkeypatch.setattr(pipeline, "_prepare_answer_context", fail_prepare)
     monkeypatch.setattr(
         pipeline,
         "decide_hybrid_path",
@@ -110,6 +117,16 @@ def test_stream_agent_path_emits_agent_done_payload(monkeypatch):
 
 
 def test_rag_path_does_not_create_agent_runner(monkeypatch):
+    prepare_called = {"value": False}
+
+    def fake_prepare(**kwargs):
+        prepare_called["value"] = True
+        prepared = _prepared_context()
+        prepared["answer_intent"] = {"mode": "evidence", "confidence": 0.8}
+        prepared["allow_speculation"] = False
+        return prepared
+
+    monkeypatch.setattr(pipeline, "_prepare_answer_context", fake_prepare)
     monkeypatch.setattr(
         pipeline,
         "decide_hybrid_path",
@@ -120,4 +137,17 @@ def test_rag_path_does_not_create_agent_runner(monkeypatch):
             budget=pipeline.AgentBudget(max_steps=0, deadline_seconds=25),
         ),
     )
-    assert callable(pipeline.answer_question)
+    class FailRunner:
+        def __init__(self, registry, budget):
+            raise AssertionError("rag path must not create an agent runner")
+
+    monkeypatch.setattr(pipeline, "AgentRunner", FailRunner)
+    result = pipeline.answer_question(
+        "What is the emissions target in this report?",
+        reasoning_mode="flash",
+        retrieval_filters={"document_ids": ["doc_costco"], "preferred_document_id": "doc_costco"},
+        answer_intent={"mode": "evidence", "confidence": 0.8},
+    )
+    assert prepare_called["value"] is True
+    assert result.get("path") != "agent"
+    assert result["backend"] == "no_context"
