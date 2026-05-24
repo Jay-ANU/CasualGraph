@@ -67,12 +67,13 @@ class AgentToolRegistry:
                 use_hyde=use_hyde,
                 history_block=self.history_block,
             )
-            sources = list(layered.get("primary") or [])
+            sources = _flatten_layered_sources(layered)
             return AgentToolObservation(
                 tool="search_documents",
-                ok=True,
+                ok=bool(sources),
                 summary=f"Retrieved {len(sources)} primary source chunk(s) with layered search.",
                 data={"sources": sources, "layered_sources": layered, "strategy": "layered", "top_k": top_k},
+                error=None if sources else "no_sources",
             )
 
         if strategy == "hybrid":
@@ -96,9 +97,10 @@ class AgentToolRegistry:
 
         return AgentToolObservation(
             tool="search_documents",
-            ok=True,
+            ok=bool(sources),
             summary=f"Retrieved {len(sources)} source chunk(s) with {resolved_strategy} search.",
             data={"sources": sources, "strategy": resolved_strategy, "top_k": top_k},
+            error=None if sources else "no_sources",
         )
 
     def _read_chunks(self, args: Dict[str, Any]) -> AgentToolObservation:
@@ -111,9 +113,10 @@ class AgentToolRegistry:
             chunks = [chunks]
         return AgentToolObservation(
             tool="read_chunks",
-            ok=True,
+            ok=bool(chunks),
             summary=f"Read {len(chunks)} chunk(s).",
-            data={"chunks": chunks},
+            data={"chunks": chunks, "sources": chunks},
+            error=None if chunks else "no_chunks",
         )
 
     def _get_graph_context(self, tool: str, args: Dict[str, Any]) -> AgentToolObservation:
@@ -145,7 +148,7 @@ class AgentToolRegistry:
                 tool=tool,
                 ok=True,
                 summary=f"Found graph context with {len(context.get('edges') or [])} edge(s).",
-                data=context,
+                data={"graph": context},
             )
 
         error = str(context.get("skipped_reason") or "no_graph_context")
@@ -153,7 +156,7 @@ class AgentToolRegistry:
             tool=tool,
             ok=False,
             summary="No graph context available.",
-            data=context,
+            data={"graph": context},
             error=error,
         )
 
@@ -203,6 +206,16 @@ def _clean_string_list(value: Any) -> Optional[List[str]]:
         return None
     cleaned = [str(item).strip() for item in value if str(item).strip()]
     return cleaned or None
+
+
+def _flatten_layered_sources(layers: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    output: List[Dict[str, Any]] = []
+    for layer_name in ("primary", "priors", "regulatory"):
+        for item in layers.get(layer_name) or []:
+            row = dict(item)
+            row["agent_layer"] = layer_name
+            output.append(row)
+    return output
 
 
 def _truncate_words(text: str, limit: int) -> str:
