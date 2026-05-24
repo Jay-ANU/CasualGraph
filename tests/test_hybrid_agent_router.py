@@ -52,6 +52,28 @@ def test_unrestricted_all_reports_comparison_uses_agent_path():
     assert decision.reason == "complex_multi_document_evidence_task"
 
 
+def test_explicit_all_reports_comparison_with_one_accessible_doc_uses_agent_path():
+    decision = decide_hybrid_path(
+        question="Compare the climate transition risks across all reports and explain uncertainty with evidence.",
+        reasoning_mode="deep",
+        document_ids=["doc_costco"],
+        preferred_document_id=None,
+        answer_intent={"mode": "hybrid", "confidence": 0.8},
+    )
+    assert decision.path == "agent"
+
+
+def test_current_report_comparison_stays_rag_path():
+    decision = decide_hybrid_path(
+        question="Compare the climate risks and governance evidence in this report.",
+        reasoning_mode="deep",
+        document_ids=["doc_costco"],
+        preferred_document_id="doc_costco",
+        answer_intent={"mode": "evidence", "confidence": 0.8},
+    )
+    assert decision.path == "rag"
+
+
 def test_fast_complex_question_gets_smaller_agent_budget():
     decision = decide_hybrid_path(
         question="Compare these three ESG reports and identify governance risks with supporting evidence.",

@@ -44,7 +44,12 @@ _ESG_COMPLEX_PATTERN = re.compile(
     re.I,
 )
 _CROSS_DOCUMENT_SCOPE_PATTERN = re.compile(
-    r"\b(across|uploaded reports?|all reports?|multiple reports?|reports?|documents?)\b|"
+    r"\b("
+    r"across(?:\s+(?:all|uploaded|multiple|the))?\s+(?:reports?|documents?)|"
+    r"all\s+(?:reports?|documents?)|"
+    r"uploaded\s+(?:reports?|documents?)|"
+    r"multiple\s+(?:reports?|documents?)"
+    r")\b|"
     r"所有报告|全部报告|多个报告|跨文档|跨报告|这些报告|上传的报告",
     re.I,
 )
@@ -99,9 +104,8 @@ def _is_fast_request(text: str, mode: str) -> bool:
 
 def _needs_agent(text: str, mode: str, document_count: int, preferred_document_id: Optional[str]) -> bool:
     explicit_cross_document_scope = bool(_CROSS_DOCUMENT_SCOPE_PATTERN.search(text))
-    unrestricted_all_documents_scope = document_count == 0 and preferred_document_id is None and explicit_cross_document_scope
 
-    if document_count < 2 and not unrestricted_all_documents_scope:
+    if document_count < 2 and not explicit_cross_document_scope:
         return False
     if mode not in {"hybrid", "evidence"}:
         return False
