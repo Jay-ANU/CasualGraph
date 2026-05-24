@@ -189,6 +189,13 @@ NOTIFICATIONS_DAILY_EMAIL_CAP = int(os.getenv("NOTIFICATIONS_DAILY_EMAIL_CAP", "
 NOTIFICATIONS_SMTP_URL = os.getenv("NOTIFICATIONS_SMTP_URL")
 NOTIFICATIONS_ADMIN_EMAILS = os.getenv("NOTIFICATIONS_ADMIN_EMAILS", "")
 
+MCP_EMAIL_ENABLED = os.getenv("MCP_EMAIL_ENABLED", "false").lower() == "true"
+MCP_EMAIL_DRY_RUN = os.getenv("MCP_EMAIL_DRY_RUN", "true").lower() == "true"
+MCP_EMAIL_ALLOWED_RECIPIENTS = os.getenv("MCP_EMAIL_ALLOWED_RECIPIENTS", "")
+MCP_EMAIL_ALLOW_ALL = os.getenv("MCP_EMAIL_ALLOW_ALL", "false").lower() == "true"
+MCP_EMAIL_AUDIT_PATH = Path(os.getenv("MCP_EMAIL_AUDIT_PATH", "./data/mcp_email_audit.jsonl"))
+MCP_EMAIL_MAX_BODY_CHARS = max(1, int(os.getenv("MCP_EMAIL_MAX_BODY_CHARS", "12000")))
+
 REDIS_ENABLED = os.getenv("REDIS_ENABLED", "false").lower() == "true"
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0").strip()
 REDIS_CHAT_SESSION_TTL_SECONDS = max(3600, int(os.getenv("REDIS_CHAT_SESSION_TTL_SECONDS", "604800")))
