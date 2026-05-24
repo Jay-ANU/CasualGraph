@@ -63,6 +63,7 @@ export interface RagSource {
   source_type?: string;
   domain?: string;
   retrieval_scope?: string;
+  relevance_score?: number;
 }
 
 export interface RagGraphSource {

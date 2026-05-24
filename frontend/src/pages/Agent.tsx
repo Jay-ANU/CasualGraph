@@ -113,6 +113,7 @@ const REPORT_REFERENCE_PATTERN =
 
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 120;
 const STREAM_RENDER_INTERVAL_MS = 80;
+const MIN_EVIDENCE_RELEVANCE_PERCENT = 35;
 
 const normalizeQueryToken = (value: string) => value.trim().toLowerCase();
 const normalizeGraphDomain = (value?: string) => {
@@ -2154,8 +2155,13 @@ ${isDuplicate
     .reverse()
     .find(message => message.type === 'user' && message.content?.trim())
     ?.content || '';
-  const evidenceCards = latestSources.slice(0, 6).map((src, idx) => {
+  const evidenceCards = latestSources.map((src, idx) => {
     const cleanedText = normalizeEvidenceText(src.text);
+    const backendRelevance =
+      typeof src.relevance_score === 'number'
+        ? Math.round(Math.max(0, Math.min(1, src.relevance_score)) * 100)
+        : null;
+    const relevance = backendRelevance ?? getSourceRelevancePercent(latestUserPrompt, cleanedText);
     return {
       rank: idx + 1,
       documentTitle: src.document_title || src.document_id || 'Untitled source',
@@ -2163,9 +2169,12 @@ ${isDuplicate
       sourceType: src.source_type || '',
       domain: src.domain || '',
       snippet: pickEvidenceSnippet(cleanedText),
-      relevance: getSourceRelevancePercent(latestUserPrompt, cleanedText),
+      relevance,
     };
-  });
+  })
+    .filter(card => card.relevance === null || card.relevance >= MIN_EVIDENCE_RELEVANCE_PERCENT)
+    .slice(0, 6)
+    .map((card, idx) => ({ ...card, rank: idx + 1 }));
   const latestGraphSources = [...conversation]
     .reverse()
     .find(

@@ -572,6 +572,7 @@ def _serialize_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "sub_question": item.get("sub_question"),
                 "fusion_score": item.get("fusion_score"),
                 "fusion_method": item.get("fusion_method"),
+                "relevance_score": item.get("relevance_score"),
                 "agent_layer": item.get("agent_layer"),
             }
         )

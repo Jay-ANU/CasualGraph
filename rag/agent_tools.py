@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from rag.agent_types import AgentToolObservation
 from rag.graph_context import build_graph_context
 from rag.retriever import retrieve_context, retrieve_hybrid, retrieve_layered_context
+from rag.source_relevance import filter_layered_sources_by_relevance, filter_sources_by_relevance
 
 
 class AgentToolRegistry:
@@ -67,6 +68,7 @@ class AgentToolRegistry:
                 use_hyde=use_hyde,
                 history_block=self.history_block,
             )
+            layered = filter_layered_sources_by_relevance(query, layered) or {}
             sources = _flatten_layered_sources(layered)
             return AgentToolObservation(
                 tool="search_documents",
@@ -94,6 +96,7 @@ class AgentToolRegistry:
                 history_block=self.history_block,
             )
             resolved_strategy = "vector"
+        sources = filter_sources_by_relevance(query, sources)
 
         return AgentToolObservation(
             tool="search_documents",

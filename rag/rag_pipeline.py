@@ -35,6 +35,7 @@ from rag.query_rewriter import format_history, rewrite_query
 from rag.retriever import retrieve_context, retrieve_context_multi, retrieve_layered_context
 from rag.hybrid_agent_router import decide_hybrid_path
 from rag.router import _CJK_PRONOUN_PATTERN, _PRONOUN_PATTERN, route_query
+from rag.source_relevance import filter_layered_sources_by_relevance, filter_sources_by_relevance
 from rag.strategies import STRATEGY_REGISTRY
 
 
@@ -347,13 +348,17 @@ def _prepare_answer_context(
                 graph_ctx = _empty_graph_context("disabled")
             timings["graph"] = round((time.perf_counter() - graph_started) * 1000, 2)
 
-    sources = retrieval_result.get("sources", [])
     retrieval_metadata = retrieval_result.get("metadata", {})
     timings["hyde"] = _extract_source_ms(retrieval_result, "hyde_ms")
     timings["rerank"] = _extract_rerank_ms(retrieval_result)
     queries = _flatten_queries(retrieval_metadata.get("sub_queries") or [retrieval_query])
     layered_context = retrieval_metadata.get("layered_context")
     decomposition = retrieval_metadata.get("decomposition")
+    if layered_context:
+        layered_context = filter_layered_sources_by_relevance(retrieval_query, layered_context)
+        retrieval_metadata["layered_context"] = layered_context
+    sources = filter_sources_by_relevance(retrieval_query, retrieval_result.get("sources", []))
+    retrieval_result["sources"] = sources
     if tier == "deep" and not layered_context:
         layered_context = {"primary": sources, "priors": [], "regulatory": []}
 
@@ -1415,6 +1420,7 @@ def _serialize_sources(sources: List[Dict]) -> List[Dict]:
             "sub_question": item.get("sub_question"),
             "fusion_score": item.get("fusion_score"),
             "fusion_method": item.get("fusion_method"),
+            "relevance_score": item.get("relevance_score"),
         }
         for item in sources
     ]
