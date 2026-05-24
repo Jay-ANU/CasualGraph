@@ -1,4 +1,4 @@
-import type { RagBlock, RagGraphSource, RagReasoningMode, RagResponse, RagSource } from '../../types/api';
+import type { AgentPath, AgentTraceStep, RagBlock, RagGraphSource, RagReasoningMode, RagResponse, RagSource } from '../../types/api';
 
 export interface ChatMessage {
   type: 'user' | 'agent';
@@ -12,6 +12,10 @@ export interface ChatMessage {
     reasoningMode?: RagReasoningMode;
     mode?: string;
     backend?: string;
+    agentPath?: AgentPath;
+    agentTrace?: AgentTraceStep[];
+    partial?: boolean;
+    partialReason?: string | null;
     timingsMs?: RagResponse['timings_ms'];
     messageId?: string;
     feedback?: {

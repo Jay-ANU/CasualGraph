@@ -7,7 +7,7 @@ import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainC
 import { GraphVisualizer } from '../components';
 import { useAuth } from '../contexts/AuthContext';
 import type { GraphData, GraphEdge, GraphHighlightPath, GraphNode } from '../types/graph';
-import type { FeedbackPayload, FeedbackRating, FeedbackReasonTag, RagReasoningMode, RagResponse } from '../types/api';
+import type { AgentTraceStep, FeedbackPayload, FeedbackRating, FeedbackReasonTag, RagReasoningMode, RagResponse } from '../types/api';
 import EvidencePanel from './agent/EvidencePanel';
 import {
   STORAGE_KEYS,
@@ -515,6 +515,35 @@ const findPreviousUserPrompt = (messages: ChatMessage[], index: number) => {
   return '';
 };
 
+const formatAgentStage = (step: AgentTraceStep) => {
+  if (step.tool === 'search_documents') return 'Searching reports';
+  if (step.tool === 'get_graph_context') return 'Reading graph';
+  if (step.tool === 'summarize_evidence') return 'Summarizing evidence';
+  if (step.stage === 'completed') return 'Finalizing answer';
+  if (step.stage === 'partial') return 'Partial answer';
+  return step.stage
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+};
+
+const normalizeAgentTraceSteps = (steps: unknown): AgentTraceStep[] => {
+  if (!Array.isArray(steps)) return [];
+  return steps
+    .map((step, index) => {
+      const raw = step && typeof step === 'object' ? step as Record<string, unknown> : {};
+      const stepNumber = Number(raw.step || index + 1);
+      return {
+        step: Number.isFinite(stepNumber) ? stepNumber : index + 1,
+        stage: String(raw.stage || 'agent'),
+        tool: typeof raw.tool === 'string' ? raw.tool : null,
+        status: String(raw.status || 'running'),
+        summary: String(raw.summary || ''),
+        elapsed_ms: typeof raw.elapsed_ms === 'number' ? raw.elapsed_ms : undefined,
+        meta: raw.meta && typeof raw.meta === 'object' ? raw.meta as Record<string, unknown> : undefined,
+      };
+    });
+};
+
 const Agent: React.FC = () => {
   const { isAuthenticated, token, user } = useAuth();
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
@@ -533,6 +562,8 @@ const Agent: React.FC = () => {
   const [showPipelineStatus, setShowPipelineStatus] = useState(false);
   const [loadingStepIndex, setLoadingStepIndex] = useState(0);
   const [loadingElapsedMs, setLoadingElapsedMs] = useState(0);
+  const [activeAgentPath, setActiveAgentPath] = useState<'rag' | 'agent' | null>(null);
+  const [agentTrace, setAgentTrace] = useState<AgentTraceStep[]>([]);
   // Tier selector: 'flash' (OpenAI gpt-5.4-mini, fast) vs 'deep' (Anthropic
   // Claude, layered retrieval + graph context). URL accepts ?tier=deep; legacy
   // ?mode=predict is honored as Deep so old bookmarks still work.
@@ -1552,10 +1583,27 @@ ${isDuplicate
               onStepChange?.(0);
             } else if (event.payload.stream_stage === 'context_ready') {
               onStepChange?.(tier === 'deep' ? 5 : 3);
+            } else if (event.payload.stream_stage === 'planning') {
+              onStepChange?.(tier === 'deep' ? 2 : 1);
+            } else if (event.payload.stream_stage === 'agent_trace') {
+              onStepChange?.(tier === 'deep' ? 4 : 2);
+            }
+            const traceSteps = normalizeAgentTraceSteps(event.payload.agent_trace);
+            if (event.payload.agent_path) {
+              setActiveAgentPath(event.payload.agent_path);
+            }
+            if (traceSteps.length > 0) {
+              setAgentTrace(prev => [...prev, ...traceSteps]);
             }
             const nextData: Partial<NonNullable<ChatMessage['data']>> = {
               mode: event.payload.mode || latestMessageData?.mode || 'ask',
             };
+            if (event.payload.agent_path) {
+              nextData.agentPath = event.payload.agent_path;
+            }
+            if (traceSteps.length > 0) {
+              nextData.agentTrace = [...(latestMessageData?.agentTrace || []), ...traceSteps];
+            }
             if (Array.isArray(event.payload.sources)) {
               nextData.sources = event.payload.sources;
             }
@@ -1577,12 +1625,24 @@ ${isDuplicate
           if (event.type === 'done') {
             onStepChange?.(tier === 'deep' ? 7 : 3);
             finalPayload = event.payload;
+            const finalTrace = normalizeAgentTraceSteps(event.payload.agent_trace);
+            const finalAgentPath = event.payload.agent_path || event.payload.path;
+            if (finalAgentPath) {
+              setActiveAgentPath(finalAgentPath);
+            }
+            if (finalTrace.length > 0) {
+              setAgentTrace(finalTrace);
+            }
             const finalAnswer = typeof event.payload.answer === 'string' && event.payload.answer.trim()
               ? event.payload.answer
               : streamedAnswer || 'The system could not find enough grounded information to answer that question.';
             updateStreamingMessage(finalAnswer, {
               mode: event.payload.mode || 'ask',
               backend: event.payload.backend,
+              agentPath: finalAgentPath,
+              agentTrace: finalTrace.length > 0 ? finalTrace : latestMessageData?.agentTrace,
+              partial: Boolean(event.payload.partial),
+              partialReason: event.payload.partial_reason || null,
               sources: Array.isArray(event.payload.sources) ? event.payload.sources : [],
               graphSources: event.payload.graph_sources,
               timingsMs: event.payload.timings_ms,
@@ -1637,6 +1697,8 @@ ${isDuplicate
     setIsLoading(true);
     setShowPipelineStatus(true);
     setLoadingStepIndex(0);
+    setActiveAgentPath(null);
+    setAgentTrace([]);
     try {
       let sessionId = currentSessionId;
       let sessionIdToActivateAfterFirstTurn = '';
@@ -1712,10 +1774,14 @@ ${isDuplicate
     setCurrentSessionId('');
     persistCurrentSessionId('');
     setConversation([]);
+    setActiveAgentPath(null);
+    setAgentTrace([]);
     setActiveTab('chat');
   };
   const handleSelectSession = (id: string) => {
     setCurrentSessionId(id);
+    setActiveAgentPath(null);
+    setAgentTrace([]);
     setActiveTab('chat');
   };
   const handleDeleteSession = async (id: string) => {
@@ -1926,6 +1992,7 @@ ${isDuplicate
   const loadingSteps = getLoadingSteps(tier);
   const currentLoadingStep = loadingSteps[Math.min(loadingStepIndex, loadingSteps.length - 1)];
   const showLongWaitHint = isLoading && loadingElapsedMs >= 8000;
+  const visibleAgentTrace = agentTrace.slice(-5);
   const loadingHintText =
     loadingElapsedMs >= 15000
       ? 'Still processing — larger corpora can take longer. The request is active.'
@@ -2420,6 +2487,8 @@ ${isDuplicate
                     const feedbackRating = submittedFeedback[feedbackMessageId] || message.data?.feedback?.rating;
                     const feedbackDraft = feedbackDrafts[feedbackMessageId];
                     const canSubmitFeedback = Boolean(message.content.trim() && message.data?.backend);
+                    const messageAgentTrace = message.data?.agentTrace || [];
+                    const isAgentAnswer = message.data?.agentPath === 'agent' || messageAgentTrace.length > 0;
 
                     return (
                       <motion.div
@@ -2439,6 +2508,26 @@ ${isDuplicate
                                 {normalizeStreamingMarkdown(message.content)}
                               </ReactMarkdown>
                             </div>
+
+                            {isAgentAnswer && (
+                              <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-ink-steel">
+                                <span className="inline-flex items-center gap-1 rounded-md border border-hairline bg-white px-2 py-0.5">
+                                  <BrainCircuit className="h-3 w-3 text-ink-charcoal" />
+                                  Evidence agent
+                                </span>
+                                {messageAgentTrace.length > 0 && (
+                                  <span className="inline-flex items-center rounded-md border border-hairline bg-white px-2 py-0.5">
+                                    {messageAgentTrace.length} steps
+                                  </span>
+                                )}
+                                {message.data?.partial && (
+                                  <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
+                                    <AlertCircle className="h-3 w-3" />
+                                    Partial
+                                  </span>
+                                )}
+                              </div>
+                            )}
 
                             {message.data?.sources && message.data.sources.length > 0 && (
                               <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -2589,6 +2678,46 @@ ${isDuplicate
                       <div className="mt-1.5 text-[11px] text-ink-stone">
                         Step {Math.min(loadingStepIndex + 1, loadingSteps.length)}/{loadingSteps.length}
                       </div>
+                      {activeAgentPath === 'agent' && visibleAgentTrace.length > 0 && (
+                        <div className="mt-3 max-w-xl rounded-lg border border-hairline bg-white px-3 py-2 shadow-sm">
+                          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-ink-charcoal">
+                            <BrainCircuit className="h-3.5 w-3.5" />
+                            Evidence agent
+                          </div>
+                          <div className="space-y-1">
+                            {visibleAgentTrace.map((step, traceIndex) => {
+                              const status = String(step.status || '').toLowerCase();
+                              const TraceIcon = status === 'running'
+                                ? Loader2
+                                : status === 'completed'
+                                  ? CheckCircle2
+                                  : status === 'failed'
+                                    ? AlertCircle
+                                    : Circle;
+                              return (
+                                <div
+                                  key={`${step.step}-${step.tool || step.stage}-${traceIndex}`}
+                                  className="flex min-w-0 items-start gap-2 text-[12px] leading-5 text-ink-steel"
+                                >
+                                  <TraceIcon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
+                                    status === 'running'
+                                      ? 'animate-spin text-ink-charcoal'
+                                      : status === 'completed'
+                                        ? 'text-emerald-700'
+                                        : status === 'failed'
+                                          ? 'text-red-600'
+                                          : 'text-ink-stone'
+                                  }`} />
+                                  <span className="min-w-0 flex-1 truncate">
+                                    <span className="font-medium text-ink-charcoal">{formatAgentStage(step)}</span>
+                                    {step.summary ? <span className="text-ink-stone"> · {step.summary}</span> : null}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                       {showLongWaitHint && (
                         <p className="mt-2 text-[12px] text-ink-steel">
                           {loadingHintText}

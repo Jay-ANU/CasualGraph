@@ -29,6 +29,18 @@ export interface PredictionAnswer {
 
 export type RagIntent = 'answer' | 'prediction' | 'comparison' | 'graph_reasoning' | 'summary' | 'chitchat';
 export type RagReasoningMode = 'flash' | 'deep';
+export type AgentPath = 'rag' | 'agent';
+export type AgentTraceStatus = 'pending' | 'running' | 'completed' | 'failed' | string;
+
+export interface AgentTraceStep {
+  step: number;
+  stage: string;
+  tool?: string | null;
+  status: AgentTraceStatus;
+  summary: string;
+  elapsed_ms?: number;
+  meta?: Record<string, unknown>;
+}
 
 export interface RagBlock {
   type: 'summary' | 'markdown' | 'evidence' | 'graph' | 'prediction' | 'reasoning' | 'warning' | 'next_steps';
@@ -113,6 +125,11 @@ export interface RagResponse {
   sub_queries?: string[];
   memory_backend?: string;
   session_id?: string;
+  path?: AgentPath;
+  agent_path?: AgentPath;
+  agent_trace?: AgentTraceStep[];
+  partial?: boolean;
+  partial_reason?: string | null;
 }
 
 export type FeedbackRating = 'up' | 'down';
@@ -130,7 +147,7 @@ export interface FeedbackPayload {
   timings_ms?: RagTimingsMs;
 }
 
-export type RagStreamStage = 'routing' | 'context_ready' | 'generating' | 'done';
+export type RagStreamStage = 'routing' | 'context_ready' | 'generating' | 'planning' | 'agent_trace' | 'done';
 
 export type RagStreamEvent =
   | {
