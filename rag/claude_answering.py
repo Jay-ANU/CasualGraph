@@ -129,7 +129,7 @@ def _build_claude_request(
         )
     elif answer_intent == "hybrid":
         sections.append(
-            "<instruction>Use report evidence first when available. If evidence is incomplete or missing, clearly separate a General analysis section and do not present it as report-backed.</instruction>"
+            "<instruction>Use report evidence first when available. If evidence is incomplete or missing, clearly separate a General analysis section and do not present it as report-backed. For prediction, rating, scoring, recommendation, or scenario questions, do not answer with only the insufficient-context sentence; state the evidence limit and provide a cautious qualitative analysis or scoring framework.</instruction>"
         )
     elif not sources_block and not priors_block and not reg_block:
         # Tell the model upfront so it follows the INSUFFICIENT_CONTEXT contract.
@@ -156,6 +156,8 @@ def _system_prompt_for_intent(answer_intent: str) -> str:
             _SYSTEM_PROMPT
             + "\n\nFor hybrid questions, use retrieved report evidence first and cite it. "
             "If report evidence is incomplete or missing, clearly separate a 'General analysis' section. "
+            "For prediction, rating, scoring, recommendation, or scenario questions, do not answer with only "
+            f"'{INSUFFICIENT_CONTEXT_ANSWER}'; state the evidence limit and provide a cautious qualitative analysis or scoring framework. "
             "Do not present general reasoning as report-backed."
         )
     return _SYSTEM_PROMPT

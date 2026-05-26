@@ -68,6 +68,7 @@ class AgentRunner:
         question: str,
         reasoning_mode: str,
         history_block: str,
+        answer_intent: str = "evidence",
         progress_callback: Optional[ProgressCallback] = None,
     ) -> AgentRunResult:
         started = time.monotonic()
@@ -141,6 +142,7 @@ class AgentRunner:
             graph_sources=graph_sources,
             layered_sources=layered_sources,
             evidence_summaries=evidence_summaries,
+            answer_intent=answer_intent,
         )
         final_step = AgentTraceStep(
             step=executed_steps + 1,
@@ -243,6 +245,7 @@ def stream_agent_run(
     registry: Optional[Any] = None,
     budget: Optional[AgentBudget] = None,
     retrieval_filters: Optional[Dict[str, Any]] = None,
+    answer_intent: str = "evidence",
 ) -> Iterator[Dict[str, Any]]:
     """Yield planning, trace, answer token, and done events for an agent run."""
 
@@ -275,6 +278,7 @@ def stream_agent_run(
                 question=question,
                 reasoning_mode=mode,
                 history_block=history_block,
+                answer_intent=answer_intent,
                 progress_callback=_progress,
             )
         except Exception as exc:
@@ -325,7 +329,9 @@ def _synthesize_answer(
     graph_sources: Dict[str, Any],
     layered_sources: Dict[str, List[Dict[str, Any]]],
     evidence_summaries: List[str],
+    answer_intent: str = "evidence",
 ) -> Tuple[str, str]:
+    normalized_answer_intent = _normalize_answer_intent(answer_intent)
     graph_text = str(graph_sources.get("text") or "").strip() if isinstance(graph_sources, dict) else ""
 
     if reasoning_mode == "deep" and _claude_answering_available():
@@ -339,10 +345,19 @@ def _synthesize_answer(
                 graph_context=graph_text or None,
                 priors=list(layered_sources.get("priors") or []),
                 regulatory=list(layered_sources.get("regulatory") or []),
-                answer_intent="evidence",
+                answer_intent=normalized_answer_intent,
             )
             if answer:
-                return answer, "claude_deep+graph" if graph_text else "claude_deep"
+                backend = "claude_deep+graph" if graph_text else "claude_deep"
+                return _apply_hybrid_synthesis_fallback(
+                    answer=answer,
+                    backend=backend,
+                    answer_intent=normalized_answer_intent,
+                    question=question,
+                    sources=sources,
+                    graph_sources=graph_sources,
+                    evidence_summaries=evidence_summaries,
+                )
         except Exception as exc:
             print(f"[agent_runner] Claude synthesis failed: {type(exc).__name__}: {exc}")
 
@@ -355,11 +370,20 @@ def _synthesize_answer(
                 sources=sources,
                 history_block=history_block,
                 graph_context=graph_text or None,
-                allow_speculation=False,
-                answer_intent="evidence",
+                allow_speculation=normalized_answer_intent == "hybrid",
+                answer_intent=normalized_answer_intent,
             )
             if answer:
-                return answer, "openai+graph" if graph_text else "openai"
+                backend = "openai+graph" if graph_text else "openai"
+                return _apply_hybrid_synthesis_fallback(
+                    answer=answer,
+                    backend=backend,
+                    answer_intent=normalized_answer_intent,
+                    question=question,
+                    sources=sources,
+                    graph_sources=graph_sources,
+                    evidence_summaries=evidence_summaries,
+                )
         except Exception as exc:
             print(f"[agent_runner] OpenAI synthesis failed: {type(exc).__name__}: {exc}")
 
@@ -369,6 +393,100 @@ def _synthesize_answer(
         graph_sources=graph_sources,
         evidence_summaries=evidence_summaries,
     ), "extractive_fallback"
+
+
+def _normalize_answer_intent(value: str) -> str:
+    normalized = str(value or "evidence").strip().lower()
+    return normalized if normalized in {"evidence", "hybrid", "general"} else "evidence"
+
+
+def _is_insufficient_context_answer(answer: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(answer or "").strip()).strip()
+    if not normalized:
+        return False
+    if normalized == INSUFFICIENT_CONTEXT_ANSWER:
+        return True
+    return normalized.startswith(INSUFFICIENT_CONTEXT_ANSWER) and len(normalized) <= len(INSUFFICIENT_CONTEXT_ANSWER) + 40
+
+
+def _apply_hybrid_synthesis_fallback(
+    *,
+    answer: str,
+    backend: str,
+    answer_intent: str,
+    question: str,
+    sources: List[Dict[str, Any]],
+    graph_sources: Dict[str, Any],
+    evidence_summaries: List[str],
+) -> Tuple[str, str]:
+    if answer_intent != "hybrid" or not _is_insufficient_context_answer(answer):
+        return answer, backend
+    return (
+        _hybrid_evidence_limit_answer(
+            question=question,
+            sources=sources,
+            graph_sources=graph_sources,
+            evidence_summaries=evidence_summaries,
+        ),
+        f"{backend}+hybrid_fallback",
+    )
+
+
+def _hybrid_evidence_limit_answer(
+    *,
+    question: str,
+    sources: List[Dict[str, Any]],
+    graph_sources: Dict[str, Any],
+    evidence_summaries: List[str],
+) -> str:
+    extractive = _extractive_fallback_answer(
+        question=question,
+        sources=sources,
+        graph_sources=graph_sources,
+        evidence_summaries=evidence_summaries,
+    )
+    labels = _source_labels(sources)
+    if _contains_cjk(question):
+        source_note = f" 当前证据集中在：{', '.join(labels)}。" if labels else ""
+        evidence_line = "" if extractive == INSUFFICIENT_CONTEXT_ANSWER else f"\n\n可用证据：{extractive}"
+        return (
+            f"当前证据覆盖不足，不能做完整的跨报告比较。{source_note}".strip()
+            + evidence_line
+            + "\n\n不确定性：目前检索结果没有覆盖足够多公司或报告的可比指标。"
+            "较稳妥的比较应分别核对气候转型风险暴露、减排目标、治理责任、供应链风险、资本投入和时间线；"
+            "缺少这些字段时，只能给出有限证据下的结论，不能把它当作全量报告比较。"
+        )
+    source_note = f" The collected evidence is concentrated in: {', '.join(labels)}." if labels else ""
+    evidence_line = "" if extractive == INSUFFICIENT_CONTEXT_ANSWER else f"\n\nAvailable evidence: {extractive}"
+    return (
+        f"The collected evidence is not broad enough for a complete all-report comparison.{source_note}"
+        + evidence_line
+        + "\n\nUncertainty: the retrieved sources do not cover enough comparable companies or report sections. "
+        "A defensible comparison should separately check climate-transition risk exposure, emissions targets, governance ownership, supply-chain risk, capital allocation, and timelines. "
+        "Where those fields are missing, the conclusion should be treated as limited to the retrieved evidence rather than a full cross-report finding."
+    )
+
+
+def _source_labels(sources: List[Dict[str, Any]], limit: int = 3) -> List[str]:
+    labels: List[str] = []
+    seen = set()
+    for item in sources:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("document_title") or item.get("document_id") or "report").strip()
+        chunk = str(item.get("chunk_id") or item.get("id") or "").strip()
+        label = f"{title} · {chunk}" if chunk else title
+        if label in seen:
+            continue
+        labels.append(label)
+        seen.add(label)
+        if len(labels) >= limit:
+            break
+    return labels
+
+
+def _contains_cjk(value: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", str(value or "")))
 
 
 def _extractive_fallback_answer(

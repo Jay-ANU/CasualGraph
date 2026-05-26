@@ -37,8 +37,9 @@ _EVIDENCE_MARKER_PATTERN = re.compile(
 _PREDICTIVE_PATTERN = re.compile(
     r"\b("
     r"predict|forecast|likely|impact|implication|scenario|recommend|suggest|"
-    r"strategy|strategic|write|draft|framework|improve|direction"
-    r")\b|预测|影响|建议|策略|框架|怎么写|帮我写|方向",
+    r"strategy|strategic|write|draft|framework|improve|direction|"
+    r"score|rating|rate|rank|estimate"
+    r")\b|预测|影响|建议|策略|框架|怎么写|帮我写|方向|评分|打分|评级|估计",
     re.I,
 )
 _GENERAL_PATTERN = re.compile(

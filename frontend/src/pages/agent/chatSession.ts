@@ -37,7 +37,6 @@ export interface ChatSession {
 export const STORAGE_KEYS = {
   selectedDocumentId: 'causalgraph_agent_selected_document_id',
   currentSessionId: 'causalgraph_agent_current_session_id_v1',
-  evidencePanelOpen: 'causalgraph_agent_evidence_panel_open_v1',
 };
 
 export const deriveSessionTitle = (messages: ChatMessage[]): string => {

@@ -48,7 +48,8 @@ def test_agent_path_delegates_to_runner(monkeypatch):
             self.registry = registry
             self.budget = budget
 
-        def run(self, question, reasoning_mode, history_block, progress_callback=None):
+        def run(self, question, reasoning_mode, history_block, answer_intent="evidence", progress_callback=None):
+            assert answer_intent == "hybrid"
             return pipeline.AgentRunResult(
                 answer="Agent answer",
                 backend="agent_test",
@@ -92,7 +93,8 @@ def test_stream_agent_path_emits_agent_done_payload(monkeypatch):
             self.registry = registry
             self.budget = budget
 
-        def run(self, question, reasoning_mode, history_block, progress_callback=None):
+        def run(self, question, reasoning_mode, history_block, answer_intent="evidence", progress_callback=None):
+            assert answer_intent == "hybrid"
             return pipeline.AgentRunResult(
                 answer="Streamed agent answer",
                 backend="agent_stream_test",
@@ -151,3 +153,148 @@ def test_rag_path_does_not_create_agent_runner(monkeypatch):
     assert prepare_called["value"] is True
     assert result.get("path") != "agent"
     assert result["backend"] == "no_context"
+
+
+def test_cross_report_evidence_agent_uses_hybrid_synthesis(monkeypatch):
+    seen = {}
+
+    def fail_prepare(**kwargs):
+        raise AssertionError("agent path must not prepare retrieval context before routing")
+
+    monkeypatch.setattr(pipeline, "_prepare_answer_context", fail_prepare)
+    monkeypatch.setattr(
+        pipeline,
+        "decide_hybrid_path",
+        lambda **kwargs: pipeline.HybridRouteDecision(
+            path="agent",
+            reason="cross_report",
+            confidence=0.9,
+            budget=pipeline.AgentBudget(max_steps=1, deadline_seconds=90),
+        ),
+    )
+
+    class FakeRunner:
+        def __init__(self, registry, budget):
+            self.registry = registry
+            self.budget = budget
+
+        def run(self, question, reasoning_mode, history_block, answer_intent="evidence", progress_callback=None):
+            seen["answer_intent"] = answer_intent
+            return pipeline.AgentRunResult(
+                answer="Limited comparison answer",
+                backend="agent_test",
+                sources=[],
+                graph_sources={},
+                trace=[],
+            )
+
+    monkeypatch.setattr(pipeline, "AgentRunner", FakeRunner)
+    result = pipeline.answer_question(
+        "Compare the climate transition risks across all reports and explain uncertainty with evidence.",
+        reasoning_mode="deep",
+        retrieval_filters={"document_ids": ["doc_costco"], "preferred_document_id": "doc_costco"},
+        answer_intent={"mode": "evidence", "confidence": 0.9},
+    )
+
+    assert seen["answer_intent"] == "hybrid"
+    assert result["answer_mode"] == "hybrid"
+    assert result["answer"] == "Limited comparison answer"
+
+
+def test_hybrid_insufficient_model_answer_gets_analysis_fallback(monkeypatch):
+    def fake_prepare(**kwargs):
+        prepared = _prepared_context()
+        prepared["tier"] = "flash"
+        prepared["reasoning_mode"] = "flash"
+        prepared["answer_intent"] = {"mode": "hybrid", "confidence": 0.9}
+        prepared["allow_speculation"] = True
+        prepared["sources"] = [
+            {
+                "chunk_id": "chunk_1",
+                "text": "The company discusses water risk and packaging initiatives.",
+                "document_title": "coca cola",
+            }
+        ]
+        return prepared
+
+    monkeypatch.setattr(pipeline, "_prepare_answer_context", fake_prepare)
+    monkeypatch.setattr(
+        pipeline,
+        "decide_hybrid_path",
+        lambda **kwargs: pipeline.HybridRouteDecision(
+            path="rag",
+            reason="direct",
+            confidence=0.8,
+            budget=pipeline.AgentBudget(max_steps=0, deadline_seconds=12),
+        ),
+    )
+    monkeypatch.setattr(pipeline, "RAG_ANSWER_MODE", "openai")
+    monkeypatch.setattr(pipeline, "openai_answering_available", lambda: True)
+    monkeypatch.setattr(pipeline, "generate_openai_rag_answer", lambda **kwargs: pipeline.INSUFFICIENT_CONTEXT_ANSWER)
+    monkeypatch.setattr(
+        pipeline,
+        "_notify_unanswerable",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("hybrid fallback should not notify as unanswerable")),
+    )
+
+    result = pipeline.answer_question(
+        "Predict the ESG score for cola",
+        reasoning_mode="flash",
+        retrieval_filters={"document_ids": []},
+        answer_intent={"mode": "hybrid", "confidence": 0.9},
+    )
+
+    assert result["backend"] == "openai+hybrid_fallback"
+    assert "General analysis" in result["answer"]
+    assert "reliable ESG score" in result["answer"]
+
+
+def test_stream_hybrid_insufficient_done_payload_gets_analysis_fallback(monkeypatch):
+    def fake_prepare(**kwargs):
+        prepared = _prepared_context()
+        prepared["tier"] = "flash"
+        prepared["reasoning_mode"] = "flash"
+        prepared["answer_intent"] = {"mode": "hybrid", "confidence": 0.9}
+        prepared["allow_speculation"] = True
+        prepared["sources"] = [
+            {
+                "chunk_id": "chunk_1",
+                "text": "The company discusses water risk and packaging initiatives.",
+                "document_title": "coca cola",
+            }
+        ]
+        return prepared
+
+    monkeypatch.setattr(pipeline, "_prepare_answer_context", fake_prepare)
+    monkeypatch.setattr(
+        pipeline,
+        "decide_hybrid_path",
+        lambda **kwargs: pipeline.HybridRouteDecision(
+            path="rag",
+            reason="direct",
+            confidence=0.8,
+            budget=pipeline.AgentBudget(max_steps=0, deadline_seconds=12),
+        ),
+    )
+    monkeypatch.setattr(pipeline, "RAG_ANSWER_MODE", "openai")
+    monkeypatch.setattr(pipeline, "openai_answering_available", lambda: True)
+    monkeypatch.setattr(pipeline, "stream_openai_rag_answer", lambda **kwargs: iter([pipeline.INSUFFICIENT_CONTEXT_ANSWER]))
+    monkeypatch.setattr(
+        pipeline,
+        "_notify_unanswerable",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("hybrid fallback should not notify as unanswerable")),
+    )
+
+    events = list(
+        pipeline.stream_answer_question(
+            "Predict the ESG score for cola",
+            reasoning_mode="flash",
+            retrieval_filters={"document_ids": []},
+            answer_intent={"mode": "hybrid", "confidence": 0.9},
+        )
+    )
+    done = [event for event in events if event.get("type") == "done"][-1]
+
+    assert done["payload"]["backend"] == "openai+hybrid_fallback"
+    assert "General analysis" in done["payload"]["answer"]
+    assert "reliable ESG score" in done["payload"]["answer"]

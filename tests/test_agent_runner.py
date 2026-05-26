@@ -42,3 +42,26 @@ def test_runner_collects_sources_and_trace():
     assert result.sources[0]["chunk_id"] == "chunk_1"
     assert any(step.tool == "search_documents" and step.status == "completed" for step in result.trace)
     assert result.answer
+
+
+def test_runner_hybrid_synthesis_replaces_bare_insufficient_answer(monkeypatch):
+    def fake_generate(**kwargs):
+        assert kwargs["answer_intent"] == "hybrid"
+        assert kwargs["allow_speculation"] is True
+        return "The provided reports do not contain enough information to answer this question."
+
+    monkeypatch.setattr("rag.agent_runner._openai_answering_available", lambda: True)
+    monkeypatch.setattr("rag.openai_answering.generate_openai_rag_answer", fake_generate)
+
+    registry = FakeRegistry()
+    runner = AgentRunner(registry=registry, budget=AgentBudget(max_steps=3, deadline_seconds=90))
+    result = runner.run(
+        question="Compare the climate transition risks across all reports and explain uncertainty with evidence.",
+        reasoning_mode="flash",
+        history_block="",
+        answer_intent="hybrid",
+    )
+
+    assert result.backend == "openai+hybrid_fallback"
+    assert "not broad enough" in result.answer
+    assert "Available evidence" in result.answer

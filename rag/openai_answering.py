@@ -95,6 +95,9 @@ def _build_openai_messages(
             "only for claims supported by retrieved excerpts. "
             "If report evidence is incomplete or missing, say that clearly and then provide a separate "
             "'General analysis' section based on general knowledge. "
+            "For prediction, rating, scoring, recommendation, or scenario questions, do not answer with only "
+            f"'{INSUFFICIENT_CONTEXT_ANSWER}'; instead state the evidence limit and give a cautious, clearly "
+            "labeled qualitative analysis or scoring framework. "
             "Never present general reasoning as if it were supported by the reports."
         )
     elif allow_speculation:

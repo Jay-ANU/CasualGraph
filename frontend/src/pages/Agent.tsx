@@ -3,12 +3,11 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { motion } from 'framer-motion';
-import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainCircuit, Network, FolderOpen, FileUp, FileText, Plus, Paperclip, CheckCircle2, AlertCircle, Circle, ArrowUp, ChevronLeft, ChevronRight, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainCircuit, Network, FolderOpen, FileUp, FileText, Plus, Paperclip, CheckCircle2, AlertCircle, Circle, ArrowUp, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { GraphVisualizer } from '../components';
 import { useAuth } from '../contexts/AuthContext';
 import type { GraphData, GraphEdge, GraphHighlightPath, GraphNode } from '../types/graph';
 import type { AgentTraceStep, FeedbackPayload, FeedbackRating, FeedbackReasonTag, RagReasoningMode, RagResponse } from '../types/api';
-import EvidencePanel from './agent/EvidencePanel';
 import {
   STORAGE_KEYS,
   buildChatMessage,
@@ -19,14 +18,10 @@ import {
   type ChatSession,
 } from './agent/chatSession';
 import {
-  buildTracePreviewGraph,
   formatSourceChipLabel,
   getLoadingSteps,
-  getSourceRelevancePercent,
-  normalizeEvidenceText,
   normalizeMathForMarkdown,
   normalizeStreamingMarkdown,
-  pickEvidenceSnippet,
   readSseEvents,
 } from './agent/ragUi';
 
@@ -113,7 +108,6 @@ const REPORT_REFERENCE_PATTERN =
 
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 120;
 const STREAM_RENDER_INTERVAL_MS = 80;
-const MIN_EVIDENCE_RELEVANCE_PERCENT = 35;
 
 const normalizeQueryToken = (value: string) => value.trim().toLowerCase();
 const normalizeGraphDomain = (value?: string) => {
@@ -609,15 +603,6 @@ const Agent: React.FC = () => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [uploadStatusResult, setUploadStatusResult] = useState<'success' | 'duplicate' | 'error' | null>(null);
   const [activeTab, setActiveTab] = useState('chat');
-  const [isEvidencePanelOpen, setIsEvidencePanelOpen] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.evidencePanelOpen);
-      return saved === null ? false : saved === '1';
-    } catch {
-      return false;
-    }
-  });
   const [neo4jStatus, setNeo4jStatus] = useState<Neo4jStatus | null>(null);
   const [neo4jGraph, setNeo4jGraph] = useState<GraphData | null>(null);
   const [neo4jGraphState, setNeo4jGraphState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -1021,14 +1006,6 @@ const Agent: React.FC = () => {
     }
     persistCurrentSessionId(currentSessionId);
   }, [currentSessionId, isAuthenticated, persistCurrentSessionId]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.evidencePanelOpen, isEvidencePanelOpen ? '1' : '0');
-    } catch (error) {
-      console.error('Failed to persist evidence panel visibility:', error);
-    }
-  }, [isEvidencePanelOpen]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -2147,48 +2124,6 @@ ${isDuplicate
       }));
     }
   };
-  const latestSources = [...conversation]
-    .reverse()
-    .find(message => message.type === 'agent' && message.data?.sources && message.data.sources.length > 0)
-    ?.data?.sources || [];
-  const latestUserPrompt = [...conversation]
-    .reverse()
-    .find(message => message.type === 'user' && message.content?.trim())
-    ?.content || '';
-  const evidenceCards = latestSources.map((src, idx) => {
-    const cleanedText = normalizeEvidenceText(src.text);
-    const backendRelevance =
-      typeof src.relevance_score === 'number'
-        ? Math.round(Math.max(0, Math.min(1, src.relevance_score)) * 100)
-        : null;
-    const relevance = backendRelevance ?? getSourceRelevancePercent(latestUserPrompt, cleanedText);
-    return {
-      rank: idx + 1,
-      documentTitle: src.document_title || src.document_id || 'Untitled source',
-      chunkLabel: src.chunk_id || '',
-      sourceType: src.source_type || '',
-      domain: src.domain || '',
-      snippet: pickEvidenceSnippet(cleanedText),
-      relevance,
-    };
-  })
-    .filter(card => card.relevance === null || card.relevance >= MIN_EVIDENCE_RELEVANCE_PERCENT)
-    .slice(0, 6)
-    .map((card, idx) => ({ ...card, rank: idx + 1 }));
-  const latestGraphSources = [...conversation]
-    .reverse()
-    .find(
-      message =>
-        message.type === 'agent' &&
-        message.data?.graphSources &&
-        ((message.data.graphSources.matched_entities?.length || 0) > 0 ||
-          (message.data.graphSources.edges?.length || 0) > 0),
-    )
-    ?.data?.graphSources;
-  const tracePreviewGraph = buildTracePreviewGraph(latestGraphSources);
-  const graphEdges = (latestGraphSources?.edges || [])
-    .filter((edge) => edge?.source && edge?.target)
-    .slice(0, 6);
   const uploadDisplayTitle = uploadStatusTitle || uploadedFile?.name || uploadForm.title || 'Uploaded document';
   const neo4jCounts = neo4jStatus?.stats?.counts || {};
   const selectedNeo4jSync = selectedDocument?.neo4j_sync;
@@ -2377,20 +2312,6 @@ ${isDuplicate
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
-                      {latestSources.length > 0 && (
-                        <button
-                          onClick={() => setIsEvidencePanelOpen(prev => !prev)}
-                          className="hidden h-8 items-center gap-1.5 rounded-full border border-hairline bg-canvas px-3 text-[12px] font-semibold text-ink-charcoal transition hover:border-ink xl:inline-flex"
-                          title={isEvidencePanelOpen ? 'Hide evidence panel' : 'Show evidence panel'}
-                        >
-                          {isEvidencePanelOpen ? (
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          ) : (
-                            <ChevronLeft className="h-3.5 w-3.5" />
-                          )}
-                          <span>Evidence</span>
-                        </button>
-                      )}
                       <button
                         onClick={handleUploadEntry}
                         className="inline-flex h-8 items-center gap-1.5 rounded-full border border-hairline bg-canvas px-3 text-[12px] font-semibold text-ink-charcoal transition hover:border-ink"
@@ -2883,16 +2804,6 @@ ${isDuplicate
               </div>
             </div>
           </section>
-
-          {isEvidencePanelOpen && (
-            <EvidencePanel
-              evidenceCards={evidenceCards}
-              latestGraphSources={latestGraphSources}
-              tracePreviewGraph={tracePreviewGraph}
-              graphEdges={graphEdges}
-              neo4jConnected={neo4jConnected}
-            />
-          )}
           </div>
         )}
 

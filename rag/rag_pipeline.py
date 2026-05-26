@@ -42,6 +42,11 @@ from rag.strategies import STRATEGY_REGISTRY
 INSUFFICIENT_CONTEXT_ANSWER = "The provided reports do not contain enough information to answer this question."
 _WORD_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _CJK_PATTERN = re.compile(r"[\u4e00-\u9fff]")
+_AGENT_HYBRID_SYNTHESIS_PATTERN = re.compile(
+    r"\b(compare|comparison|contrast|across|all reports?|all documents?|multiple reports?|uncertainty|limitations?)\b|"
+    r"比较|对比|跨报告|跨文档|所有报告|全部报告|不确定",
+    re.I,
+)
 
 
 def _resolve_tier(reasoning_mode: Optional[str]) -> str:
@@ -130,6 +135,66 @@ def _fallback_general_answer(query: str, answer_mode: str) -> str:
         f"{prefix}\n\nBreak the question into context, key drivers, measurable indicators, "
         "risks and opportunities, then turn the result into claims that can be verified with sources."
     )
+
+
+def _is_insufficient_context_answer(answer: Optional[str]) -> bool:
+    normalized = re.sub(r"\s+", " ", str(answer or "").strip()).strip()
+    if not normalized:
+        return False
+    target = INSUFFICIENT_CONTEXT_ANSWER
+    if normalized == target:
+        return True
+    # Some providers append a citation marker or trailing punctuation. Treat a
+    # short target-prefix answer as the same dead-end, but do not rewrite a real
+    # answer that starts by acknowledging evidence limits and then continues.
+    return normalized.startswith(target) and len(normalized) <= len(target) + 40
+
+
+def _fallback_hybrid_answer(query: str, sources: List[Dict]) -> str:
+    source_labels = _source_trace_labels(sources, limit=3)
+    has_score_request = bool(re.search(r"\b(score|rating|rate|rank|estimate|predict|forecast)\b|评分|打分|评级|预测", str(query or ""), re.I))
+    if _CJK_PATTERN.search(str(query or "")):
+        source_text = f"当前检索到的片段包括：{', '.join(source_labels)}。" if source_labels else "当前没有检索到足够相关的报告片段。"
+        if has_score_request:
+            return (
+                f"报告证据不足，不能给出可靠的、可引用的 ESG 数值评分。{source_text}\n\n"
+                "通用分析：可以先按环境、社会、治理、披露完整度四个维度建立评分框架。"
+                "如果报告缺少排放、水资源、包装循环、供应链、人权、董事会治理和审计等关键指标，"
+                "结论应标为低置信度，并只给定性判断或区间假设，不能当作报告支持的正式评分。"
+            )
+        return (
+            f"报告证据不足，不能仅凭当前片段给出确定结论。{source_text}\n\n"
+            "通用分析：我可以基于行业常识给出假设性判断，但需要明确标注哪些来自报告证据，"
+            "哪些只是未被当前文档验证的推断。"
+        )
+
+    source_text = f" Retrieved snippets include: {', '.join(source_labels)}." if source_labels else " No sufficiently relevant report snippets were retrieved."
+    if has_score_request:
+        return (
+            f"The retrieved reports do not provide enough complete, comparable metrics to compute a reliable ESG score.{source_text}\n\n"
+            "General analysis: treat the result as a low-confidence estimate, not a report-backed score. "
+            "A defensible scorecard would separately assess environmental performance, social practices, governance controls, and disclosure completeness. "
+            "For a beverage company, the missing evidence usually includes emissions trends, water stewardship, packaging and recycling, supply-chain labor controls, board oversight, audit/compliance issues, and year-over-year targets. "
+            "Without those fields, the safest output is a qualitative rating or a clearly labeled tentative range rather than a numeric ESG score."
+        )
+    return (
+        f"The retrieved reports do not fully answer this question.{source_text}\n\n"
+        "General analysis: I can still provide a clearly labeled hypothesis, but any unsupported parts should be treated as general reasoning rather than report evidence."
+    )
+
+
+def _apply_hybrid_insufficient_fallback(
+    *,
+    answer: Optional[str],
+    backend: Optional[str],
+    answer_intent_mode: str,
+    query: str,
+    sources: List[Dict],
+) -> tuple[Optional[str], Optional[str]]:
+    if answer_intent_mode != "hybrid" or not _is_insufficient_context_answer(answer):
+        return answer, backend
+    fallback_backend = f"{backend or 'hybrid'}+hybrid_fallback"
+    return _fallback_hybrid_answer(query, sources), fallback_backend
 
 
 def _build_local_prompt(
@@ -692,6 +757,15 @@ def _agent_routing_payload(decision: HybridRouteDecision) -> Dict[str, Any]:
     }
 
 
+def _agent_synthesis_answer_intent(query: str, answer_intent_mode: str) -> str:
+    mode = str(answer_intent_mode or "evidence").strip().lower()
+    if mode == "hybrid":
+        return "hybrid"
+    if mode == "evidence" and _AGENT_HYBRID_SYNTHESIS_PATTERN.search(str(query or "")):
+        return "hybrid"
+    return mode if mode in {"evidence", "general", "hybrid"} else "evidence"
+
+
 def _answer_with_agent_path(
     *,
     query: str,
@@ -702,6 +776,7 @@ def _answer_with_agent_path(
     decision = route_context["decision"]
     answer_intent = route_context["answer_intent"]
     answer_intent_mode = str((answer_intent or {}).get("mode") or "evidence").lower()
+    synthesis_answer_intent = _agent_synthesis_answer_intent(query, answer_intent_mode)
     registry = AgentToolRegistry(filters=retrieval_filters or {}, history_block=route_context["history_block"])
     runner = AgentRunner(registry=registry, budget=decision.budget)
     generate_started = time.perf_counter()
@@ -709,12 +784,13 @@ def _answer_with_agent_path(
         question=query,
         reasoning_mode=route_context.get("reasoning_mode") or "flash",
         history_block=route_context["history_block"],
+        answer_intent=synthesis_answer_intent,
     )
     timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
     payload = agent_result_to_payload(agent_result, reasoning_mode=route_context.get("reasoning_mode") or "flash")
     payload["routing"] = _agent_routing_payload(decision)
     payload["answer_intent"] = answer_intent
-    payload["answer_mode"] = answer_intent_mode
+    payload["answer_mode"] = synthesis_answer_intent
     return _finalize_response(
         payload=payload,
         timings=timings,
@@ -951,6 +1027,14 @@ def answer_question(
             backend = "extractive_fallback" if answer_backend_mode == "auto" else f"{answer_backend_mode}_fallback"
     timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
 
+    answer, backend = _apply_hybrid_insufficient_fallback(
+        answer=answer,
+        backend=backend,
+        answer_intent_mode=answer_intent_mode,
+        query=query,
+        sources=prepared["sources"],
+    )
+
     if backend == "extractive_fallback":
         _notify_unanswerable(
             query=query,
@@ -1025,6 +1109,7 @@ def stream_answer_question(
             timings = route_context["timings"]
             answer_intent = route_context["answer_intent"]
             answer_intent_mode = str((answer_intent or {}).get("mode") or "evidence").lower()
+            synthesis_answer_intent = _agent_synthesis_answer_intent(query, answer_intent_mode)
             registry = AgentToolRegistry(filters=retrieval_filters or {}, history_block=route_context["history_block"])
             runner = AgentRunner(registry=registry, budget=decision.budget)
             generate_started = time.perf_counter()
@@ -1033,13 +1118,14 @@ def stream_answer_question(
                 question=query,
                 reasoning_mode=route_context.get("reasoning_mode") or "flash",
                 history_block=route_context["history_block"],
+                answer_intent=synthesis_answer_intent,
             ):
                 if event.get("type") == "done":
                     timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
                     payload = dict(event.get("payload") or {})
                     payload["routing"] = _agent_routing_payload(decision)
                     payload["answer_intent"] = answer_intent
-                    payload["answer_mode"] = answer_intent_mode
+                    payload["answer_mode"] = synthesis_answer_intent
                     event = {
                         "type": "done",
                         "payload": _finalize_response(
@@ -1280,6 +1366,14 @@ def stream_answer_question(
             backend = "extractive_fallback" if answer_backend_mode == "auto" else f"{answer_backend_mode}_fallback"
         yield {"type": "token", "text": answer}
     timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
+
+    answer, backend = _apply_hybrid_insufficient_fallback(
+        answer=answer,
+        backend=backend,
+        answer_intent_mode=answer_intent_mode,
+        query=query,
+        sources=prepared["sources"],
+    )
 
     if backend == "extractive_fallback":
         _notify_unanswerable(
