@@ -2046,7 +2046,7 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
         "source_type": request.source_type,
         "domain": request.domain,
     }
-    if current_user and not _is_admin_user(current_user):
+    if current_user and not _is_admin_user(current_user) and not effective_document_ids:
         filters["owner_user_id"] = str(current_user.get("id") or "")
     if entity_scope_miss:
         filters["entity_scope_miss"] = True
@@ -2676,9 +2676,18 @@ def _is_global_entry(entry: Dict[str, Any]) -> bool:
     return group in {"global_kb", "global", "shared"} or visibility == "global"
 
 
+def _is_legacy_unowned_user_upload(entry: Dict[str, Any]) -> bool:
+    group = str(entry.get("document_group") or "").strip().lower()
+    owner_user_id = str(entry.get("owner_user_id") or "").strip()
+    visibility = str(entry.get("visibility_scope") or "").strip().lower()
+    return group == "user_upload" and not owner_user_id and not visibility
+
+
 def _can_access_entry(user: Dict[str, Any], entry: Dict[str, Any]) -> bool:
     if _is_admin_user(user):
         return True
+    if _is_legacy_unowned_user_upload(entry):
+        return bool(str(user.get("id") or "").strip())
     group = str(entry.get("document_group") or "").strip().lower()
     owner_user_id = str(entry.get("owner_user_id") or "").strip()
     current_user_id = str(user.get("id") or "").strip()
@@ -2694,6 +2703,8 @@ def _can_retrieve_entry(user: Optional[Dict[str, Any]], entry: Dict[str, Any]) -
         return True
     if not user:
         return False
+    if _is_legacy_unowned_user_upload(entry):
+        return bool(str(user.get("id") or "").strip())
     owner_user_id = str(entry.get("owner_user_id") or "").strip()
     current_user_id = str(user.get("id") or "").strip()
     return bool(current_user_id) and owner_user_id == current_user_id
