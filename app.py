@@ -21,6 +21,7 @@ import bcrypt
 import jwt
 import aiosqlite
 from concurrent.futures import ThreadPoolExecutor
+from difflib import SequenceMatcher
 from email.message import EmailMessage
 from email.utils import formataddr
 from pathlib import Path
@@ -75,12 +76,7 @@ _ENTITY_POSSESSIVE_PATTERN = re.compile(r"\b([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Z
 _ENTITY_ACRONYM_PATTERN = re.compile(r"\b[A-Z]{2,8}\b")
 _ENTITY_TITLE_PHRASE_PATTERN = re.compile(r"\b([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){1,4})\b")
 _ENTITY_SPLIT_PATTERN = re.compile(r"[^A-Za-z0-9&]+")
-_ENTITY_ALIAS_MAP: Dict[str, Tuple[str, ...]] = {
-    "american flight": ("american airlines", "american airline", "aa"),
-    "american flights": ("american airlines", "american airline", "aa"),
-    "american airline": ("american airlines", "aa"),
-    "american airlines": ("american airline", "aa"),
-}
+_ENTITY_ALIAS_MAP: Dict[str, Tuple[str, ...]] = {}
 _DOCUMENT_ENTITY_TERMS_CACHE: Dict[str, Tuple[float, set[str]]] = {}
 _ENTITY_STOP_WORDS = {
     "a",
@@ -833,7 +829,21 @@ async def _consume_admin_invite(code: str, user_id: str, db: aiosqlite.Connectio
 from ai_service.extractor import extract_esg
 from ai_service.schemas import EsgExtractionRequest, EsgExtractionResponse
 from chat_memory_service import RedisUnavailableError, chat_memory_service
-from configs.settings import CHUNK_DIR, DATA_DIR, EMBEDDING_FALLBACK_DIM, GRAPH_DIR, NEO4J_AUTO_SYNC, VECTOR_DIR, VECTOR_STORE_PROVIDER, neo4j_configured
+from configs.settings import (
+    CHUNK_DIR,
+    DATA_DIR,
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL,
+    EMBEDDING_FALLBACK_DIM,
+    GRAPH_DIR,
+    NEO4J_AUTO_SYNC,
+    RAG_ANSWER_INTENT_ROUTER_MODEL,
+    RAG_ANSWER_INTENT_ROUTER_TIMEOUT,
+    VECTOR_DIR,
+    VECTOR_STORE_PROVIDER,
+    deepseek_configured,
+    neo4j_configured,
+)
 from user_memory_service import (
     delete_user_memory,
     format_memories_for_prompt,
@@ -1894,32 +1904,233 @@ def _document_entity_terms(entry: Dict[str, Any]) -> set[str]:
     return terms
 
 
-def _scope_document_ids_for_query(question: str, entries: List[Dict[str, Any]]) -> Tuple[List[str], List[str]]:
-    query_terms = _extract_query_entity_terms(question)
-    if not query_terms:
-        return [], []
-
-    phrase_terms = {term for term in query_terms if " " in term}
-    alias_terms = {
-        term for term in query_terms
-        if " " not in term and any(term in aliases for aliases in _ENTITY_ALIAS_MAP.values())
-    }
-    phrase_matched_ids: List[str] = []
-    alias_matched_ids: List[str] = []
-    fallback_matched_ids: List[str] = []
+def _document_scope_candidates(
+    query_terms: List[str],
+    entries: List[Dict[str, Any]],
+    *,
+    limit: int = 12,
+    include_zero: bool = False,
+) -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
     for entry in entries:
         document_id = str(entry.get("document_id") or "").strip()
         if not document_id:
             continue
         document_terms = _document_entity_terms(entry)
-        if phrase_terms and any(term in document_terms for term in phrase_terms):
-            phrase_matched_ids.append(document_id)
-        elif alias_terms and any(term in document_terms for term in alias_terms):
-            alias_matched_ids.append(document_id)
-        elif any(term in document_terms for term in query_terms):
-            fallback_matched_ids.append(document_id)
+        score, matched_terms = _document_scope_score(query_terms, document_terms)
+        if score <= 0 and not include_zero:
+            continue
+        candidates.append({
+            "document_id": document_id,
+            "title": str(entry.get("title") or "").strip(),
+            "source": str(entry.get("source") or "").strip(),
+            "document_group": str(entry.get("document_group") or "").strip(),
+            "score": round(score, 4),
+            "matched_terms": matched_terms,
+            "terms": _display_document_terms(document_terms),
+        })
+    candidates.sort(
+        key=lambda item: (
+            -float(item.get("score") or 0.0),
+            str(item.get("title") or ""),
+            str(item.get("document_id") or ""),
+        )
+    )
+    return candidates[: max(1, limit)]
 
-    return phrase_matched_ids or alias_matched_ids or fallback_matched_ids, query_terms
+
+def _document_scope_score(query_terms: List[str], document_terms: set[str]) -> Tuple[float, List[str]]:
+    if not query_terms or not document_terms:
+        return 0.0, []
+
+    score = 0.0
+    matched: List[str] = []
+    document_phrases = [term for term in document_terms if " " in term]
+    for term in query_terms:
+        term_tokens = term.split()
+        if term in document_terms:
+            score += 12.0 if " " in term else 5.0
+            matched.append(term)
+            continue
+        if len(term_tokens) > 1:
+            overlap = len(set(term_tokens) & document_terms) / max(1, len(set(term_tokens)))
+            if overlap >= 0.75:
+                score += 8.0 * overlap
+                matched.append(term)
+                continue
+            if overlap >= 0.5:
+                score += 3.0 * overlap
+                matched.append(term)
+                continue
+            fuzzy = _best_term_similarity(term, document_phrases)
+            if fuzzy >= 0.78:
+                score += 6.0 * fuzzy
+                matched.append(term)
+            elif fuzzy >= 0.58:
+                score += 2.0 * fuzzy
+                matched.append(term)
+        else:
+            fuzzy = _best_term_similarity(term, list(document_terms))
+            if fuzzy >= 0.78:
+                score += 4.0 * fuzzy
+                matched.append(term)
+            elif fuzzy >= 0.5:
+                score += 1.5 * fuzzy
+                matched.append(term)
+    return score, _dedupe_entity_terms(matched)
+
+
+def _best_term_similarity(term: str, candidates: List[str]) -> float:
+    best = 0.0
+    for candidate in candidates[:250]:
+        ratio = SequenceMatcher(None, term, candidate).ratio()
+        if ratio > best:
+            best = ratio
+    return best
+
+
+def _display_document_terms(document_terms: set[str], limit: int = 18) -> List[str]:
+    ordered = sorted(
+        (term for term in document_terms if len(term) >= 2),
+        key=lambda value: (0 if " " in value else 1, len(value), value),
+    )
+    return ordered[:limit]
+
+
+def _dedupe_entity_terms(values: List[str]) -> List[str]:
+    output: List[str] = []
+    seen = set()
+    for value in values:
+        key = str(value or "").strip().lower()
+        if not key or key in seen:
+            continue
+        output.append(key)
+        seen.add(key)
+    return output
+
+
+def _confident_document_ids_from_candidates(candidates: List[Dict[str, Any]]) -> List[str]:
+    if not candidates:
+        return []
+    top_score = float(candidates[0].get("score") or 0.0)
+    if top_score < 5.0:
+        return []
+    tied = [item for item in candidates if abs(float(item.get("score") or 0.0) - top_score) < 0.001]
+    next_score = 0.0
+    for item in candidates:
+        score = float(item.get("score") or 0.0)
+        if score < top_score:
+            next_score = score
+            break
+    if len(tied) == 1 and (top_score >= 10.0 or top_score - next_score >= 2.0):
+        return [str(tied[0].get("document_id") or "")]
+    if 1 < len(tied) <= 3 and top_score >= 10.0:
+        return [str(item.get("document_id") or "") for item in tied if str(item.get("document_id") or "").strip()]
+    return []
+
+
+def _resolve_document_ids_with_deepseek(
+    question: str,
+    candidates: List[Dict[str, Any]],
+    query_terms: List[str],
+) -> List[str]:
+    if not candidates or not deepseek_configured():
+        return []
+    try:
+        import openai
+    except Exception:
+        return []
+
+    candidate_payload = [
+        {
+            "document_id": item.get("document_id"),
+            "title": item.get("title"),
+            "source": item.get("source"),
+            "matched_terms": item.get("matched_terms") or [],
+            "terms": item.get("terms") or [],
+        }
+        for item in candidates[:12]
+    ]
+    prompt = {
+        "task": "Choose which uploaded document(s) the user is referring to. Return an empty list if none fit.",
+        "rules": [
+            "Use company names, abbreviations, file names, report titles, and graph/entity terms.",
+            "Handle informal references and likely misspellings, but do not guess when candidates are unrelated.",
+            "Return only document_id values from the candidate list.",
+        ],
+        "question": question,
+        "extracted_query_terms": query_terms,
+        "candidates": candidate_payload,
+        "schema": {"document_ids": ["candidate_document_id"], "confidence": 0.0, "reason": "short reason"},
+    }
+    messages = [
+        {"role": "system", "content": "You are a document entity resolver. Return JSON only."},
+        {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+    ]
+    try:
+        if hasattr(openai, "OpenAI"):
+            client = openai.OpenAI(
+                api_key=DEEPSEEK_API_KEY,
+                base_url=DEEPSEEK_BASE_URL,
+                timeout=min(float(RAG_ANSWER_INTENT_ROUTER_TIMEOUT), 8.0),
+            )
+            response = client.chat.completions.create(
+                model=RAG_ANSWER_INTENT_ROUTER_MODEL,
+                temperature=0,
+                messages=messages,
+                response_format={"type": "json_object"},
+                max_tokens=220,
+            )
+            raw = response.choices[0].message.content or ""
+        else:
+            openai.api_key = DEEPSEEK_API_KEY
+            openai.api_base = DEEPSEEK_BASE_URL
+            response = openai.ChatCompletion.create(
+                model=RAG_ANSWER_INTENT_ROUTER_MODEL,
+                temperature=0,
+                messages=messages,
+                response_format={"type": "json_object"},
+                request_timeout=min(float(RAG_ANSWER_INTENT_ROUTER_TIMEOUT), 8.0),
+                max_tokens=220,
+            )
+            raw = response["choices"][0]["message"]["content"] or ""
+        parsed = _parse_json_object_text(str(raw))
+    except Exception as exc:
+        print(f"[rag.document_resolver] DeepSeek resolver skipped: {type(exc).__name__}: {exc}")
+        return []
+
+    allowed_ids = {str(item.get("document_id") or "").strip() for item in candidates}
+    confidence = 0.0
+    try:
+        confidence = float(parsed.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if confidence < 0.45:
+        return []
+    resolved: List[str] = []
+    for value in parsed.get("document_ids") or []:
+        document_id = str(value or "").strip()
+        if document_id and document_id in allowed_ids and document_id not in resolved:
+            resolved.append(document_id)
+    return resolved[:3]
+
+
+def _scope_document_ids_for_query(question: str, entries: List[Dict[str, Any]]) -> Tuple[List[str], List[str]]:
+    query_terms = _extract_query_entity_terms(question)
+    if not query_terms:
+        return [], []
+
+    candidates = _document_scope_candidates(query_terms, entries, include_zero=False)
+    confident_ids = _confident_document_ids_from_candidates(candidates)
+    if confident_ids:
+        return confident_ids, query_terms
+
+    resolver_candidates = candidates or _document_scope_candidates(query_terms, entries, include_zero=True)
+    resolved_ids = _resolve_document_ids_with_deepseek(question, resolver_candidates, query_terms)
+    if resolved_ids:
+        return resolved_ids, query_terms
+
+    return [], query_terms
 
 
 def _question_with_recent_user_context(question: str, history: Optional[List[Dict[str, Any]]]) -> str:
