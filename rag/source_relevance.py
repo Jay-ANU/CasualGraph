@@ -28,9 +28,11 @@ _STOP_WORDS = {
     "from",
     "how",
     "into",
+    "notice",
     "report",
     "reports",
     "show",
+    "should",
     "that",
     "the",
     "their",
@@ -68,17 +70,30 @@ def filter_sources_by_relevance(
     sources: List[Dict[str, Any]],
     *,
     min_score: Optional[float] = None,
+    preserve_when_empty: bool = True,
+    fallback_limit: int = 3,
 ) -> List[Dict[str, Any]]:
     threshold = RAG_MIN_SOURCE_RELEVANCE if min_score is None else max(0.0, min(1.0, float(min_score)))
+    annotated: List[Dict[str, Any]] = []
     output: List[Dict[str, Any]] = []
     for source in sources or []:
         if not isinstance(source, dict):
             continue
         row = annotate_source_relevance(query, source)
+        annotated.append(row)
         score = row.get("relevance_score")
         if score is None or float(score) >= threshold:
             output.append(row)
-    return output
+    if output or not preserve_when_empty:
+        return output
+    # Retrieval order already carries semantic/vector confidence. When the
+    # lexical guard would erase every candidate, keep the top retrieved rows so
+    # the answerer can still explain limited evidence instead of pretending no
+    # context exists.
+    fallback_rows = annotated[: max(1, int(fallback_limit))]
+    for row in fallback_rows:
+        row["low_relevance_fallback"] = True
+    return fallback_rows
 
 
 def filter_layered_sources_by_relevance(
@@ -86,11 +101,17 @@ def filter_layered_sources_by_relevance(
     layered_context: Optional[Dict[str, List[Dict[str, Any]]]],
     *,
     min_score: Optional[float] = None,
+    preserve_when_empty: bool = True,
 ) -> Optional[Dict[str, List[Dict[str, Any]]]]:
     if not isinstance(layered_context, dict):
         return layered_context
     return {
-        layer: filter_sources_by_relevance(query, list(rows or []), min_score=min_score)
+        layer: filter_sources_by_relevance(
+            query,
+            list(rows or []),
+            min_score=min_score,
+            preserve_when_empty=preserve_when_empty,
+        )
         for layer, rows in layered_context.items()
     }
 
