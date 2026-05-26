@@ -11,7 +11,7 @@ from rag.hyde import attach_hyde_metadata, maybe_generate_hyde_query
 from rag.multi_query import generate_query_variants
 from rag.query_decomposer import decompose_query
 from rag.reranker import rerank_candidates_if_enabled, reranker_candidate_limit
-from rag.retriever import retrieve_context_multi, retrieve_hybrid, retrieve_layered_context
+from rag.retriever import _scoped_local_chunk_fallback, retrieve_context_multi, retrieve_hybrid, retrieve_layered_context
 from rag.vector_store import search
 
 
@@ -33,6 +33,8 @@ class VectorOnlyStrategy(RetrievalStrategy):
             [attach_hyde_metadata(item, hyde) for item in search(query=vector_query, top_k=candidate_top_k, filters=filters)],
             candidate_top_k,
         )
+        if not candidates:
+            candidates = _scoped_local_chunk_fallback(query=query, top_k=candidate_top_k, filters=filters)
         return {"sources": rerank_candidates_if_enabled(query=query, candidates=candidates, top_k=top_k), "metadata": {}}
 
 

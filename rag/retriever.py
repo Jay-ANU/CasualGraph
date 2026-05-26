@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
 import re
 from typing import Dict, List, Optional
 
 from configs.settings import (
+    CHUNK_DIR,
     RAG_HYBRID_BM25_WEIGHT,
     RAG_HYBRID_ENABLED,
     RAG_HYBRID_FUSION,
@@ -20,7 +22,7 @@ from rag.bm25_index import search_bm25
 from rag.hyde import attach_hyde_metadata, maybe_generate_hyde_query
 from rag.pinecone_store import EmbeddingDimensionMismatchError, PineconePayloadTooLargeError
 from rag.reranker import rerank_candidates_if_enabled, reranker_candidate_limit
-from rag.vector_store import search
+from rag.vector_store import _apply_local_filters, search
 
 _WORD_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _RRF_STOP_WORDS = {
@@ -43,6 +45,17 @@ _RRF_STOP_WORDS = {
     "which",
     "who",
     "why",
+}
+_LOCAL_FALLBACK_STOP_WORDS = _RRF_STOP_WORDS | {
+    "about",
+    "document",
+    "documents",
+    "hello",
+    "hi",
+    "notice",
+    "report",
+    "reports",
+    "should",
 }
 _EMBEDDING_SKIP_LOGGED = False
 
@@ -236,6 +249,8 @@ def retrieve_hybrid(
             vector_only = [attach_hyde_metadata(item, hyde) for item in vector_results]
             return rerank_candidates_if_enabled(query=query, candidates=vector_only, top_k=top_k)
 
+    if not vector_results and not bm25_results:
+        return _scoped_local_chunk_fallback(query=query, top_k=top_k, filters=filters)
     if not vector_results and bm25_results:
         bm25_only = [dict(item, fusion_method="bm25_only_degraded_embeddings") for item in bm25_results]
         return rerank_candidates_if_enabled(query=query, candidates=bm25_only, top_k=top_k)
@@ -267,7 +282,8 @@ def _single_query_retrieve(
     hyde = maybe_generate_hyde_query(query, context=history_block, force=use_hyde)
     vector_query = str(hyde.get("query") or query)
     try:
-        return [attach_hyde_metadata(item, hyde) for item in _search_with_payload_retry(query=vector_query, top_k=top_k, filters=filters)]
+        results = [attach_hyde_metadata(item, hyde) for item in _search_with_payload_retry(query=vector_query, top_k=top_k, filters=filters)]
+        return results or _scoped_local_chunk_fallback(query=query, top_k=top_k, filters=filters)
     except EmbeddingDimensionMismatchError:
         _log_embedding_skip_once()
         return [dict(item, fusion_method="bm25_only_degraded_embeddings") for item in search_bm25(query=query, top_k=top_k, filters=filters)]
@@ -292,6 +308,70 @@ def _search_with_payload_retry(query: str, top_k: int, filters: Optional[Dict]) 
         print(f"[rag] vector payload too large at top_k={top_k}; retrying top_k={retry_top_k}: {exc}")
         results = search(query=query, top_k=retry_top_k, filters=filters)
         return [dict(item, retrieval_retry="pinecone_top_k_reduced") for item in results]
+
+
+def _scoped_local_chunk_fallback(query: str, top_k: int, filters: Optional[Dict]) -> List[Dict]:
+    document_ids = [str(item).strip() for item in (filters or {}).get("document_ids", []) if str(item).strip()]
+    if not document_ids:
+        return []
+
+    rows: List[Dict] = []
+    for document_id in document_ids:
+        chunks_path = CHUNK_DIR / f"{document_id}_chunks.jsonl"
+        if not chunks_path.exists():
+            continue
+        try:
+            with chunks_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(row, dict):
+                        rows.append(row)
+        except OSError as exc:
+            print(f"[rag] scoped local fallback skipped {document_id}: {exc}")
+
+    if not rows:
+        return []
+
+    filtered = _apply_local_filters([dict(row) for row in rows], filters or {})
+    if not filtered:
+        return []
+
+    query_terms = _fallback_query_terms(query)
+    ranked = []
+    for index, row in enumerate(filtered):
+        haystack = " ".join(
+            str(row.get(key) or "")
+            for key in ("document_title", "title", "source", "text", "chunk_id", "domain", "source_type")
+        ).lower()
+        score = sum(1 for term in query_terms if term in haystack)
+        item = dict(row)
+        item["score"] = float(score)
+        item["local_fallback_rank"] = index
+        item["retrieval_channel"] = "local_scoped_fallback"
+        item["fusion_method"] = "local_scoped_fallback"
+        ranked.append(item)
+
+    ranked.sort(key=lambda item: (-float(item.get("score") or 0.0), int(item.get("local_fallback_rank") or 0)))
+    return ranked[:top_k]
+
+
+def _fallback_query_terms(query: str) -> set[str]:
+    terms = {
+        term.lower()
+        for term in _WORD_PATTERN.findall(str(query or ""))
+        if len(term) > 1 and term.lower() not in _LOCAL_FALLBACK_STOP_WORDS
+    }
+    if "american" in terms and terms & {"flight", "flights", "airline", "airlines"}:
+        terms.update({"american airlines", "american airline", "airlines", "airline"})
+        terms.discard("flight")
+        terms.discard("flights")
+    return terms
 
 
 def _dedupe_results(raw_results: List[Dict], top_k: int) -> List[Dict]:
