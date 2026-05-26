@@ -45,6 +45,28 @@ def test_exact_document_scope_does_not_require_vector_owner_metadata(monkeypatch
     assert "owner_user_id" not in context["filters"]
 
 
+def test_general_answer_context_preserves_document_scope_for_entity_mentions(monkeypatch):
+    entry = _legacy_aa_entry()
+    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: [entry])
+    monkeypatch.setattr(
+        app,
+        "_scope_document_ids_for_query",
+        lambda question, entries: (["aa_sustainability_report_2022_20260501043104"], ["american flight"]),
+    )
+
+    context = app._resolve_general_rag_request_context(
+        app.RagAskRequest(question="Hi, What should I notice about American Flight?"),
+        _user(),
+        [],
+        "disabled",
+    )
+
+    assert context["error_response"] is None
+    assert context["filters"]["document_ids"] == ["aa_sustainability_report_2022_20260501043104"]
+    assert "owner_user_id" not in context["filters"]
+    assert context["filters"]["answer_mode"] == "general"
+
+
 def test_document_scope_uses_generic_llm_resolver_when_lexical_match_is_missing(monkeypatch):
     entry = {
         "document_id": "doc_123",

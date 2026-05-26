@@ -2293,16 +2293,55 @@ def _resolve_general_rag_request_context(
     history: List[Dict[str, Any]],
     memory_backend: str,
 ) -> Dict[str, Any]:
+    effective_document_ids = [str(item).strip() for item in (request.document_ids or []) if str(item).strip()]
+    preferred_document_id = str(request.preferred_document_id or "").strip() or None
+    if preferred_document_id and preferred_document_id not in effective_document_ids:
+        effective_document_ids.append(preferred_document_id)
+    scope_question = _question_with_recent_user_context(request.question, history)
     filters: Dict[str, Any] = {
         "document_ids": [],
-        "preferred_document_id": None,
+        "preferred_document_id": preferred_document_id,
         "document_group": request.document_group,
         "source_type": request.source_type,
         "domain": request.domain,
         "answer_mode": "general",
     }
     if current_user and not _is_admin_user(current_user):
-        filters["owner_user_id"] = str(current_user.get("id") or "")
+        retrievable_entries = _retrievable_registry_entries(current_user)
+        allowed_ids = {
+            str(entry.get("document_id") or "").strip()
+            for entry in retrievable_entries
+            if str(entry.get("document_id") or "").strip()
+        }
+        if effective_document_ids:
+            effective_document_ids = [doc_id for doc_id in effective_document_ids if doc_id in allowed_ids]
+        else:
+            scoped_ids, _ = _scope_document_ids_for_query(scope_question, retrievable_entries)
+            effective_document_ids = sorted(set(scoped_ids) & allowed_ids)
+        if effective_document_ids:
+            filters["document_ids"] = effective_document_ids
+        else:
+            filters["owner_user_id"] = str(current_user.get("id") or "")
+    elif current_user and _is_admin_user(current_user):
+        if effective_document_ids:
+            filters["document_ids"] = effective_document_ids
+        else:
+            scoped_ids, _ = _scope_document_ids_for_query(scope_question, _retrievable_registry_entries(current_user))
+            if scoped_ids:
+                filters["document_ids"] = scoped_ids
+    elif not current_user:
+        public_entries = [entry for entry in _collect_document_entries() if _can_retrieve_entry(None, entry)]
+        public_ids = {
+            str(entry.get("document_id") or "").strip()
+            for entry in public_entries
+            if str(entry.get("document_id") or "").strip()
+        }
+        if effective_document_ids:
+            filters["document_ids"] = [doc_id for doc_id in effective_document_ids if doc_id in public_ids]
+        else:
+            scoped_ids, _ = _scope_document_ids_for_query(scope_question, public_entries)
+            if scoped_ids:
+                filters["document_ids"] = sorted(set(scoped_ids) & public_ids)
     return {
         "filters": filters,
         "history": history,
