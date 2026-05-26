@@ -1904,6 +1904,20 @@ def _document_entity_terms(entry: Dict[str, Any]) -> set[str]:
     return terms
 
 
+def _document_identity_terms(entry: Dict[str, Any]) -> set[str]:
+    values = [
+        entry.get("document_id", ""),
+        entry.get("title", ""),
+        entry.get("source", ""),
+    ]
+    paths = entry.get("paths") or {}
+    values.extend([paths.get("processed_text", ""), paths.get("chunks", ""), paths.get("vector_store", "")])
+    terms: set[str] = set()
+    for value in values:
+        terms.update(_terms_from_document_value(str(value or "")))
+    return terms
+
+
 def _document_scope_candidates(
     query_terms: List[str],
     entries: List[Dict[str, Any]],
@@ -1918,6 +1932,7 @@ def _document_scope_candidates(
             continue
         document_terms = _document_entity_terms(entry)
         score, matched_terms = _document_scope_score(query_terms, document_terms)
+        identity_score, identity_matched_terms = _document_scope_score(query_terms, _document_identity_terms(entry))
         if score <= 0 and not include_zero:
             continue
         candidates.append({
@@ -1927,11 +1942,14 @@ def _document_scope_candidates(
             "document_group": str(entry.get("document_group") or "").strip(),
             "score": round(score, 4),
             "matched_terms": matched_terms,
+            "identity_score": round(identity_score, 4),
+            "matched_identity_terms": identity_matched_terms,
             "terms": _display_document_terms(document_terms),
         })
     candidates.sort(
         key=lambda item: (
             -float(item.get("score") or 0.0),
+            -float(item.get("identity_score") or 0.0),
             str(item.get("title") or ""),
             str(item.get("document_id") or ""),
         )
@@ -2029,6 +2047,36 @@ def _confident_document_ids_from_candidates(candidates: List[Dict[str, Any]]) ->
     return []
 
 
+def _positive_document_ids_from_candidates(
+    candidates: List[Dict[str, Any]],
+    limit: int = 8,
+    *,
+    require_identity: bool = False,
+) -> List[str]:
+    if not candidates:
+        return []
+    top_score = float(candidates[0].get("score") or 0.0)
+    if top_score < 5.0:
+        return []
+    top_candidates = [
+        item
+        for item in candidates
+        if abs(float(item.get("score") or 0.0) - top_score) < 0.001
+    ]
+    identity_matches = [item for item in top_candidates if float(item.get("identity_score") or 0.0) > 0]
+    if require_identity and not identity_matches:
+        return []
+    selected_candidates = identity_matches or top_candidates
+    output: List[str] = []
+    for item in selected_candidates:
+        document_id = str(item.get("document_id") or "").strip()
+        if document_id and document_id not in output:
+            output.append(document_id)
+        if len(output) >= limit:
+            break
+    return output
+
+
 def _resolve_document_ids_with_deepseek(
     question: str,
     candidates: List[Dict[str, Any]],
@@ -2124,11 +2172,18 @@ def _scope_document_ids_for_query(question: str, entries: List[Dict[str, Any]]) 
     confident_ids = _confident_document_ids_from_candidates(candidates)
     if confident_ids:
         return confident_ids, query_terms
+    identity_positive_ids = _positive_document_ids_from_candidates(candidates, require_identity=True)
+    if identity_positive_ids:
+        return identity_positive_ids, query_terms
 
     resolver_candidates = candidates or _document_scope_candidates(query_terms, entries, include_zero=True)
     resolved_ids = _resolve_document_ids_with_deepseek(question, resolver_candidates, query_terms)
     if resolved_ids:
         return resolved_ids, query_terms
+
+    positive_ids = _positive_document_ids_from_candidates(candidates)
+    if positive_ids:
+        return positive_ids, query_terms
 
     return [], query_terms
 

@@ -20,6 +20,31 @@ def _legacy_aa_entry():
     }
 
 
+def _legacy_nvidia_entry(suffix: str):
+    document_id = f"nvidia_sustainability_report_fiscal_year_2025_{suffix}"
+    return {
+        "document_id": document_id,
+        "title": "NVIDIA-Sustainability-Report-Fiscal-Year-2025",
+        "source": "NVIDIA-Sustainability-Report-Fiscal-Year-2025.pdf",
+        "document_group": "user_upload",
+        "owner_user_id": "",
+        "visibility_scope": "",
+        "paths": {"graph": ""},
+    }
+
+
+def _global_entry(document_id: str = "costco_sustainability_report_2025"):
+    return {
+        "document_id": document_id,
+        "title": "Costco Sustainability Report 2025",
+        "source": "Costco-sustainability-report-2025.pdf",
+        "document_group": "global_kb",
+        "owner_user_id": "",
+        "visibility_scope": "global",
+        "paths": {"graph": ""},
+    }
+
+
 def test_legacy_ownerless_user_upload_is_retrievable_for_logged_in_users():
     entry = _legacy_aa_entry()
 
@@ -43,6 +68,40 @@ def test_exact_document_scope_does_not_require_vector_owner_metadata(monkeypatch
     assert context["error_response"] is None
     assert context["filters"]["document_ids"] == ["aa_sustainability_report_2022_20260501043104"]
     assert "owner_user_id" not in context["filters"]
+
+
+def test_duplicate_entity_candidates_do_not_fall_back_to_unrelated_global_documents(monkeypatch):
+    nvidia_entries = [
+        _legacy_nvidia_entry("20260430142727"),
+        _legacy_nvidia_entry("20260430145508"),
+        _legacy_nvidia_entry("20260430145654"),
+        _legacy_nvidia_entry("20260501002550"),
+        _legacy_nvidia_entry("20260501022523"),
+    ]
+    entries = [*nvidia_entries, _global_entry()]
+    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
+    monkeypatch.setattr(app, "_resolve_document_ids_with_deepseek", lambda question, candidates, query_terms: [])
+
+    context = app._resolve_rag_request_context(
+        app.RagAskRequest(question="What is NVIDIA ESG strategy?"),
+        _user(),
+    )
+
+    assert context["error_response"] is None
+    assert context["filters"]["document_ids"]
+    assert all(doc_id.startswith("nvidia_sustainability_report_fiscal_year_2025") for doc_id in context["filters"]["document_ids"])
+    assert "costco_sustainability_report_2025" not in context["filters"]["document_ids"]
+
+
+def test_positive_candidate_fallback_prefers_document_identity_matches():
+    ids = app._positive_document_ids_from_candidates(
+        [
+            {"document_id": "nvidia_report", "score": 5.0, "identity_score": 5.0},
+            {"document_id": "smoke_graph_only", "score": 5.0, "identity_score": 0.0},
+        ]
+    )
+
+    assert ids == ["nvidia_report"]
 
 
 def test_general_answer_context_preserves_document_scope_for_entity_mentions(monkeypatch):
