@@ -27,6 +27,51 @@ def _prepared_context():
     }
 
 
+def test_entity_scoped_general_intent_still_uses_retrieval(monkeypatch):
+    monkeypatch.setattr(
+        pipeline,
+        "route_query",
+        lambda **kwargs: {"strategy": "vector_only", "reason": "test", "backend": "test", "fallback_chain": []},
+    )
+    monkeypatch.setattr(pipeline, "graph_context_enabled", lambda: False)
+    monkeypatch.setattr(
+        pipeline,
+        "_run_routed_retrieval",
+        lambda **kwargs: {
+            "sources": [
+                {
+                    "document_id": "aa_sustainability_report_2022_20260501043104",
+                    "chunk_id": "chunk_1",
+                    "document_title": "aa-sustainability-report-2022",
+                    "text": "American Airlines operates a major network carrier.",
+                    "score": 1.0,
+                }
+            ],
+            "metadata": {},
+            "strategy": "vector_only",
+        },
+    )
+    monkeypatch.setattr(pipeline, "filter_sources_by_relevance", lambda query, sources: sources)
+
+    prepared = pipeline._prepare_answer_context(
+        query="Hi, What should I notice about American Flight?",
+        top_k=3,
+        history=[],
+        retrieval_filters={
+            "document_ids": ["aa_sustainability_report_2022_20260501043104"],
+            "document_scope_source": "entity_resolver",
+        },
+        mode="ask",
+        reasoning_mode="flash",
+        user_id="user_1",
+        answer_intent={"mode": "general", "needs_retrieval": False, "needs_citations": False},
+    )
+
+    assert prepared["answer_intent"]["mode"] == "evidence"
+    assert prepared["routing"]["strategy"] == "vector_only"
+    assert prepared["sources"][0]["document_id"] == "aa_sustainability_report_2022_20260501043104"
+
+
 def test_agent_path_delegates_to_runner(monkeypatch):
     def fail_prepare(**kwargs):
         raise AssertionError("agent path must not prepare retrieval context before routing")

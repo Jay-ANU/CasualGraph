@@ -137,6 +137,36 @@ def _fallback_general_answer(query: str, answer_mode: str) -> str:
     )
 
 
+def _has_entity_resolved_document_scope(retrieval_filters: Optional[Dict]) -> bool:
+    filters = retrieval_filters or {}
+    return (
+        str(filters.get("document_scope_source") or "").strip().lower() == "entity_resolver"
+        and bool(filters.get("document_ids"))
+    )
+
+
+def _coerce_entity_scoped_general_intent(
+    answer_intent: Optional[Dict[str, Any]],
+    retrieval_filters: Optional[Dict],
+) -> Optional[Dict[str, Any]]:
+    if not _has_entity_resolved_document_scope(retrieval_filters):
+        return answer_intent
+    mode = str((answer_intent or {}).get("mode") or "").strip().lower()
+    if mode != "general":
+        return answer_intent
+    coerced = dict(answer_intent or {})
+    coerced.update(
+        {
+            "mode": "evidence",
+            "needs_retrieval": True,
+            "needs_citations": True,
+            "allow_general_answer": False,
+            "reason": "entity_resolved_document_scope",
+        }
+    )
+    return coerced
+
+
 def _is_insufficient_context_answer(answer: Optional[str]) -> bool:
     normalized = re.sub(r"\s+", " ", str(answer or "").strip()).strip()
     if not normalized:
@@ -331,6 +361,7 @@ def _prepare_answer_context(
     history_block = format_history(history, current_query=query)
     if answer_intent is None:
         answer_intent = classify_answer_intent(query=retrieval_query, history_block=history_block)
+    answer_intent = _coerce_entity_scoped_general_intent(answer_intent, retrieval_filters)
     answer_mode = str((answer_intent or {}).get("mode") or "evidence").strip().lower()
 
     route_started = time.perf_counter()
@@ -729,6 +760,7 @@ def _pre_route_hybrid_path(
     active_answer_intent = answer_intent
     if active_answer_intent is None:
         active_answer_intent = classify_answer_intent(query=query, history_block=history_block)
+    active_answer_intent = _coerce_entity_scoped_general_intent(active_answer_intent, retrieval_filters)
     decision = decide_hybrid_path(
         question=query,
         reasoning_mode=tier,

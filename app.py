@@ -2298,6 +2298,7 @@ def _resolve_general_rag_request_context(
     if preferred_document_id and preferred_document_id not in effective_document_ids:
         effective_document_ids.append(preferred_document_id)
     scope_question = _question_with_recent_user_context(request.question, history)
+    document_scope_source: Optional[str] = None
     filters: Dict[str, Any] = {
         "document_ids": [],
         "preferred_document_id": preferred_document_id,
@@ -2318,6 +2319,8 @@ def _resolve_general_rag_request_context(
         else:
             scoped_ids, _ = _scope_document_ids_for_query(scope_question, retrievable_entries)
             effective_document_ids = sorted(set(scoped_ids) & allowed_ids)
+            if effective_document_ids:
+                document_scope_source = "entity_resolver"
         if effective_document_ids:
             filters["document_ids"] = effective_document_ids
         else:
@@ -2329,6 +2332,7 @@ def _resolve_general_rag_request_context(
             scoped_ids, _ = _scope_document_ids_for_query(scope_question, _retrievable_registry_entries(current_user))
             if scoped_ids:
                 filters["document_ids"] = scoped_ids
+                document_scope_source = "entity_resolver"
     elif not current_user:
         public_entries = [entry for entry in _collect_document_entries() if _can_retrieve_entry(None, entry)]
         public_ids = {
@@ -2342,6 +2346,10 @@ def _resolve_general_rag_request_context(
             scoped_ids, _ = _scope_document_ids_for_query(scope_question, public_entries)
             if scoped_ids:
                 filters["document_ids"] = sorted(set(scoped_ids) & public_ids)
+                if filters["document_ids"]:
+                    document_scope_source = "entity_resolver"
+    if document_scope_source:
+        filters["document_scope_source"] = document_scope_source
     return {
         "filters": filters,
         "history": history,

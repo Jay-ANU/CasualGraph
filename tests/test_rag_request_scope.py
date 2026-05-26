@@ -65,6 +65,7 @@ def test_general_answer_context_preserves_document_scope_for_entity_mentions(mon
     assert context["filters"]["document_ids"] == ["aa_sustainability_report_2022_20260501043104"]
     assert "owner_user_id" not in context["filters"]
     assert context["filters"]["answer_mode"] == "general"
+    assert context["filters"]["document_scope_source"] == "entity_resolver"
 
 
 def test_document_scope_uses_generic_llm_resolver_when_lexical_match_is_missing(monkeypatch):
