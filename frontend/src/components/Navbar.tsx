@@ -15,6 +15,7 @@ const Navbar: React.FC = () => {
   const location = useLocation();
   const { isAuthenticated, logout, user } = useAuth();
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
+  const isMoonRoute = ['/', '/causal-inference', '/desktop', '/download', '/about'].includes(location.pathname);
 
   const navigation = [
     { name: 'Home', href: '/' },
@@ -35,15 +36,17 @@ const Navbar: React.FC = () => {
 
   return (
     <nav
-      className="sticky top-0 z-50 border-b bg-canvas"
-      style={{ borderColor: 'var(--cg-hairline-soft)' }}
+      className={`sticky top-0 z-50 border-b backdrop-blur-xl ${
+        isMoonRoute ? 'border-white/10 bg-[rgba(3,3,3,0.92)]' : 'bg-canvas'
+      }`}
+      style={isMoonRoute ? undefined : { borderColor: 'var(--cg-hairline-soft)' }}
     >
       <div
         className="mx-auto grid h-16 max-w-page grid-cols-[auto_1fr_auto] items-center gap-8 px-4 sm:px-6 lg:h-[72px] lg:max-w-page-wide lg:px-8 xl:h-20 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16"
       >
         {/* Wordmark — scales with viewport so it doesn't look tiny on 2K+ displays. */}
         <Link to="/" className="flex items-center gap-3 lg:gap-3.5 xl:gap-4" aria-label="CausalGraph home">
-          <BrandLogo size="nav" />
+          <BrandLogo size="nav" tone={isMoonRoute ? 'dark' : 'light'} />
         </Link>
 
         {/* Center nav — plain text links (MiniMax-style) */}
@@ -57,15 +60,17 @@ const Navbar: React.FC = () => {
                   to={item.href}
                   className={`relative px-4 py-2 text-body-sm font-medium transition xl:px-5 xl:text-body-md ${
                     active
-                      ? 'text-ink'
-                      : 'text-ink-steel hover:text-ink'
+                      ? isMoonRoute ? 'text-white' : 'text-ink'
+                      : isMoonRoute ? 'text-white/[0.55] hover:text-white' : 'text-ink-steel hover:text-ink'
                   }`}
                 >
                   {item.name}
                   {active && (
                     <motion.span
                       layoutId="nav-underline"
-                      className="absolute inset-x-3 -bottom-[19px] h-[2px] bg-ink xl:-bottom-[23px]"
+                      className={`absolute inset-x-3 -bottom-[19px] h-[2px] xl:-bottom-[23px] ${
+                        isMoonRoute ? 'bg-white' : 'bg-ink'
+                      }`}
                     />
                   )}
                 </Link>
@@ -78,14 +83,14 @@ const Navbar: React.FC = () => {
         <div className="hidden items-center gap-2 justify-self-end md:flex">
           {isAuthenticated ? (
             <>
-              <Link to="/agent" className="cg-btn-primary">
+              <Link to="/agent" className={isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'}>
                 Open Research Desk
               </Link>
               <div className="relative">
                 <button
                   type="button"
                   onClick={() => setIsUserMenuOpen((prev) => !prev)}
-                  className="cg-btn-tertiary max-w-[220px] px-3"
+                  className={`${isMoonRoute ? 'moon-nav-secondary' : 'cg-btn-tertiary'} max-w-[220px] px-3`}
                   aria-expanded={isUserMenuOpen}
                   aria-haspopup="menu"
                 >
@@ -132,7 +137,7 @@ const Navbar: React.FC = () => {
             </>
           ) : (
             <>
-              <Link to="/login" className="cg-btn-primary">
+              <Link to="/login" className={isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'}>
                 Sign in
               </Link>
             </>
@@ -142,7 +147,9 @@ const Navbar: React.FC = () => {
         {/* Mobile menu trigger */}
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="cg-btn-icon justify-self-end md:hidden"
+          className={`cg-btn-icon justify-self-end md:hidden ${
+            isMoonRoute ? '!border-white/[0.15] !bg-white/5 !text-white hover:!border-white/40' : ''
+          }`}
           aria-label={isOpen ? 'Close menu' : 'Open menu'}
         >
           {isOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
@@ -155,8 +162,10 @@ const Navbar: React.FC = () => {
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}
-          className="border-t bg-canvas px-4 pb-4 pt-3 md:hidden"
-          style={{ borderColor: 'var(--cg-hairline-soft)' }}
+          className={`border-t px-4 pb-4 pt-3 md:hidden ${
+            isMoonRoute ? 'border-white/10 bg-[#030303]' : 'bg-canvas'
+          }`}
+          style={isMoonRoute ? undefined : { borderColor: 'var(--cg-hairline-soft)' }}
         >
           <div className="space-y-1">
             {navigation.map((item) => {
@@ -168,8 +177,8 @@ const Navbar: React.FC = () => {
                   onClick={() => setIsOpen(false)}
                   className={`block rounded-lg px-3 py-3 text-body-sm font-medium ${
                     active
-                      ? 'bg-surface text-ink'
-                      : 'text-ink-steel hover:bg-surface hover:text-ink'
+                      ? isMoonRoute ? 'bg-white/10 text-white' : 'bg-surface text-ink'
+                      : isMoonRoute ? 'text-white/[0.62] hover:bg-white/[0.08] hover:text-white' : 'text-ink-steel hover:bg-surface hover:text-ink'
                   }`}
                 >
                   {item.name}
@@ -177,10 +186,10 @@ const Navbar: React.FC = () => {
               );
             })}
           </div>
-          <div className="mt-4 border-t pt-4" style={{ borderColor: 'var(--cg-hairline-soft)' }}>
+          <div className="mt-4 border-t pt-4" style={isMoonRoute ? { borderColor: 'rgba(255,255,255,0.1)' } : { borderColor: 'var(--cg-hairline-soft)' }}>
             {isAuthenticated ? (
               <div className="space-y-3">
-                <Link to="/agent" onClick={() => setIsOpen(false)} className="cg-btn-primary w-full">
+                <Link to="/agent" onClick={() => setIsOpen(false)} className={`${isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'} w-full`}>
                   Open Research Desk
                 </Link>
                 <div className="rounded-xl border border-hairline bg-surface-soft p-2">
@@ -210,7 +219,7 @@ const Navbar: React.FC = () => {
               </div>
             ) : (
               <div>
-                <Link to="/login" onClick={() => setIsOpen(false)} className="cg-btn-primary w-full">
+                <Link to="/login" onClick={() => setIsOpen(false)} className={`${isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'} w-full`}>
                   Sign in
                 </Link>
               </div>

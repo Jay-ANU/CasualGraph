@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { motion } from 'framer-motion';
+import { useSearchParams } from 'react-router-dom';
 import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainCircuit, Network, FolderOpen, FileUp, FileText, Plus, Paperclip, CheckCircle2, AlertCircle, Circle, ArrowUp, ThumbsUp, ThumbsDown, GitBranch, Eye, ShieldCheck, X } from 'lucide-react';
 import { GraphVisualizer } from '../components';
 import { useAuth } from '../contexts/AuthContext';
@@ -1048,6 +1049,7 @@ const AgentWorkspaceDrawer: React.FC<{
 
 const Agent: React.FC = () => {
   const { isAuthenticated, token, user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
   const accountPlanLabel = formatAccountPlanLabel(user);
   const apiHost = typeof window !== 'undefined' ? window.location.hostname || '127.0.0.1' : '127.0.0.1';
@@ -1134,6 +1136,7 @@ const Agent: React.FC = () => {
   const uploadStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement>(null);
   const conversationEndRef = useRef<HTMLDivElement>(null);
+  const hasAppliedInitialPromptRef = useRef(false);
   const shouldAutoFollowConversationRef = useRef(true);
   const updateAutoFollowConversation = useCallback(() => {
     const node = conversationScrollRef.current;
@@ -1178,6 +1181,21 @@ const Agent: React.FC = () => {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('');
+  useEffect(() => {
+    if (hasAppliedInitialPromptRef.current) return;
+
+    const prompt = (searchParams.get('prompt') || '').trim();
+    if (!prompt) return;
+
+    hasAppliedInitialPromptRef.current = true;
+    setInputText(prompt.slice(0, 2000));
+    setActiveTab('chat');
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete('prompt');
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === 'f') {

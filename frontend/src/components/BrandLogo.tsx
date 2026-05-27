@@ -6,6 +6,7 @@ interface BrandLogoProps {
   className?: string;
   showText?: boolean;
   size?: BrandLogoSize;
+  tone?: 'light' | 'dark';
 }
 
 const sizeClasses: Record<BrandLogoSize, { mark: string; text: string; gap: string }> = {
@@ -31,8 +32,9 @@ const sizeClasses: Record<BrandLogoSize, { mark: string; text: string; gap: stri
   },
 };
 
-const BrandLogo: React.FC<BrandLogoProps> = ({ className = '', showText = true, size = 'md' }) => {
+const BrandLogo: React.FC<BrandLogoProps> = ({ className = '', showText = true, size = 'md', tone = 'light' }) => {
   const classes = sizeClasses[size];
+  const textToneClass = tone === 'dark' ? 'text-white' : 'text-ink';
 
   return (
     <span className={`inline-flex items-center ${classes.gap} ${className}`}>
@@ -46,7 +48,7 @@ const BrandLogo: React.FC<BrandLogoProps> = ({ className = '', showText = true, 
       />
       {showText && (
         <span
-          className={`font-display font-semibold text-ink ${classes.text}`}
+          className={`font-display font-semibold ${textToneClass} ${classes.text}`}
           style={{ letterSpacing: 0 }}
         >
           CausalGraph

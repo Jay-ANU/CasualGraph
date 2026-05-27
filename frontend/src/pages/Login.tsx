@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import BrandLogo from '../components/BrandLogo';
@@ -14,6 +14,7 @@ type RegisterRole = 'user' | 'admin';
 const Login: React.FC = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
@@ -116,7 +117,12 @@ const Login: React.FC = () => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Request failed');
       login(data.token, data.user);
-      navigate('/agent');
+      const from = (location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null)?.from;
+      const redirectTo =
+        from?.pathname && from.pathname !== '/login'
+          ? `${from.pathname}${from.search || ''}${from.hash || ''}`
+          : '/agent';
+      navigate(redirectTo, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
       if (mode === 'register') fetchCaptcha();

@@ -1,248 +1,191 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { ArrowRight, CheckCircle2, FileText, Mail, MapPin, Network, ShieldCheck } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import React from 'react';
+import { ArrowUpRight, Globe, Mail } from 'lucide-react';
 
-// MiniMax-style company page:
-//   stark hero + quiet white tiles for principles + black footer-style CTA.
-const About: React.FC = () => {
-  const principles = [
-    {
-      title: 'Evidence before language',
-      description: 'Answers stay anchored in retrieved passages and are presented with clear source context.',
-      icon: ShieldCheck,
-    },
-    {
-      title: 'Analyst-grade workflows',
-      description: 'The interface is designed for review, comparison, and verification rather than one-off responses.',
-      icon: FileText,
-    },
-    {
-      title: 'Structured intelligence',
-      description: 'Documents become searchable chunks, extracted relationships, and graph objects teams can inspect.',
-      icon: Network,
-    },
-  ];
+const principles = [
+  {
+    title: 'Evidence before language',
+    description: 'We ground every answer in source chunks and citations—so you can audit the why, not just the what.',
+  },
+  {
+    title: 'Analyst-grade workflows',
+    description: 'Built for how analysts think: plan, trace, reflect and review with complete visibility.',
+  },
+  {
+    title: 'Structured intelligence',
+    description: 'We convert disclosures into a knowledge graph that makes relationships explicit and reusable.',
+  },
+];
 
-  const operatingAreas = [
-    'ESG report question answering',
-    'Sustainability disclosure review',
-    'Causal relationship extraction',
-    'Source-backed knowledge graph exploration',
-    'Portfolio and company comparison workflows',
-    'Governance, risk, and compliance research',
-  ];
-  const [activePrinciple, setActivePrinciple] = useState(principles[0].title);
-  const [activeArea, setActiveArea] = useState(operatingAreas[0]);
-  const currentPrinciple = principles.find((principle) => principle.title === activePrinciple) || principles[0];
-  const CurrentPrincipleIcon = currentPrinciple.icon;
-
-  return (
-    <div className="min-h-screen bg-canvas text-ink">
-      {/* ============== HERO ============== */}
-      <section className="border-b" style={{ borderColor: 'var(--cg-hairline-soft)' }}>
-        <div className="mx-auto max-w-page px-4 lg:max-w-page-wide xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16 py-section-lg sm:px-6 lg:px-8">
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45 }}
-            className="max-w-4xl"
-          >
-            <h1
-              className="font-display text-[40px] font-semibold sm:text-[56px] xl:text-[80px] 2xl:text-[96px]"
-              style={{ lineHeight: 1.10, letterSpacing: 0 }}
-            >
-              We build evidence systems for ESG and risk teams.
-            </h1>
-            <p className="mt-6 max-w-3xl text-subtitle text-ink-steel xl:mt-8 xl:max-w-4xl xl:text-[20px] 2xl:text-[22px]">
-              CausalGraph helps teams turn long-form corporate disclosures into verifiable answers,
-              extracted relationships, and reviewable knowledge graphs. Designed for analysts who
-              need to move quickly without losing the audit trail.
-            </p>
-          </motion.div>
+const CompanyEvidenceSystem: React.FC = () => (
+  <div className="moon-company-system" aria-label="Document evidence graph workflow">
+    <div className="moon-company-doc-stage">
+      <div className="moon-company-doc-card ghost-one">
+        <span>Annual Report 2024</span>
+        <i />
+        <i />
+        <i />
+        <small>Page 8</small>
+      </div>
+      <div className="moon-company-doc-card ghost-two">
+        <span>TCFD Index 2024</span>
+        <i />
+        <i />
+        <i />
+        <small>Page 1</small>
+      </div>
+      <div className="moon-company-doc-card primary">
+        <div className="moon-doc-card-head">
+          <span>Sustainability Report 2024</span>
+          <b>...</b>
         </div>
-      </section>
-
-      {/* ============== PRINCIPLES ============== */}
-      <section className="mx-auto max-w-page px-4 lg:max-w-page-wide xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16 py-section sm:px-6 lg:px-8">
-        <div className="mb-section-sm max-w-2xl">
-          <p className="cg-eyebrow">Principles</p>
-          <h2
-            className="mt-3 text-heading-lg xl:text-[56px] 2xl:text-[64px]"
-            style={{ letterSpacing: 0, lineHeight: 1.10 }}
-          >
-            What we anchor every decision to.
-          </h2>
-        </div>
-        <div className="grid gap-4 rounded-2xl border border-hairline bg-white p-3 lg:grid-cols-[260px_minmax(0,1fr)]">
-          <div className="flex gap-2 overflow-x-auto lg:block lg:space-y-1 lg:overflow-visible">
-            {principles.map((principle) => (
-              <button
-                key={principle.title}
-                type="button"
-                onClick={() => setActivePrinciple(principle.title)}
-                className={`shrink-0 rounded-xl px-4 py-3 text-left text-[13px] font-semibold transition lg:w-full ${
-                  activePrinciple === principle.title
-                    ? 'bg-ink text-white'
-                    : 'text-ink-charcoal hover:bg-surface-soft'
-                }`}
-              >
-                {principle.title}
-              </button>
-            ))}
-          </div>
-          <motion.div
-            key={currentPrinciple.title}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.24 }}
-            className="min-h-[220px] rounded-xl bg-surface-soft p-6"
-          >
-            <div className="mb-6 flex h-11 w-11 items-center justify-center rounded-full bg-white text-ink">
-              <CurrentPrincipleIcon className="h-5 w-5" />
-            </div>
-            <h3 className="text-[28px] font-semibold tracking-normal text-ink">{currentPrinciple.title}</h3>
-            <p className="mt-3 max-w-2xl text-body-md text-ink-steel">{currentPrinciple.description}</p>
-          </motion.div>
-        </div>
-      </section>
-
-      {/* ============== FOCUS AREAS ============== */}
-      <section
-        className="border-y"
-        style={{ borderColor: 'var(--cg-hairline-soft)', background: 'var(--cg-surface-soft)' }}
-      >
-        <div className="mx-auto grid max-w-page lg:max-w-page-wide xl:max-w-page-xl 2xl:max-w-page-2xl gap-12 px-4 py-section sm:px-6 lg:grid-cols-[0.85fr,1.15fr] lg:px-8">
-          <div>
-            <p className="cg-eyebrow">Focus</p>
-            <h2
-              className="mt-3 text-heading-lg xl:text-[56px] 2xl:text-[64px]"
-              style={{ letterSpacing: 0, lineHeight: 1.10 }}
-            >
-              What we focus on
-            </h2>
-            <p className="mt-4 max-w-md text-body-md text-ink-steel">
-              The platform is built around high-trust document workflows where the source text
-              matters as much as the final answer.
-            </p>
-          </div>
-          <div className="rounded-2xl border border-hairline bg-canvas p-3">
-            <div className="flex flex-wrap gap-2">
-              {operatingAreas.map((area) => (
-                <button
-                  key={area}
-                  type="button"
-                  onClick={() => setActiveArea(area)}
-                  className={`rounded-full border px-3 py-2 text-[13px] font-semibold transition ${
-                    activeArea === area
-                      ? 'border-ink bg-ink text-white'
-                      : 'border-hairline bg-white text-ink-charcoal hover:border-ink'
-                  }`}
-                >
-                  {area}
-                </button>
-              ))}
-            </div>
-            <motion.div
-              key={activeArea}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.22 }}
-              className="mt-4 flex items-start gap-3 rounded-xl bg-surface-soft p-5"
-            >
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-ink-steel" />
-              <div>
-                <h3 className="text-[20px] font-semibold text-ink">{activeArea}</h3>
-                <p className="mt-2 text-body-sm text-ink-steel">
-                  This workflow stays evidence-first: source text, extracted relationships, and review context remain close to the final answer.
-                </p>
-              </div>
-            </motion.div>
-          </div>
-        </div>
-      </section>
-
-      {/* ============== DOMAIN PRODUCT CARDS ============== */}
-      <section className="mx-auto max-w-page px-4 lg:max-w-page-wide xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16 py-section sm:px-6 lg:px-8">
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="cg-product-card cg-product-card--coral flex h-full min-h-[200px] flex-col justify-between">
-            <p className="text-caption font-semibold uppercase" style={{ letterSpacing: '0.08em', opacity: 0.78 }}>
-              Domain
-            </p>
-            <div>
-              <h3 className="font-display text-[40px] font-semibold leading-none xl:text-[48px] 2xl:text-[56px]" style={{ letterSpacing: 0 }}>
-                ESG
-              </h3>
-              <p className="mt-3 text-body-sm" style={{ opacity: 0.86 }}>
-                Disclosure analysis, targets, emissions, governance, and risk review.
-              </p>
-            </div>
-          </div>
-          <div className="cg-product-card cg-product-card--blue flex h-full min-h-[200px] flex-col justify-between">
-            <p className="text-caption font-semibold uppercase" style={{ letterSpacing: '0.08em', opacity: 0.82 }}>
-              Capability
-            </p>
-            <div>
-              <h3 className="font-display text-[40px] font-semibold leading-none xl:text-[48px] 2xl:text-[56px]" style={{ letterSpacing: 0 }}>
-                Graph
-              </h3>
-              <p className="mt-3 text-body-sm" style={{ opacity: 0.86 }}>
-                Relationship extraction and causal graph exploration from unstructured text.
-              </p>
-            </div>
-          </div>
-          <div className="cg-product-card cg-product-card--purple flex h-full min-h-[200px] flex-col justify-between">
-            <p className="text-caption font-semibold uppercase" style={{ letterSpacing: '0.08em', opacity: 0.86 }}>
-              Reasoning
-            </p>
-            <div>
-              <h3 className="font-display text-[40px] font-semibold leading-none xl:text-[48px] 2xl:text-[56px]" style={{ letterSpacing: 0 }}>
-                RAG
-              </h3>
-              <p className="mt-3 text-body-sm" style={{ opacity: 0.86 }}>
-                Retrieval-first answers with source passages available for verification.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ============== CONTACT ============== */}
-      <section
-        className="border-t"
-        style={{ borderColor: 'var(--cg-hairline-soft)' }}
-      >
-        <div className="mx-auto grid max-w-page lg:max-w-page-wide xl:max-w-page-xl 2xl:max-w-page-2xl gap-8 px-4 py-section sm:px-6 md:grid-cols-2 lg:px-8">
-          <div>
-            <p className="cg-eyebrow">Contact</p>
-            <h2 className="mt-3 text-heading-md font-semibold" style={{ letterSpacing: 0 }}>
-              Talk to us.
-            </h2>
-            <p className="mt-4 max-w-xl text-body-md text-ink-steel">
-              For product discussions, implementation support, or workflow evaluation, contact the
-              CausalGraph team.
-            </p>
-            <Link to="/login" className="cg-btn-primary mt-6 inline-flex">
-              Open the workspace
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 rounded-xl border bg-canvas p-4"
-                 style={{ borderColor: 'var(--cg-hairline)' }}>
-              <Mail className="h-4 w-4 text-ink-steel" />
-              <span className="text-body-sm text-ink-charcoal">contact@causalgraph.ai</span>
-            </div>
-            <div className="flex items-center gap-3 rounded-xl border bg-canvas p-4"
-                 style={{ borderColor: 'var(--cg-hairline)' }}>
-              <MapPin className="h-4 w-4 text-ink-steel" />
-              <span className="text-body-sm text-ink-charcoal">Product and engineering teams in Australia</span>
-            </div>
-          </div>
-        </div>
-      </section>
+        <small>Example Corp</small>
+        <i className="wide" />
+        <i />
+        <i className="short" />
+        <strong>E) Emissions</strong>
+        <i className="wide" />
+        <i />
+        <i className="medium" />
+        <em>Page 42</em>
+      </div>
+      <svg className="moon-company-stream-lines" viewBox="0 0 340 280" aria-hidden="true" preserveAspectRatio="none">
+        {Array.from({ length: 14 }).map((_, index) => (
+          <path
+            key={index}
+            d={`M232 ${48 + index * 12} C272 ${68 + index * 6} 296 ${110 + index * 3} 340 ${140}`}
+          />
+        ))}
+      </svg>
     </div>
-  );
-};
+
+    <div className="moon-company-source-card">
+      <div className="moon-source-card-head">
+        <span>Source chunk</span>
+        <b>...</b>
+      </div>
+      <small>p.42 L3-L18</small>
+      <p>... Scope 3 Category 1 emissions include purchased goods and services ...</p>
+    </div>
+
+    <div className="moon-company-eclipse" />
+
+    <div className="moon-company-network">
+      <svg className="moon-company-network-lines" viewBox="0 0 680 480" aria-hidden="true">
+        {/* Purchased goods -> Scope 3 Category 1 (vertical down) */}
+        <path d="M170 112 L170 215" />
+        {/* Purchased goods -> is part of */}
+        <path d="M260 65 C295 65 318 75 335 82" />
+        {/* is part of -> Scope 3 Emissions */}
+        <path d="M440 90 C470 105 490 122 510 140" />
+        {/* Scope 3 Category 1 -> Scope 3 Emissions (direct curve via top) */}
+        <path d="M290 222 C360 200 430 168 508 142" />
+        {/* Scope 3 Category 1 -> reported in (vertical) */}
+        <path d="M175 268 L175 290" className="relationship-drop" />
+        {/* reported in -> Sustainability Report 2024 (vertical) */}
+        <path d="M175 340 L175 365" />
+        {/* Scope 3 Category 1 -> Citation */}
+        <path d="M290 244 C340 244 380 242 410 240" />
+        {/* Scope 3 Category 1 -> Reviewed */}
+        <path d="M290 258 C330 280 360 308 382 335" />
+      </svg>
+
+      <div className="moon-company-node-card purchased">
+        <small>Entity</small>
+        <strong>Purchased goods<br />and services</strong>
+      </div>
+      <div className="moon-company-node-card category">
+        <strong>Scope 3 Category 1</strong>
+      </div>
+      <div className="moon-company-node-card document">
+        <small>Document</small>
+        <strong>Sustainability<br />Report 2024</strong>
+      </div>
+      <div className="moon-company-relation is-part">
+        <small>Relationship</small>
+        <strong>is part of</strong>
+      </div>
+      <div className="moon-company-relation reported">
+        <small>Relationship</small>
+        <strong>reported in</strong>
+      </div>
+      <div className="moon-company-node-card scope">
+        <small>Entity</small>
+        <strong>Scope 3<br />Emissions</strong>
+      </div>
+      <div className="moon-company-node-card citation">
+        <small>Citation</small>
+        <strong>p.42 L3-L18</strong>
+        <span>↗</span>
+      </div>
+      <div className="moon-company-node-card review">
+        <small>Review</small>
+        <strong>Reviewed</strong>
+        <span>By Analyst - May 14, 2025</span>
+      </div>
+    </div>
+  </div>
+);
+
+const About: React.FC = () => (
+  <div className="moon-page overflow-x-hidden">
+    <section className="moon-section border-b moon-hairline">
+      <div className="relative z-10 mx-auto flex min-h-[calc(100svh-81px)] max-w-page-2xl flex-col justify-start px-4 py-10 sm:px-6 lg:px-8 xl:px-12 2xl:px-16">
+        <div className="mx-auto max-w-5xl text-center">
+          <h1 className="font-display text-[42px] font-semibold leading-[1.02] text-white sm:text-[56px] xl:text-[66px]">
+            Evidence systems for ESG and risk teams.
+          </h1>
+          <p className="mx-auto mt-5 max-w-3xl text-[17px] leading-7 moon-copy">
+            We turn long-form disclosures into verifiable answers, inspectable relationships, and reviewable knowledge graphs.
+          </p>
+        </div>
+
+        <div className="moon-company-system-frame mt-6">
+          <CompanyEvidenceSystem />
+        </div>
+      </div>
+    </section>
+
+    <section className="mx-auto max-w-page-2xl px-4 pt-2 sm:px-6 lg:px-8 xl:px-12 2xl:px-16">
+      <div className="moon-company-divider" />
+      <div className="moon-company-principles">
+        {principles.map((principle, index) => (
+          <article key={principle.title} className="moon-company-principle">
+            <div className="moon-company-principle-num">{String(index + 1).padStart(2, '0')}</div>
+            <div>
+              <h2>{principle.title}</h2>
+              <p>{principle.description}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+
+    <section className="mx-auto max-w-page-2xl px-4 pb-14 pt-10 sm:px-6 lg:px-8 xl:px-12 2xl:px-16">
+      <div className="moon-company-contact">
+        <div className="moon-company-contact-item">
+          <div className="moon-company-contact-icon">
+            <Mail className="h-4 w-4" />
+          </div>
+          <div className="moon-company-contact-body">
+            <small>Get in touch</small>
+            <a href="mailto:contact@causalgraph.ai">
+              contact@causalgraph.ai
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </a>
+          </div>
+        </div>
+        <div className="moon-company-contact-item">
+          <div className="moon-company-contact-icon">
+            <Globe className="h-4 w-4" />
+          </div>
+          <div className="moon-company-contact-body">
+            <small>Built in Australia</small>
+            <p>Product and engineering team based in Australia, serving teams around the world.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+);
 
 export default About;
