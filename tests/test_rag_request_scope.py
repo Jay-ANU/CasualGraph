@@ -187,6 +187,90 @@ def test_general_answer_context_preserves_document_scope_for_entity_mentions(mon
     assert context["filters"]["document_scope_source"] == "entity_resolver"
 
 
+def test_requested_multi_document_scope_narrows_to_resolved_entity_document(monkeypatch):
+    aa_entry = _legacy_aa_entry()
+    apple_entry = _apple_entry()
+    global_entry = _global_entry("mcdm_report")
+    entries = [aa_entry, apple_entry, global_entry]
+    aa_doc_id = aa_entry["document_id"]
+
+    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
+    monkeypatch.setattr(
+        app,
+        "_build_request_routing_hint",
+        lambda question, entries: {
+            "mode": "evidence",
+            "entities": ["american flight"],
+            "target_document_ids": [],
+            "sub_questions": [question],
+            "needs_agent": False,
+            "confidence": 0.62,
+            "reason": "test",
+        },
+    )
+    monkeypatch.setattr(
+        app,
+        "_scope_document_ids_for_query",
+        lambda question, entries: ([aa_doc_id], ["american flight"]),
+    )
+
+    context = app._resolve_rag_request_context(
+        app.RagAskRequest(
+            question="Hi, What should I notice about American Flight?",
+            document_ids=[aa_doc_id, apple_entry["document_id"], global_entry["document_id"]],
+        ),
+        _user(),
+    )
+
+    assert context["error_response"] is None
+    assert context["filters"]["document_ids"] == [aa_doc_id]
+    assert context["filters"]["document_scope_source"] == "entity_resolver"
+    assert context["filters"]["routing_hint"]["target_document_ids"] == [aa_doc_id]
+
+
+def test_general_requested_multi_document_scope_narrows_to_resolved_entity_document(monkeypatch):
+    aa_entry = _legacy_aa_entry()
+    apple_entry = _apple_entry()
+    global_entry = _global_entry("mcdm_report")
+    entries = [aa_entry, apple_entry, global_entry]
+    aa_doc_id = aa_entry["document_id"]
+
+    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
+    monkeypatch.setattr(
+        app,
+        "_build_request_routing_hint",
+        lambda question, entries: {
+            "mode": "general",
+            "entities": ["american flight"],
+            "target_document_ids": [],
+            "sub_questions": [question],
+            "needs_agent": False,
+            "confidence": 0.62,
+            "reason": "test",
+        },
+    )
+    monkeypatch.setattr(
+        app,
+        "_scope_document_ids_for_query",
+        lambda question, entries: ([aa_doc_id], ["american flight"]),
+    )
+
+    context = app._resolve_general_rag_request_context(
+        app.RagAskRequest(
+            question="Hi, What should I notice about American Flight?",
+            document_ids=[aa_doc_id, apple_entry["document_id"], global_entry["document_id"]],
+        ),
+        _user(),
+        [],
+        "disabled",
+    )
+
+    assert context["error_response"] is None
+    assert context["filters"]["document_ids"] == [aa_doc_id]
+    assert context["filters"]["document_scope_source"] == "entity_resolver"
+    assert context["filters"]["routing_hint"]["target_document_ids"] == [aa_doc_id]
+
+
 def test_document_scope_uses_generic_llm_resolver_when_lexical_match_is_missing(monkeypatch):
     entry = {
         "document_id": "doc_123",

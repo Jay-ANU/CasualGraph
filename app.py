@@ -2240,6 +2240,37 @@ def _scope_document_ids_for_query(question: str, entries: List[Dict[str, Any]]) 
     return [], query_terms
 
 
+def _maybe_narrow_requested_document_scope(
+    *,
+    scope_question: str,
+    entries: List[Dict[str, Any]],
+    allowed_ids: set[str],
+    effective_document_ids: List[str],
+    preferred_document_id: Optional[str],
+) -> Tuple[List[str], Optional[str], List[str], bool]:
+    """Narrow a broad selected-document set when the query resolves to specific entities."""
+    requested_ids = {str(item).strip() for item in effective_document_ids if str(item).strip()}
+    if preferred_document_id:
+        requested_ids.add(preferred_document_id)
+    if not requested_ids:
+        return effective_document_ids, preferred_document_id, [], False
+
+    scoped_ids, scoped_terms = _scope_document_ids_for_query(scope_question, entries)
+    scoped_allowed_ids = sorted(set(scoped_ids) & allowed_ids)
+    if not scoped_allowed_ids:
+        return effective_document_ids, preferred_document_id, scoped_terms, False
+
+    scoped_set = set(scoped_allowed_ids)
+    should_replace = requested_ids.isdisjoint(scoped_set) or (
+        len(requested_ids) > 1 and scoped_set < requested_ids
+    )
+    if not should_replace:
+        return effective_document_ids, preferred_document_id, scoped_terms, False
+
+    next_preferred = preferred_document_id if preferred_document_id in scoped_set else None
+    return scoped_allowed_ids, next_preferred, scoped_terms, True
+
+
 def _terms_for_entity_phrase(phrase: str) -> List[str]:
     tokens = _filtered_entity_tokens(phrase)
     if not tokens:
@@ -2569,14 +2600,19 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
         routing_document_ids = sorted(set(routing_hint.get("target_document_ids") or []) & allowed_ids)
         broad_retrievable_scope = False
         if effective_document_ids or preferred_document_id:
-            scoped_ids, scoped_terms = _scope_document_ids_for_query(scope_question, retrievable_entries)
-            scoped_allowed_ids = sorted(set(scoped_ids) & allowed_ids)
-            requested_ids = set(effective_document_ids)
-            if preferred_document_id:
-                requested_ids.add(preferred_document_id)
-            if scoped_allowed_ids and requested_ids and requested_ids.isdisjoint(scoped_allowed_ids):
-                effective_document_ids = scoped_allowed_ids
-                preferred_document_id = None
+            (
+                effective_document_ids,
+                preferred_document_id,
+                scoped_terms,
+                scope_was_narrowed,
+            ) = _maybe_narrow_requested_document_scope(
+                scope_question=scope_question,
+                entries=retrievable_entries,
+                allowed_ids=allowed_ids,
+                effective_document_ids=effective_document_ids,
+                preferred_document_id=preferred_document_id,
+            )
+            if scope_was_narrowed:
                 entity_scope_terms = scoped_terms
                 document_scope_source = "entity_resolver"
         if preferred_document_id:
@@ -2614,18 +2650,37 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
         if not effective_document_ids:
             if not entity_scope_miss and not broad_retrievable_scope:
                 return _no_accessible_documents_response()
-    elif current_user and _is_admin_user(current_user) and not effective_document_ids and not preferred_document_id:
+    elif current_user and _is_admin_user(current_user):
         retrievable_entries = _retrievable_registry_entries(current_user)
+        allowed_ids = {str(entry.get("document_id") or "").strip() for entry in retrievable_entries if str(entry.get("document_id") or "").strip()}
         routing_hint = _build_request_routing_hint(scope_question, retrievable_entries)
-        scoped_ids = list(routing_hint.get("target_document_ids") or [])
-        entity_scope_terms = list(routing_hint.get("entities") or [])
-        if not scoped_ids:
-            scoped_ids, entity_scope_terms = _scope_document_ids_for_query(scope_question, retrievable_entries)
-        if scoped_ids:
-            effective_document_ids = scoped_ids
-            document_scope_source = "entity_resolver"
-        elif entity_scope_terms:
-            entity_scope_miss = True
+        if effective_document_ids or preferred_document_id:
+            effective_document_ids = [doc_id for doc_id in effective_document_ids if doc_id in allowed_ids]
+            (
+                effective_document_ids,
+                preferred_document_id,
+                scoped_terms,
+                scope_was_narrowed,
+            ) = _maybe_narrow_requested_document_scope(
+                scope_question=scope_question,
+                entries=retrievable_entries,
+                allowed_ids=allowed_ids,
+                effective_document_ids=effective_document_ids,
+                preferred_document_id=preferred_document_id,
+            )
+            if scope_was_narrowed:
+                entity_scope_terms = scoped_terms
+                document_scope_source = "entity_resolver"
+        else:
+            scoped_ids = list(routing_hint.get("target_document_ids") or [])
+            entity_scope_terms = list(routing_hint.get("entities") or [])
+            if not scoped_ids:
+                scoped_ids, entity_scope_terms = _scope_document_ids_for_query(scope_question, retrievable_entries)
+            if scoped_ids:
+                effective_document_ids = scoped_ids
+                document_scope_source = "entity_resolver"
+            elif entity_scope_terms:
+                entity_scope_miss = True
     elif not current_user:
         public_entries = [entry for entry in _collect_document_entries() if _can_retrieve_entry(None, entry)]
         public_ids = {str(entry.get("document_id") or "").strip() for entry in public_entries if str(entry.get("document_id") or "").strip()}
@@ -2662,6 +2717,7 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
     }
     if current_user and not _is_admin_user(current_user) and not effective_document_ids:
         filters["owner_user_id"] = str(current_user.get("id") or "")
+    filters["preferred_document_id"] = preferred_document_id
     if document_scope_source:
         filters["document_scope_source"] = document_scope_source
     scoped_routing_hint = _routing_hint_with_document_ids(routing_hint, effective_document_ids)
@@ -2727,6 +2783,20 @@ def _resolve_general_rag_request_context(
         routing_document_ids = sorted(set(routing_hint.get("target_document_ids") or []) & allowed_ids)
         if effective_document_ids:
             effective_document_ids = [doc_id for doc_id in effective_document_ids if doc_id in allowed_ids]
+            (
+                effective_document_ids,
+                preferred_document_id,
+                _scoped_terms,
+                scope_was_narrowed,
+            ) = _maybe_narrow_requested_document_scope(
+                scope_question=scope_question,
+                entries=retrievable_entries,
+                allowed_ids=allowed_ids,
+                effective_document_ids=effective_document_ids,
+                preferred_document_id=preferred_document_id,
+            )
+            if scope_was_narrowed:
+                document_scope_source = "entity_resolver"
         else:
             scoped_ids = routing_document_ids
             if not scoped_ids:
@@ -2739,10 +2809,30 @@ def _resolve_general_rag_request_context(
         else:
             filters["owner_user_id"] = str(current_user.get("id") or "")
     elif current_user and _is_admin_user(current_user):
+        retrievable_entries = _retrievable_registry_entries(current_user)
+        allowed_ids = {
+            str(entry.get("document_id") or "").strip()
+            for entry in retrievable_entries
+            if str(entry.get("document_id") or "").strip()
+        }
         if effective_document_ids:
+            effective_document_ids = [doc_id for doc_id in effective_document_ids if doc_id in allowed_ids]
+            (
+                effective_document_ids,
+                preferred_document_id,
+                _scoped_terms,
+                scope_was_narrowed,
+            ) = _maybe_narrow_requested_document_scope(
+                scope_question=scope_question,
+                entries=retrievable_entries,
+                allowed_ids=allowed_ids,
+                effective_document_ids=effective_document_ids,
+                preferred_document_id=preferred_document_id,
+            )
+            if scope_was_narrowed:
+                document_scope_source = "entity_resolver"
             filters["document_ids"] = effective_document_ids
         else:
-            retrievable_entries = _retrievable_registry_entries(current_user)
             routing_hint = _build_request_routing_hint(scope_question, retrievable_entries)
             scoped_ids = list(routing_hint.get("target_document_ids") or [])
             if not scoped_ids:
@@ -2769,6 +2859,7 @@ def _resolve_general_rag_request_context(
                 filters["document_ids"] = sorted(set(scoped_ids) & public_ids)
                 if filters["document_ids"]:
                     document_scope_source = "entity_resolver"
+    filters["preferred_document_id"] = preferred_document_id
     if document_scope_source:
         filters["document_scope_source"] = document_scope_source
     scoped_routing_hint = _routing_hint_with_document_ids(routing_hint, list(filters.get("document_ids") or []))
