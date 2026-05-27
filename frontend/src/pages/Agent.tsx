@@ -30,6 +30,12 @@ import {
   formatAgentStageLabel,
   formatAgentTraceSummary,
 } from './agent/agentTraceUi';
+import {
+  SKILL_FILE_ACCEPT,
+  SKILL_FILE_ALLOWED_LABEL,
+  formatSkillFileSize,
+  validateSkillFile,
+} from './agent/skillFiles';
 
 interface CausalRelationship {
   cause: string;
@@ -93,6 +99,45 @@ interface UploadSubmission {
   source?: string;
   openDocumentsOnComplete?: boolean;
 }
+
+interface SkillUploadDraft {
+  name: string;
+  size: number;
+  status: 'accepted' | 'rejected';
+  reason: string;
+}
+
+const BUILT_IN_AGENT_SKILLS = [
+  {
+    name: 'Evidence Planner',
+    owner: 'CausalGraph',
+    status: 'Installed',
+    summary: 'Builds a report-specific evidence plan before retrieval so broad ESG questions are decomposed into verifiable targets.',
+    trigger: 'Multi-report comparisons, category coverage, missing evidence checks',
+  },
+  {
+    name: 'Dynamic Replanner',
+    owner: 'CausalGraph',
+    status: 'Installed',
+    summary: 'Adds targeted follow-up searches when the current evidence set is thin, mismatched, or missing a requested entity.',
+    trigger: 'Incomplete retrieval, low evidence coverage, ambiguous entities',
+  },
+  {
+    name: 'Reflexion Verifier',
+    owner: 'CausalGraph',
+    status: 'Installed',
+    summary: 'Checks whether the answer is supported by the collected chunks and marks partial answers when coverage is insufficient.',
+    trigger: 'Final answer preparation and uncertainty reporting',
+  },
+  {
+    name: 'Graph Context Reader',
+    owner: 'CausalGraph',
+    status: 'Available',
+    summary: 'Reads extracted entity relationships from the report graph and keeps graph context separate from cited report chunks.',
+    trigger: 'Causal links, governance relationships, supply-chain dependencies',
+  },
+];
+
 const GRAPH_DOMAIN_LABELS: Record<string, string> = {
   environmental: 'Environmental',
   social: 'Social',
@@ -1069,6 +1114,13 @@ const Agent: React.FC = () => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [uploadStatusResult, setUploadStatusResult] = useState<'success' | 'duplicate' | 'error' | null>(null);
   const [activeTab, setActiveTab] = useState('chat');
+  const [isSearchPaletteOpen, setIsSearchPaletteOpen] = useState(false);
+  const [taskSearchTerm, setTaskSearchTerm] = useState('');
+  const taskSearchInputRef = useRef<HTMLInputElement>(null);
+  const [skillSearchTerm, setSkillSearchTerm] = useState('');
+  const [skillUploadDraft, setSkillUploadDraft] = useState<SkillUploadDraft | null>(null);
+  const [isDraggingSkillFile, setIsDraggingSkillFile] = useState(false);
+  const skillFileInputRef = useRef<HTMLInputElement>(null);
   const [neo4jStatus, setNeo4jStatus] = useState<Neo4jStatus | null>(null);
   const [neo4jGraph, setNeo4jGraph] = useState<GraphData | null>(null);
   const [neo4jGraphState, setNeo4jGraphState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -1137,6 +1189,29 @@ const Agent: React.FC = () => {
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [activeTab]);
+  useEffect(() => {
+    if (!isSearchPaletteOpen) return;
+    const frameId = window.requestAnimationFrame(() => {
+      taskSearchInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isSearchPaletteOpen]);
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if ((e.metaKey || e.ctrlKey) && key === 'k') {
+        e.preventDefault();
+        setIsSearchPaletteOpen(true);
+        return;
+      }
+      if (e.key === 'Escape' && isSearchPaletteOpen) {
+        e.preventDefault();
+        setIsSearchPaletteOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isSearchPaletteOpen]);
 
   const persistSelectedDocumentId = useCallback((documentId?: string) => {
     try {
@@ -2441,6 +2516,18 @@ ${isDuplicate
     setActiveTab('upload');
   };
 
+  const handleSkillFileUpload = (file: File) => {
+    const validation = validateSkillFile(file);
+    setSkillUploadDraft({
+      name: file.name,
+      size: file.size,
+      status: validation.valid ? 'accepted' : 'rejected',
+      reason: validation.valid
+        ? 'Skill file accepted. It is staged for validation and does not enter the report corpus.'
+        : validation.reason,
+    });
+  };
+
   const totalDocuments = documents.length;
   const agentStarterCards: Array<{ title: string; prompt: string; tier: RagReasoningMode }> = [
     {
@@ -2490,10 +2577,27 @@ ${isDuplicate
       ? 'Still processing — larger corpora can take longer. The request is active.'
       : 'Still working… retrieval and grounding can take a few more seconds.';
   const filteredSelectedRelationships = getFilteredRelationships(selectedDocument?.relationships || []);
-  const navItems = [
+  const sortedTaskSessions = [...chatSessions].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  const normalizedTaskSearch = taskSearchTerm.trim().toLowerCase();
+  const filteredTaskSessions = sortedTaskSessions.filter((session) => {
+    if (!normalizedTaskSearch) return true;
+    return (
+      session.title.toLowerCase().includes(normalizedTaskSearch) ||
+      formatRelativeTime(session.updatedAt).toLowerCase().includes(normalizedTaskSearch)
+    );
+  });
+  const normalizedSkillSearch = skillSearchTerm.trim().toLowerCase();
+  const filteredSkillCards = BUILT_IN_AGENT_SKILLS.filter((skill) => {
+    if (!normalizedSkillSearch) return true;
+    return [skill.name, skill.owner, skill.summary, skill.trigger]
+      .some((value) => value.toLowerCase().includes(normalizedSkillSearch));
+  });
+  const navItems: Array<{ id: string; label: string; icon: React.ComponentType<{ className?: string }>; action?: () => void }> = [
     { id: 'chat', label: 'Chat', icon: MessageSquare },
+    { id: 'search', label: 'Search', icon: Search, action: () => setIsSearchPaletteOpen(true) },
     { id: 'upload', label: 'Upload', icon: FileUp },
     { id: 'documents', label: 'Library', icon: FolderOpen },
+    { id: 'skills', label: 'Skills', icon: Zap },
   ];
   // MiniMax-style pill tabs for the mobile section switcher.
   const mobileTabButtonClass = (tab: string) =>
@@ -2694,6 +2798,88 @@ ${isDuplicate
           }
         }}
       />
+      {isSearchPaletteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-ink/15 px-4 pt-[12vh] backdrop-blur-sm"
+          onMouseDown={() => setIsSearchPaletteOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="w-full max-w-xl overflow-hidden rounded-2xl border border-hairline bg-white shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b border-hairline px-4 py-3">
+              <Search className="h-4 w-4 text-ink-stone" />
+              <input
+                ref={taskSearchInputRef}
+                value={taskSearchTerm}
+                onChange={(event) => setTaskSearchTerm(event.target.value)}
+                placeholder="Search tasks"
+                className="min-w-0 flex-1 border-0 bg-transparent text-sm text-ink outline-none placeholder:text-ink-stone"
+              />
+              <button
+                type="button"
+                onClick={() => setIsSearchPaletteOpen(false)}
+                className="rounded-lg p-1.5 text-ink-stone transition hover:bg-surface-soft hover:text-ink"
+                aria-label="Close search"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="max-h-[420px] overflow-y-auto p-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSearchPaletteOpen(false);
+                  setTaskSearchTerm('');
+                  handleNewSession();
+                }}
+                className="mb-2 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-ink transition hover:bg-surface-soft"
+              >
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white">
+                  <Plus className="h-3.5 w-3.5" />
+                </span>
+                New task
+              </button>
+              {isChatSessionsLoading && chatSessions.length === 0 ? (
+                <div className="px-3 py-8 text-center text-sm text-ink-stone">Loading tasks...</div>
+              ) : filteredTaskSessions.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-hairline bg-surface-soft px-4 py-8 text-center text-sm text-ink-stone">
+                  No matching tasks.
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {filteredTaskSessions.map((session) => (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => {
+                        setIsSearchPaletteOpen(false);
+                        setTaskSearchTerm('');
+                        handleSelectSession(session.id);
+                      }}
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-surface-soft"
+                    >
+                      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-hairline bg-white text-ink-charcoal">
+                        <MessageSquare className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-ink-charcoal">
+                          {session.title || 'New task'}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-ink-stone">
+                          {formatRelativeTime(session.updatedAt)}
+                          {session.messageCount ? ` · ${session.messageCount} messages` : ''}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex h-full w-full overflow-hidden border-t border-hairline bg-transparent">
         <aside className="hidden h-full w-[184px] shrink-0 border-r border-hairline bg-white lg:flex lg:flex-col">
           <div className="space-y-1 px-2 py-3">
@@ -2705,9 +2891,9 @@ ${isDuplicate
               New Task
             </button>
             <button
-              onClick={() => setActiveTab('chat')}
+              onClick={() => setIsSearchPaletteOpen(true)}
               className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition ${
-                activeTab === 'chat' ? 'bg-surface-soft font-semibold text-ink' : 'text-ink-charcoal hover:bg-surface-soft'
+                isSearchPaletteOpen ? 'bg-surface-soft font-semibold text-ink' : 'text-ink-charcoal hover:bg-surface-soft'
               }`}
             >
               <Search className="h-4 w-4" />
@@ -2732,7 +2918,7 @@ ${isDuplicate
             {[
               { label: 'Research Agent', meta: 'Beta', icon: BrainCircuit, action: () => setActiveTab('chat') },
               { label: 'Graph Reasoner', meta: '', icon: Network, action: () => setActiveTab('documents') },
-              { label: 'Skills', meta: 'New', icon: Zap, action: handleUploadEntry },
+              { label: 'Skills', meta: 'New', icon: Zap, action: () => setActiveTab('skills') },
             ].map((item) => {
               const Icon = item.icon;
               return (
@@ -2775,9 +2961,7 @@ ${isDuplicate
             {chatSessions.length === 0 ? (
               <div className="px-2 py-4 text-[12px] text-ink-stone">No tasks yet</div>
             ) : (
-              [...chatSessions]
-                .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
-                .map((session) => {
+              sortedTaskSessions.map((session) => {
                   const isActive = session.id === currentSessionId;
                   return (
                     <div key={session.id} className="group/session relative">
@@ -2829,7 +3013,7 @@ ${isDuplicate
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => item.action ? item.action() : setActiveTab(item.id)}
                   className={`${mobileTabButtonClass(item.id)} relative`}
                 >
                   {item.id === 'upload' && isUploading && (
@@ -3357,6 +3541,158 @@ ${isDuplicate
           )}
           </div>
         )}
+
+          {activeTab === 'skills' && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mx-auto w-full max-w-[1320px] space-y-5"
+            >
+              <header className="cg-tool-panel px-6 py-5 sm:px-7">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <h2 className="font-display text-[28px] font-semibold leading-[1.16] tracking-normal text-ink">
+                      Skills
+                    </h2>
+                    <p className="mt-2 max-w-2xl text-sm leading-6 text-ink-steel">
+                      Agent capabilities are managed separately from report assets.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => skillFileInputRef.current?.click()}
+                    className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink-charcoal"
+                  >
+                    <FileUp className="h-4 w-4" />
+                    Upload skill
+                  </button>
+                </div>
+              </header>
+
+              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr),420px]">
+                <section className="cg-tool-panel p-5 sm:p-6">
+                  <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-ink">Skill library</h3>
+                      <p className="mt-1 text-sm text-ink-steel">Installed skills guide the report agent workflow.</p>
+                    </div>
+                    <div className="relative w-full lg:w-72">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-stone" />
+                      <input
+                        value={skillSearchTerm}
+                        onChange={(event) => setSkillSearchTerm(event.target.value)}
+                        className="w-full rounded-full border border-hairline bg-white py-2 pl-9 pr-3 text-sm text-ink outline-none transition focus:border-ink-steel focus:ring-1 focus:ring-ink/10"
+                        placeholder="Search skills"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {filteredSkillCards.map((skill) => (
+                      <article key={skill.name} className="rounded-xl border border-hairline bg-white p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h4 className="truncate text-sm font-semibold text-ink">{skill.name}</h4>
+                            <p className="mt-0.5 text-xs text-ink-stone">{skill.owner}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                            skill.status === 'Installed'
+                              ? 'bg-success-bg text-success'
+                              : 'bg-surface-soft text-ink-steel'
+                          }`}>
+                            {skill.status}
+                          </span>
+                        </div>
+                        <p className="mt-3 line-clamp-3 text-sm leading-6 text-ink-steel">{skill.summary}</p>
+                        <div className="mt-4 rounded-lg bg-surface-soft px-3 py-2 text-xs leading-5 text-ink-charcoal">
+                          {skill.trigger}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+
+                <aside className="cg-tool-panel p-5 sm:p-6">
+                  <div className="mb-5">
+                    <h3 className="text-base font-semibold text-ink">Skill file intake</h3>
+                    <p className="mt-1 text-sm leading-6 text-ink-steel">
+                      Reports, PDFs, Word files, and plain notes are rejected here.
+                    </p>
+                  </div>
+
+                  <input
+                    ref={skillFileInputRef}
+                    type="file"
+                    accept={SKILL_FILE_ACCEPT}
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = '';
+                      if (file) handleSkillFileUpload(file);
+                    }}
+                  />
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => skillFileInputRef.current?.click()}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        skillFileInputRef.current?.click();
+                      }
+                    }}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setIsDraggingSkillFile(true);
+                    }}
+                    onDragLeave={() => setIsDraggingSkillFile(false)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setIsDraggingSkillFile(false);
+                      const file = event.dataTransfer.files?.[0];
+                      if (file) handleSkillFileUpload(file);
+                    }}
+                    className={`flex min-h-[210px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-5 py-8 text-center transition ${
+                      isDraggingSkillFile
+                        ? 'border-ink bg-white shadow-sm'
+                        : 'border-hairline bg-surface-soft hover:border-ink-stone hover:bg-white'
+                    }`}
+                  >
+                    <div className="flex h-11 w-11 items-center justify-center rounded-full border border-hairline bg-white">
+                      <Zap className={`h-5 w-5 ${isDraggingSkillFile ? 'text-ink' : 'text-ink-stone'}`} />
+                    </div>
+                    <p className="mt-4 text-[15px] font-semibold text-ink">
+                      {isDraggingSkillFile ? 'Release skill file' : 'Drop skill file or browse'}
+                    </p>
+                    <p className="mt-2 max-w-sm text-xs leading-5 text-ink-steel">
+                      {SKILL_FILE_ALLOWED_LABEL}
+                    </p>
+                  </div>
+
+                  {skillUploadDraft && (
+                    <div className={`mt-4 rounded-xl border px-4 py-3 ${
+                      skillUploadDraft.status === 'accepted'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        : 'border-amber-200 bg-amber-50 text-amber-800'
+                    }`}>
+                      <div className="flex items-start gap-3">
+                        <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/80">
+                          {skillUploadDraft.status === 'accepted'
+                            ? <CheckCircle2 className="h-4 w-4" />
+                            : <AlertCircle className="h-4 w-4" />}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold">{skillUploadDraft.name}</div>
+                          <div className="mt-0.5 text-xs opacity-80">{formatSkillFileSize(skillUploadDraft.size)}</div>
+                          <p className="mt-2 text-sm leading-5">{skillUploadDraft.reason}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </aside>
+              </div>
+            </motion.div>
+          )}
 
           {activeTab === 'upload' && (
             <motion.div
