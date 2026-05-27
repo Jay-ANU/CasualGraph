@@ -272,15 +272,22 @@ class AgentRunner:
         targets = _routing_targets(getattr(self.registry, "filters", None), question=question)
         if targets:
             search_calls = [_search_call_for_target(search_args, target) for target in targets]
+            graph_targets = [target for target in targets if str(target.get("document_id") or "").strip()]
+            if graph_targets:
+                graph_slots = max(1, int(self.budget.max_steps) - len(search_calls) - 1)
+                graph_calls = [_graph_call_for_target(graph_args, target) for target in graph_targets[:graph_slots]]
+            else:
+                graph_calls = [AgentToolCall(tool="get_graph_context", arguments=graph_args)]
         else:
             search_queries = _routing_sub_questions(getattr(self.registry, "filters", None)) or [question]
             search_calls = [
                 AgentToolCall(tool="search_documents", arguments={**search_args, "query": search_query})
                 for search_query in search_queries
             ]
+            graph_calls = [AgentToolCall(tool="get_graph_context", arguments=graph_args)]
         return [
             *search_calls,
-            AgentToolCall(tool="get_graph_context", arguments=graph_args),
+            *graph_calls,
             AgentToolCall(tool="summarize_evidence", arguments={}),
         ]
 
@@ -853,6 +860,25 @@ def _search_call_for_target(search_args: Dict[str, Any], target: Dict[str, Any])
         arguments["document_ids"] = [document_id]
         arguments["preferred_document_id"] = document_id
     return AgentToolCall(tool="search_documents", arguments=arguments)
+
+
+def _graph_call_for_target(graph_args: Dict[str, Any], target: Dict[str, Any]) -> AgentToolCall:
+    entity = str(target.get("entity") or "").strip()
+    document_id = str(target.get("document_id") or "").strip()
+    target_query = str(target.get("query") or "").strip()
+    if entity and target_query:
+        question = f"Find graph relationships specifically for {entity}. {target_query}"
+    elif entity:
+        question = f"Find graph relationships specifically for {entity}."
+    else:
+        question = target_query or str(graph_args.get("question") or "").strip()
+    arguments = {**graph_args, "question": question}
+    if entity:
+        arguments["expected_entity"] = entity
+    if document_id:
+        arguments["document_ids"] = [document_id]
+        arguments["preferred_document_id"] = document_id
+    return AgentToolCall(tool="get_graph_context", arguments=arguments)
 
 
 def _query_for_entity(*, entity: str, sub_questions: List[str], question: str) -> str:

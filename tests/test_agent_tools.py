@@ -1,3 +1,4 @@
+from graph.neo4j_store import _question_terms
 from rag.agent_tools import AgentToolRegistry
 
 
@@ -53,6 +54,46 @@ def test_get_graph_context_handles_disabled_graph(monkeypatch):
     observation = registry.call("get_graph_context", {"question": "Apple governance risk", "limit": 10})
     assert observation.ok is False
     assert observation.error == "neo4j_not_configured"
+
+
+def test_get_graph_context_honors_target_document_scope(monkeypatch):
+    captured = {}
+
+    def fake_graph_context(question, filters=None, hops=None, limit=None, max_triples=None):
+        captured["question"] = question
+        captured["filters"] = filters
+        return {
+            "text": "Apple --reports--> Scope 3",
+            "matched_entities": [{"id": "apple", "name": "Apple"}],
+            "nodes": [],
+            "edges": [{"source": "apple", "target": "scope 3", "relation_type": "reports"}],
+        }
+
+    monkeypatch.setattr("rag.agent_tools.build_graph_context", fake_graph_context)
+    registry = AgentToolRegistry(filters={"document_ids": ["aa_doc", "apple_doc"]}, history_block="")
+
+    observation = registry.call(
+        "get_graph_context",
+        {
+            "question": "Find graph evidence for Apple Scope 3.",
+            "document_ids": ["apple_doc"],
+            "preferred_document_id": "apple_doc",
+        },
+    )
+
+    assert observation.ok is True
+    assert captured["filters"]["document_ids"] == ["apple_doc"]
+    assert captured["filters"]["preferred_document_id"] == "apple_doc"
+
+
+def test_graph_question_terms_keep_scope_and_category_phrases_without_filler_words():
+    terms = _question_terms("Which of the 15 Scope 3 categories are reported for Coca-Cola Category 1?")
+
+    assert "scope 3" in terms
+    assert "category 1" in terms
+    assert "coca-cola" in terms
+    assert "the" not in terms
+    assert "are" not in terms
 
 
 def test_unknown_tool_fails_without_exception():

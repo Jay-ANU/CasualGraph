@@ -164,9 +164,10 @@ class AgentToolRegistry:
         if max_triples is not None:
             max_triples = _bounded_int(max_triples, default=limit, lower=1, upper=30)
 
+        active_filters = self._filters_for_search(args)
         context = build_graph_context(
             question=question,
-            filters=self.filters,
+            filters=active_filters,
             hops=args.get("hops"),
             limit=limit,
             max_triples=max_triples,

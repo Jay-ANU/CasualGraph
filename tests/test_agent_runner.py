@@ -178,6 +178,34 @@ def test_runner_scopes_entity_sub_questions_to_target_documents():
     assert search_args[1]["document_ids"] == ["apple_doc"]
 
 
+def test_runner_scopes_graph_queries_to_target_documents():
+    registry = FakeRegistry(
+        filters={
+            "routing_hint": {
+                "needs_agent": True,
+                "entities": ["American Airlines", "Apple"],
+                "target_document_ids": ["aa_doc", "apple_doc"],
+                "sub_questions": [
+                    "Find carbon emission evidence for American Airlines.",
+                    "Find carbon emission evidence for Apple.",
+                ],
+            }
+        }
+    )
+    runner = AgentRunner(registry=registry, budget=AgentBudget(max_steps=5, deadline_seconds=90))
+
+    runner.run(
+        question="Across between American Airlines and Apple, what is the main difference in carbon emission?",
+        reasoning_mode="flash",
+        history_block="",
+        answer_intent="hybrid",
+    )
+
+    graph_args = [arguments for tool, arguments in registry.calls if tool == "get_graph_context"]
+    assert [args.get("expected_entity") for args in graph_args] == ["American Airlines", "Apple"]
+    assert [args.get("document_ids") for args in graph_args] == [["aa_doc"], ["apple_doc"]]
+
+
 def test_runner_replans_missing_entity_before_synthesis():
     class ReplanningRegistry:
         def __init__(self):

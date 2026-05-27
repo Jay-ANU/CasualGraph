@@ -177,7 +177,7 @@ class Neo4jGraphStore:
                 session.run(
                     """
                     CREATE FULLTEXT INDEX entity_name_fulltext IF NOT EXISTS
-                    FOR (e:Entity) ON EACH [e.name, e.normalized_name]
+                    FOR (e:Entity) ON EACH [e.name, e.normalized_name, e.description]
                     """
                 )
             except ClientError:
@@ -186,7 +186,7 @@ class Neo4jGraphStore:
                     CALL db.index.fulltext.createNodeIndex(
                       "entity_name_fulltext",
                       ["Entity"],
-                      ["name", "normalized_name"]
+                      ["name", "normalized_name", "description"]
                     )
                     """
                 )
@@ -418,6 +418,10 @@ class Neo4jGraphStore:
         document_conditions = _document_filter_conditions(graph_filters, "d")
         document_match = "MATCH (d:Document)-[:HAS_ENTITY]->(e)" if document_conditions else ""
         document_where = f" AND {' AND '.join(document_conditions)}" if document_conditions else ""
+        edge_document_match = "MATCH (d:Document {id: r.document_id})" if document_conditions else ""
+        edge_document_where = f" AND {' AND '.join(document_conditions)}" if document_conditions else ""
+        chunk_document_match = "MATCH (d:Document)-[:HAS_CHUNK]->(c)" if document_conditions else ""
+        chunk_document_where = f" AND {' AND '.join(document_conditions)}" if document_conditions else ""
         search_string = _build_fulltext_query(candidates)
         params = {"terms": candidates, "search_string": search_string, "limit": limit, **graph_filters}
 
@@ -443,11 +447,54 @@ class Neo4jGraphStore:
                     UNWIND $terms AS term
                     MATCH (e:Entity)
                     __DOCUMENT_MATCH__
-                    WHERE (toLower(e.name) CONTAINS toLower(term) OR toLower(e.normalized_name) CONTAINS toLower(term))
+                    WHERE (
+                      toLower(e.name) CONTAINS toLower(term)
+                      OR toLower(e.normalized_name) CONTAINS toLower(term)
+                      OR toLower(coalesce(e.description, '')) CONTAINS toLower(term)
+                    )
                     __DOCUMENT_WHERE__
                     RETURN DISTINCT e.id AS id, e.name AS name, e.type AS type, 0.0 AS score
                     LIMIT $limit
                     """.replace("__DOCUMENT_MATCH__", document_match).replace("__DOCUMENT_WHERE__", document_where),
+                    **params,
+                ).data()
+
+        def content_operation():
+            with self._session() as session:
+                return session.run(
+                    """
+                    UNWIND $terms AS term
+                    MATCH (source:Entity)-[r:RELATIONSHIP]->(target:Entity)
+                    __EDGE_DOCUMENT_MATCH__
+                    WHERE (
+                      toLower(coalesce(r.evidence, '')) CONTAINS toLower(term)
+                      OR toLower(coalesce(r.context, '')) CONTAINS toLower(term)
+                      OR toLower(coalesce(r.relation_type, '')) CONTAINS toLower(term)
+                    ) __EDGE_DOCUMENT_WHERE__
+                    WITH source, target, collect(DISTINCT term) AS matched_terms
+                    WITH [source, target] AS entities, size(matched_terms) AS score
+                    UNWIND entities AS e
+                    RETURN DISTINCT e.id AS id, e.name AS name, e.type AS type, score
+
+                    UNION
+
+                    UNWIND $terms AS term
+                    MATCH (e:Entity)-[m:MENTIONED_IN]->(c:Chunk)
+                    __CHUNK_DOCUMENT_MATCH__
+                    WHERE (
+                      toLower(coalesce(c.text, '')) CONTAINS toLower(term)
+                      OR toLower(coalesce(c.section, '')) CONTAINS toLower(term)
+                      OR toLower(coalesce(c.category, '')) CONTAINS toLower(term)
+                    ) __CHUNK_DOCUMENT_WHERE__
+                    WITH e, collect(DISTINCT term) AS matched_terms
+                    RETURN DISTINCT e.id AS id, e.name AS name, e.type AS type, size(matched_terms) AS score
+                    ORDER BY score DESC
+                    LIMIT $limit
+                    """
+                    .replace("__EDGE_DOCUMENT_MATCH__", edge_document_match)
+                    .replace("__EDGE_DOCUMENT_WHERE__", edge_document_where)
+                    .replace("__CHUNK_DOCUMENT_MATCH__", chunk_document_match)
+                    .replace("__CHUNK_DOCUMENT_WHERE__", chunk_document_where),
                     **params,
                 ).data()
 
@@ -458,6 +505,11 @@ class Neo4jGraphStore:
                 raise
             print("[rag.graph] fulltext index missing, falling back to CONTAINS (slow)")
             matches = self._run_with_reconnect(contains_operation)
+        try:
+            content_matches = self._run_with_reconnect(content_operation)
+            matches = _merge_entity_match_rows(matches, content_matches, limit=limit)
+        except Exception as exc:
+            print(f"[rag.graph] content seed lookup skipped: {type(exc).__name__}: {exc}")
 
         matched_entities = [row["id"] for row in matches]
         if not matched_entities:
@@ -1025,9 +1077,31 @@ class Neo4jGraphStore:
         return entity_lookup.get(normalized, normalized)
 
 
+_QUESTION_PHRASE_PATTERNS = (
+    re.compile(r"\bscope\s+[123]\b", re.I),
+    re.compile(r"\bcategory\s+\d+[a-z]?\b", re.I),
+    re.compile(r"\b[A-Z][A-Za-z0-9&.-]+(?:\s+[A-Z][A-Za-z0-9&.-]+){1,4}\b"),
+)
+
+
 def _question_terms(question: str) -> List[str]:
-    raw_terms = re.findall(r"[A-Za-z][A-Za-z0-9_.-]{2,}", question or "")
+    text = str(question or "")
+    raw_terms: List[str] = []
+    for pattern in _QUESTION_PHRASE_PATTERNS:
+        raw_terms.extend(match.group(0) for match in pattern.finditer(text))
+    raw_terms.extend(re.findall(r"[A-Za-z][A-Za-z0-9_.-]{2,}", text))
     stopwords = {
+        "and",
+        "are",
+        "but",
+        "for",
+        "has",
+        "have",
+        "into",
+        "not",
+        "the",
+        "this",
+        "that",
         "what",
         "which",
         "when",
@@ -1037,6 +1111,11 @@ def _question_terms(question: str) -> List[str]:
         "whose",
         "why",
         "how",
+        "is",
+        "to",
+        "or",
+        "in",
+        "of",
         "does",
         "did",
         "with",
@@ -1051,12 +1130,48 @@ def _question_terms(question: str) -> List[str]:
     }
     ordered = []
     for term in raw_terms:
-        lowered = term.lower()
+        lowered = re.sub(r"\s+", " ", str(term or "").strip(" \t\r\n,.;:!?()[]{}\"'’")).lower()
+        parts = lowered.split()
+        while parts and parts[0] in stopwords:
+            parts.pop(0)
+        while parts and parts[-1] in stopwords:
+            parts.pop()
+        lowered = " ".join(parts)
+        if not lowered:
+            continue
         if lowered in stopwords:
             continue
         if lowered not in ordered:
             ordered.append(lowered)
     return ordered[:12]
+
+
+def _merge_entity_match_rows(*groups: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    order: Dict[str, int] = {}
+    next_order = 0
+    for rows in groups:
+        for row in rows or []:
+            entity_id = str(row.get("id") or "").strip()
+            if not entity_id:
+                continue
+            score = _safe_float(row.get("score"), 0.0)
+            if entity_id not in merged:
+                merged[entity_id] = dict(row)
+                merged[entity_id]["score"] = score
+                order[entity_id] = next_order
+                next_order += 1
+                continue
+            existing = merged[entity_id]
+            existing["score"] = max(_safe_float(existing.get("score"), 0.0), score)
+            for key in ("name", "type"):
+                if not existing.get(key) and row.get(key):
+                    existing[key] = row.get(key)
+
+    return sorted(
+        merged.values(),
+        key=lambda row: (-_safe_float(row.get("score"), 0.0), order.get(str(row.get("id") or ""), 0)),
+    )[: max(1, int(limit or 1))]
 
 
 def _build_fulltext_query(terms: List[str]) -> str:
