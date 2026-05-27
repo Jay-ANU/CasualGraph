@@ -800,7 +800,7 @@ def _routing_hint_needs_agent(retrieval_filters: Optional[Dict]) -> bool:
 
 def _decision_from_routing_hint(reasoning_mode: str) -> HybridRouteDecision:
     tier = _resolve_tier(reasoning_mode)
-    budget = AgentBudget(max_steps=8, deadline_seconds=90) if tier == "deep" else AgentBudget(max_steps=5, deadline_seconds=30)
+    budget = AgentBudget(max_steps=5, deadline_seconds=90) if tier == "deep" else AgentBudget(max_steps=2, deadline_seconds=30)
     return HybridRouteDecision(
         path="agent",
         reason="routing_hint_needs_agent",

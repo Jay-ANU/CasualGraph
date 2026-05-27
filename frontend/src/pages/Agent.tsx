@@ -31,6 +31,7 @@ import {
   formatAgentPartialLabel,
   formatAgentStageLabel,
   formatAgentTraceSummary,
+  mergeAgentTraceSteps,
 } from './agent/agentTraceUi';
 import {
   SKILL_FILE_ACCEPT,
@@ -2123,7 +2124,7 @@ ${isDuplicate
               setActiveAgentPath(event.payload.agent_path);
             }
             if (traceSteps.length > 0) {
-              setAgentTrace(prev => [...prev, ...traceSteps]);
+              setAgentTrace(prev => mergeAgentTraceSteps(prev, traceSteps));
             }
             const nextData: Partial<NonNullable<ChatMessage['data']>> = {
               mode: event.payload.mode || latestMessageData?.mode || 'ask',
@@ -2133,7 +2134,7 @@ ${isDuplicate
               nextData.agentPath = event.payload.agent_path;
             }
             if (traceSteps.length > 0) {
-              nextData.agentTrace = [...(latestMessageData?.agentTrace || []), ...traceSteps];
+              nextData.agentTrace = mergeAgentTraceSteps(latestMessageData?.agentTrace || [], traceSteps);
             }
             if (Array.isArray(event.payload.sources)) {
               nextData.sources = event.payload.sources;

@@ -22,8 +22,14 @@ StepStatus = Literal["planned", "running", "completed", "failed", "skipped"]
 
 @dataclass(frozen=True)
 class AgentBudget:
+    # Historical API name. In AgentRunner this now means full plan/reflexion
+    # rounds, not individual tool actions.
     max_steps: int
     deadline_seconds: int
+
+    @property
+    def max_rounds(self) -> int:
+        return self.max_steps
 
 
 @dataclass(frozen=True)

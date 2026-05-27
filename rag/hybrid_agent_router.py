@@ -21,8 +21,8 @@ from rag import deepseek_resilience
 
 _FAST_BUDGET = AgentBudget(max_steps=0, deadline_seconds=4)
 _RAG_BUDGET = AgentBudget(max_steps=0, deadline_seconds=12)
-_FLASH_AGENT_BUDGET = AgentBudget(max_steps=3, deadline_seconds=20)
-_DEEP_AGENT_BUDGET = AgentBudget(max_steps=8, deadline_seconds=90)
+_FLASH_AGENT_BUDGET = AgentBudget(max_steps=2, deadline_seconds=20)
+_DEEP_AGENT_BUDGET = AgentBudget(max_steps=5, deadline_seconds=90)
 _VALID_PATHS = {"fast", "rag", "agent"}
 
 _QUICK_CHITCHAT_PATTERN = re.compile(

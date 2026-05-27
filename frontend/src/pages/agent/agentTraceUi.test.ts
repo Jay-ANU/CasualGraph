@@ -2,6 +2,7 @@ import {
   formatAgentPartialLabel,
   formatAgentStageLabel,
   formatAgentTraceSummary,
+  mergeAgentTraceSteps,
   shouldShowLiveAgentTracePanel,
 } from './agentTraceUi';
 
@@ -57,6 +58,8 @@ describe('agent trace UI labels', () => {
 
   it('uses evidence-quality wording for partial answers', () => {
     expect(formatAgentPartialLabel('missing_entity_evidence')).toBe('Limited evidence coverage');
+    expect(formatAgentPartialLabel('max_rounds_reached')).toBe('Evidence search hit the round limit');
+    expect(formatAgentPartialLabel('max_steps_reached')).toBe('Evidence search hit the round limit');
     expect(formatAgentPartialLabel('deadline_reached')).toBe('Answer still useful, evidence search timed out');
     expect(formatAgentPartialLabel('stream_interrupted')).toBe('Answer stream interrupted');
   });
@@ -84,5 +87,36 @@ describe('agent trace UI labels', () => {
       showPipelineStatus: false,
       hasAnswerStarted: false,
     })).toBe(false);
+  });
+
+  it('merges streamed trace updates for the same action event', () => {
+    const runningAction = {
+      step: 3,
+      stage: 'searching_reports',
+      tool: 'search_documents',
+      status: 'running',
+      summary: 'Action: search_documents for Apple.',
+      phase: 'action',
+      plan_step: 1,
+    };
+    const completedAction = {
+      ...runningAction,
+      status: 'completed',
+    };
+    const observation = {
+      step: 4,
+      stage: 'searching_reports',
+      tool: 'search_documents',
+      status: 'completed',
+      summary: 'Found Apple evidence.',
+      phase: 'observation',
+      plan_step: 1,
+    };
+
+    const merged = mergeAgentTraceSteps([runningAction], [completedAction, observation]);
+
+    expect(merged).toHaveLength(2);
+    expect(merged[0].status).toBe('completed');
+    expect(merged[1].phase).toBe('observation');
   });
 });

@@ -42,7 +42,7 @@ def test_cross_company_comparison_uses_agent_path():
         answer_intent={"mode": "hybrid", "confidence": 0.86},
     )
     assert decision.path == "agent"
-    assert decision.budget.max_steps == 8
+    assert decision.budget.max_steps == 5
     assert decision.budget.deadline_seconds == 90
     assert decision.confidence >= 0.65
 
@@ -90,7 +90,7 @@ def test_fast_complex_question_gets_smaller_agent_budget():
         answer_intent={"mode": "hybrid", "confidence": 0.8},
     )
     assert decision.path == "agent"
-    assert decision.budget.max_steps == 3
+    assert decision.budget.max_steps == 2
     assert 15 <= decision.budget.deadline_seconds <= 25
 
 

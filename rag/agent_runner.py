@@ -95,140 +95,169 @@ class AgentRunner:
         layered_sources: Dict[str, List[Dict[str, Any]]] = {}
         evidence_summaries: List[str] = []
         executed_steps = 0
+        rounds_used = 0
+        max_rounds = max(0, int(self.budget.max_rounds))
         partial = False
         partial_reason: Optional[str] = None
         replanned_entities: set[str] = set()
+        reflexion: Dict[str, Any] = {"status": "not_started", "rounds_used": 0, "replanned_entities": []}
 
         while pending:
-            if executed_steps >= max(0, int(self.budget.max_steps)):
+            if rounds_used >= max_rounds:
                 partial = True
-                partial_reason = "max_steps_reached"
+                partial_reason = "max_rounds_reached"
                 break
             if self._deadline_reached(started):
                 partial = True
                 partial_reason = "deadline_reached"
                 break
 
-            call = pending.pop(0)
-            plan_step = executed_steps + 1
-            stage = _stage_for_tool(call.tool)
-            arguments = self._resolve_arguments(call, question=question, sources=sources, graph=graph_sources)
-            thought_step = AgentTraceStep(
-                step=len(trace) + 1,
-                stage="planning",
-                tool=call.tool,
-                status="completed",
-                summary=_react_thought_summary(call, arguments, plan_step=plan_step),
-                elapsed_ms=(time.monotonic() - started) * 1000,
-                phase="thought",
-                plan_step=plan_step,
-                meta=_react_meta(call, arguments),
-            )
-            _emit_trace_step(trace, thought_step, progress_callback)
+            rounds_used += 1
+            current_round = list(pending)
+            pending = []
 
-            action_step = AgentTraceStep(
-                step=len(trace) + 1,
-                stage=stage,
-                tool=call.tool,
-                status="running",
-                summary=_react_action_summary(call, arguments),
-                elapsed_ms=(time.monotonic() - started) * 1000,
-                phase="action",
-                plan_step=plan_step,
-                meta=_react_meta(call, arguments),
-            )
-            _emit_trace_step(trace, action_step, progress_callback)
+            for call in current_round:
+                if self._deadline_reached(started):
+                    partial = True
+                    partial_reason = "deadline_reached"
+                    break
 
-            tool_started = time.monotonic()
-            observation = self._call_tool(call.tool, arguments)
-            executed_steps += 1
-            tool_elapsed_ms = (time.monotonic() - tool_started) * 1000
-            action_step.status = "completed" if observation.ok else "failed"
-            action_step.elapsed_ms = tool_elapsed_ms
-            action_step.meta = {
-                **action_step.meta,
-                "ok": bool(observation.ok),
-                "error": observation.error,
-            }
+                executed_steps += 1
+                plan_step = executed_steps
+                stage = _stage_for_tool(call.tool)
+                arguments = self._resolve_arguments(call, question=question, sources=sources, graph=graph_sources)
+                trace_meta = {**_react_meta(call, arguments), "round": rounds_used}
+                thought_step = AgentTraceStep(
+                    step=len(trace) + 1,
+                    stage="planning",
+                    tool=call.tool,
+                    status="completed",
+                    summary=_react_thought_summary(call, arguments, plan_step=plan_step),
+                    elapsed_ms=(time.monotonic() - started) * 1000,
+                    phase="thought",
+                    plan_step=plan_step,
+                    meta=trace_meta,
+                )
+                _emit_trace_step(trace, thought_step, progress_callback)
 
-            _merge_sources(sources, observation.data.get("sources"))
-            _merge_graph(graph_sources, observation.data.get("graph"))
-            _merge_layered_sources(layered_sources, observation.data.get("layered_sources"))
-            summary = _observation_summary(observation)
-            if call.tool == "summarize_evidence":
-                evidence_summary = str(observation.data.get("summary") or summary).strip()
-                if evidence_summary:
-                    evidence_summaries.append(evidence_summary)
+                action_step = AgentTraceStep(
+                    step=len(trace) + 1,
+                    stage=stage,
+                    tool=call.tool,
+                    status="running",
+                    summary=_react_action_summary(call, arguments),
+                    elapsed_ms=(time.monotonic() - started) * 1000,
+                    phase="action",
+                    plan_step=plan_step,
+                    meta=trace_meta,
+                )
+                _emit_trace_step(trace, action_step, progress_callback)
 
-            observation_step = AgentTraceStep(
-                step=len(trace) + 1,
-                stage=stage,
-                tool=call.tool,
-                status="completed" if observation.ok else "failed",
-                summary=_react_observation_summary(observation, summary),
-                elapsed_ms=tool_elapsed_ms,
-                phase="observation",
-                plan_step=plan_step,
-                meta={
-                    **_react_meta(call, arguments),
+                tool_started = time.monotonic()
+                observation = self._call_tool(call.tool, arguments)
+                tool_elapsed_ms = (time.monotonic() - tool_started) * 1000
+                action_step.status = "completed" if observation.ok else "failed"
+                action_step.elapsed_ms = tool_elapsed_ms
+                action_step.meta = {
+                    **action_step.meta,
                     "ok": bool(observation.ok),
                     "error": observation.error,
-                },
-            )
-            _emit_trace_step(trace, observation_step, progress_callback)
+                }
+                _emit_trace_step(trace, action_step, progress_callback)
 
-            if call.tool == "search_documents":
-                replan_calls = self._build_reflexion_replan(
-                    question=question,
-                    reasoning_mode=mode,
-                    sources=sources,
-                    graph_sources=graph_sources,
-                    pending=pending,
-                    replanned_entities=replanned_entities,
+                _merge_sources(sources, observation.data.get("sources"))
+                _merge_graph(graph_sources, observation.data.get("graph"))
+                _merge_layered_sources(layered_sources, observation.data.get("layered_sources"))
+                summary = _observation_summary(observation)
+                if call.tool == "summarize_evidence":
+                    evidence_summary = str(observation.data.get("summary") or summary).strip()
+                    if evidence_summary:
+                        evidence_summaries.append(evidence_summary)
+
+                observation_step = AgentTraceStep(
+                    step=len(trace) + 1,
+                    stage=stage,
+                    tool=call.tool,
+                    status="completed" if observation.ok else "failed",
+                    summary=_react_observation_summary(observation, summary),
+                    elapsed_ms=tool_elapsed_ms,
+                    phase="observation",
+                    plan_step=plan_step,
+                    meta={
+                        **trace_meta,
+                        "ok": bool(observation.ok),
+                        "error": observation.error,
+                    },
                 )
-                if replan_calls:
-                    for replan_call in replan_calls:
-                        entity_key = _entity_key(str(replan_call.arguments.get("expected_entity") or ""))
-                        if entity_key:
-                            replanned_entities.add(entity_key)
-                    replanning_step = AgentTraceStep(
-                        step=len(trace) + 1,
-                        stage="planning",
-                        tool=None,
-                        status="completed",
-                        summary=_replan_summary(replan_calls),
-                        elapsed_ms=(time.monotonic() - started) * 1000,
-                        phase="replan",
-                        plan=_serialize_plan(replan_calls),
-                        reflexion={"status": "replanned_missing_entity_evidence"},
-                    )
-                    _emit_trace_step(trace, replanning_step, progress_callback)
-                    pending = [*replan_calls, *pending]
+                _emit_trace_step(trace, observation_step, progress_callback)
 
-            if pending and self._deadline_reached(started):
+            if partial:
+                break
+
+            reflexion = self._build_reflexion_report(
+                sources=sources,
+                graph_sources=graph_sources,
+                replanned_entities=replanned_entities,
+                rounds_used=rounds_used,
+            )
+            reflexion_step = AgentTraceStep(
+                step=len(trace) + 1,
+                stage="completed" if _reflexion_satisfied(reflexion) else "partial",
+                tool=None,
+                status="completed",
+                summary=_reflexion_summary(reflexion),
+                elapsed_ms=(time.monotonic() - started) * 1000,
+                phase="reflexion",
+                reflexion=reflexion,
+                meta={"round": rounds_used},
+            )
+            _emit_trace_step(trace, reflexion_step, progress_callback)
+            if _reflexion_satisfied(reflexion):
+                break
+
+            if rounds_used >= max_rounds:
+                partial = True
+                partial_reason = "max_rounds_reached"
+                break
+            if self._deadline_reached(started):
                 partial = True
                 partial_reason = "deadline_reached"
                 break
 
-        reflexion = self._build_reflexion_report(
-            sources=sources,
-            graph_sources=graph_sources,
-            replanned_entities=replanned_entities,
-        )
+            replan_calls = self._build_reflexion_replan(
+                question=question,
+                reasoning_mode=mode,
+                sources=sources,
+                graph_sources=graph_sources,
+                pending=[],
+                replanned_entities=replanned_entities,
+            )
+            if not replan_calls:
+                partial = True
+                partial_reason = "missing_entity_evidence"
+                break
+            for replan_call in replan_calls:
+                entity_key = _entity_key(str(replan_call.arguments.get("expected_entity") or ""))
+                if entity_key:
+                    replanned_entities.add(entity_key)
+            pending = [*replan_calls, AgentToolCall(tool="summarize_evidence", arguments={})]
+            replanning_step = AgentTraceStep(
+                step=len(trace) + 1,
+                stage="planning",
+                tool=None,
+                status="completed",
+                summary=_replan_summary(pending),
+                elapsed_ms=(time.monotonic() - started) * 1000,
+                phase="replan",
+                plan=_serialize_plan(pending),
+                reflexion={**reflexion, "status": "replanned_missing_entity_evidence"},
+                meta={"next_round": rounds_used + 1},
+            )
+            _emit_trace_step(trace, replanning_step, progress_callback)
+
         if reflexion.get("missing_entities") and not partial:
             partial = True
             partial_reason = "missing_entity_evidence"
-        reflexion_step = AgentTraceStep(
-            step=len(trace) + 1,
-            stage="partial" if partial else "completed",
-            tool=None,
-            status="completed",
-            summary=_reflexion_summary(reflexion),
-            elapsed_ms=(time.monotonic() - started) * 1000,
-            phase="reflexion",
-            reflexion=reflexion,
-        )
-        _emit_trace_step(trace, reflexion_step, progress_callback)
 
         answer, backend = _synthesize_answer(
             question=question,
@@ -275,8 +304,7 @@ class AgentRunner:
             search_calls = [_search_call_for_target(search_args, target) for target in targets]
             graph_targets = [target for target in targets if str(target.get("document_id") or "").strip()]
             if graph_targets:
-                graph_slots = max(1, int(self.budget.max_steps) - len(search_calls) - 1)
-                graph_calls = [_graph_call_for_target(graph_args, target) for target in graph_targets[:graph_slots]]
+                graph_calls = [_graph_call_for_target(graph_args, target) for target in graph_targets]
             else:
                 graph_calls = [AgentToolCall(tool="get_graph_context", arguments=graph_args)]
         else:
@@ -317,7 +345,7 @@ class AgentRunner:
         output: List[AgentToolCall] = []
         for target in _missing_targets(targets, sources=sources, graph_sources=graph_sources):
             entity_key = _entity_key(target.get("entity") or "")
-            if not entity_key or entity_key in pending_entities or entity_key in replanned_entities:
+            if not entity_key or entity_key in pending_entities:
                 continue
             replan_target = dict(target)
             replan_target["query"] = _replan_query(question=question, entity=str(target.get("entity") or ""))
@@ -332,10 +360,11 @@ class AgentRunner:
         sources: List[Dict[str, Any]],
         graph_sources: Dict[str, Any],
         replanned_entities: set[str],
+        rounds_used: int,
     ) -> Dict[str, Any]:
         targets = _routing_targets(getattr(self.registry, "filters", None), question="")
         if not targets:
-            return {"status": "not_required", "replanned_entities": []}
+            return {"status": "not_required", "replanned_entities": [], "rounds_used": rounds_used}
         missing = _missing_targets(targets, sources=sources, graph_sources=graph_sources)
         missing_entities = [str(item.get("entity") or "").strip().lower() for item in missing if str(item.get("entity") or "").strip()]
         covered_entities = [
@@ -348,6 +377,7 @@ class AgentRunner:
             "covered_entities": covered_entities,
             "missing_entities": missing_entities,
             "replanned_entities": sorted(replanned_entities),
+            "rounds_used": rounds_used,
         }
 
     def _resolve_arguments(
@@ -439,11 +469,11 @@ def stream_agent_run(
         },
     }
 
-    trace_events: "queue.Queue[AgentTraceStep]" = queue.Queue()
+    trace_events: "queue.Queue[Dict[str, Any]]" = queue.Queue()
     result_box: Dict[str, Any] = {}
 
     def _progress(step: AgentTraceStep) -> None:
-        trace_events.put(step)
+        trace_events.put(step.to_dict())
 
     def _target() -> None:
         try:
@@ -461,7 +491,7 @@ def stream_agent_run(
     thread.start()
     while thread.is_alive() or not trace_events.empty():
         try:
-            step = trace_events.get(timeout=0.05)
+            step_payload = trace_events.get(timeout=0.05)
         except queue.Empty:
             continue
         yield {
@@ -472,7 +502,7 @@ def stream_agent_run(
                 "path": "agent",
                 "agent_path": "agent",
                 "stream_stage": "agent_trace",
-                "agent_trace": [step.to_dict()],
+                "agent_trace": [step_payload],
             },
         }
     thread.join()
@@ -722,8 +752,8 @@ def _build_default_registry(retrieval_filters: Optional[Dict[str, Any]], history
 
 def _default_budget(reasoning_mode: str) -> AgentBudget:
     if _normalize_reasoning_mode(reasoning_mode) == "deep":
-        return AgentBudget(max_steps=8, deadline_seconds=90)
-    return AgentBudget(max_steps=3, deadline_seconds=20)
+        return AgentBudget(max_steps=5, deadline_seconds=90)
+    return AgentBudget(max_steps=2, deadline_seconds=20)
 
 
 def _serialize_plan(calls: List[AgentToolCall]) -> List[Dict[str, Any]]:
@@ -746,8 +776,13 @@ def _serialize_plan(calls: List[AgentToolCall]) -> List[Dict[str, Any]]:
 def _plan_summary(calls: List[AgentToolCall]) -> str:
     count = len(calls or [])
     if count == 1:
-        return "Planned 1 evidence step before execution."
-    return f"Planned {count} evidence steps before execution."
+        return "Planned 1 evidence action for the next round."
+    return f"Planned {count} evidence actions for the next round."
+
+
+def _reflexion_satisfied(reflexion: Dict[str, Any]) -> bool:
+    status = str((reflexion or {}).get("status") or "").strip()
+    return status in {"complete", "not_required"} and not (reflexion or {}).get("missing_entities")
 
 
 def _react_meta(call: AgentToolCall, arguments: Dict[str, Any]) -> Dict[str, Any]:

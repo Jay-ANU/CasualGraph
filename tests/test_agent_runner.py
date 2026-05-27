@@ -1,4 +1,4 @@
-from rag.agent_runner import AgentRunner
+from rag.agent_runner import AgentRunner, stream_agent_run
 from rag.agent_types import AgentBudget, AgentToolObservation
 
 
@@ -60,13 +60,13 @@ class FakeRegistry:
         return AgentToolObservation(tool=tool_name, ok=True, summary="ok", data={})
 
 
-def test_runner_respects_max_steps():
+def test_runner_respects_max_rounds():
     registry = FakeRegistry()
     runner = AgentRunner(registry=registry, budget=AgentBudget(max_steps=1, deadline_seconds=90))
     result = runner.run(question="Compare governance risks", reasoning_mode="deep", history_block="")
-    assert len(registry.calls) == 1
-    assert result.partial is True
-    assert result.partial_reason == "max_steps_reached"
+    assert [tool for tool, _ in registry.calls] == ["search_documents", "get_graph_context", "summarize_evidence"]
+    assert result.partial is False
+    assert result.reflexion["rounds_used"] == 1
 
 
 def test_runner_collects_sources_and_trace():
@@ -76,6 +76,30 @@ def test_runner_collects_sources_and_trace():
     assert result.sources[0]["chunk_id"] == "chunk_1"
     assert any(step.tool == "search_documents" and step.status == "completed" for step in result.trace)
     assert result.answer
+
+
+def test_stream_agent_run_updates_running_action_before_answer_token():
+    registry = FakeRegistry()
+    runner = AgentRunner(registry=registry, budget=AgentBudget(max_steps=1, deadline_seconds=90))
+
+    events = list(stream_agent_run(
+        runner=runner,
+        question="Compare governance risks",
+        reasoning_mode="flash",
+        history_block="",
+    ))
+    first_token_index = next(index for index, event in enumerate(events) if event["type"] == "token")
+    trace_events = [
+        event["payload"]["agent_trace"][0]
+        for event in events[:first_token_index]
+        if event["type"] == "meta" and event["payload"].get("stream_stage") == "agent_trace"
+    ]
+    action_events = [
+        event for event in trace_events
+        if event.get("phase") == "action" and event.get("tool") == "search_documents"
+    ]
+
+    assert [event["status"] for event in action_events] == ["running", "completed"]
 
 
 def test_runner_trace_exposes_plan_execute_react_and_reflexion_phases():
@@ -292,6 +316,159 @@ def test_runner_replans_missing_entity_before_synthesis():
     assert replan_events[0]["plan"][0]["expected_entity"] == "Apple"
     assert [source["document_id"] for source in result.sources] == ["aa_doc", "apple_doc"]
     assert result.partial is False
+
+
+def test_runner_replans_after_round_reflexion_until_coverage_is_satisfied():
+    class RoundReplanningRegistry:
+        def __init__(self):
+            self.calls = []
+            self.apple_attempts = 0
+            self.filters = {
+                "routing_hint": {
+                    "needs_agent": True,
+                    "entities": ["American Airlines", "Apple"],
+                    "sub_questions": [
+                        "Find carbon emission evidence for American Airlines.",
+                        "Find carbon emission evidence for Apple.",
+                    ],
+                }
+            }
+
+        def call(self, tool_name, arguments):
+            self.calls.append((tool_name, arguments))
+            if tool_name == "search_documents":
+                if arguments.get("expected_entity") == "Apple":
+                    self.apple_attempts += 1
+                    if self.apple_attempts == 1:
+                        return AgentToolObservation(
+                            tool=tool_name,
+                            ok=True,
+                            summary="No Apple evidence in first round.",
+                            data={"sources": []},
+                        )
+                    return AgentToolObservation(
+                        tool=tool_name,
+                        ok=True,
+                        summary="Found Apple evidence in second round.",
+                        data={
+                            "sources": [
+                                {
+                                    "chunk_id": "apple_chunk",
+                                    "document_id": "apple_doc",
+                                    "document_title": "Apple ESG",
+                                    "text": "Apple reports operational emissions reductions.",
+                                }
+                            ]
+                        },
+                    )
+                return AgentToolObservation(
+                    tool=tool_name,
+                    ok=True,
+                    summary="Found AA evidence.",
+                    data={
+                        "sources": [
+                            {
+                                "chunk_id": "aa_chunk",
+                                "document_id": "aa_doc",
+                                "document_title": "American Airlines sustainability",
+                                "text": "American Airlines reports aviation fuel emissions.",
+                            }
+                        ]
+                    },
+                )
+            if tool_name == "get_graph_context":
+                return AgentToolObservation(
+                    tool=tool_name,
+                    ok=False,
+                    summary="Graph returned 0 edges.",
+                    data={"graph": {"text": "", "edges": [], "nodes": [], "matched_entities": []}},
+                    error="no_entity_match",
+                )
+            return AgentToolObservation(tool=tool_name, ok=True, summary="ok", data={})
+
+    registry = RoundReplanningRegistry()
+    runner = AgentRunner(registry=registry, budget=AgentBudget(max_steps=2, deadline_seconds=90))
+    result = runner.run(
+        question="Across between American Airlines and Apple, what is the main difference in carbon emission?",
+        reasoning_mode="flash",
+        history_block="",
+        answer_intent="hybrid",
+    )
+
+    apple_searches = [
+        arguments for tool, arguments in registry.calls
+        if tool == "search_documents" and arguments.get("expected_entity") == "Apple"
+    ]
+    assert len(apple_searches) == 2
+    assert apple_searches[-1]["replan_reason"] == "missing_entity_evidence"
+    assert result.partial is False
+    assert result.reflexion["rounds_used"] == 2
+    assert result.reflexion["status"] == "complete"
+
+
+def test_runner_stops_after_max_rounds_when_reflexion_still_finds_missing_evidence():
+    class MissingRegistry:
+        def __init__(self):
+            self.calls = []
+            self.filters = {
+                "routing_hint": {
+                    "needs_agent": True,
+                    "entities": ["American Airlines", "Apple"],
+                    "sub_questions": [
+                        "Find carbon emission evidence for American Airlines.",
+                        "Find carbon emission evidence for Apple.",
+                    ],
+                }
+            }
+
+        def call(self, tool_name, arguments):
+            self.calls.append((tool_name, arguments))
+            if tool_name == "search_documents" and arguments.get("expected_entity") == "American Airlines":
+                return AgentToolObservation(
+                    tool=tool_name,
+                    ok=True,
+                    summary="Found AA evidence.",
+                    data={
+                        "sources": [
+                            {
+                                "chunk_id": "aa_chunk",
+                                "document_id": "aa_doc",
+                                "document_title": "American Airlines sustainability",
+                                "text": "American Airlines reports aviation fuel emissions.",
+                            }
+                        ]
+                    },
+                )
+            if tool_name == "search_documents":
+                return AgentToolObservation(tool=tool_name, ok=True, summary="No Apple evidence.", data={"sources": []})
+            if tool_name == "get_graph_context":
+                return AgentToolObservation(
+                    tool=tool_name,
+                    ok=False,
+                    summary="Graph returned 0 edges.",
+                    data={"graph": {"text": "", "edges": [], "nodes": [], "matched_entities": []}},
+                    error="no_entity_match",
+                )
+            return AgentToolObservation(tool=tool_name, ok=True, summary="ok", data={})
+
+    registry = MissingRegistry()
+    runner = AgentRunner(registry=registry, budget=AgentBudget(max_steps=2, deadline_seconds=90))
+    result = runner.run(
+        question="Across between American Airlines and Apple, what is the main difference in carbon emission?",
+        reasoning_mode="flash",
+        history_block="",
+        answer_intent="hybrid",
+    )
+
+    apple_searches = [
+        arguments for tool, arguments in registry.calls
+        if tool == "search_documents" and arguments.get("expected_entity") == "Apple"
+    ]
+    assert len(apple_searches) == 2
+    assert result.partial is True
+    assert result.partial_reason == "max_rounds_reached"
+    assert result.reflexion["rounds_used"] == 2
+    assert result.reflexion["missing_entities"] == ["apple"]
 
 
 def test_runner_hybrid_synthesis_replaces_bare_insufficient_answer(monkeypatch):

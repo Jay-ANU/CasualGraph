@@ -7,6 +7,13 @@ type AgentTraceUiStep = Partial<AgentTraceStep> & {
   summary?: string;
 };
 
+const traceEventKey = (step: Partial<AgentTraceStep>): string => [
+  String(step.step || ''),
+  String(step.phase || ''),
+  String(step.tool || ''),
+  String(step.plan_step || ''),
+].join('|');
+
 const TOOL_LABELS: Record<string, string> = {
   search_documents: 'Searching reports',
   read_chunks: 'Reading evidence excerpts',
@@ -41,7 +48,8 @@ const PHASE_LABELS: Record<string, string> = {
 
 const PARTIAL_LABELS: Record<string, string> = {
   missing_entity_evidence: 'Limited evidence coverage',
-  max_steps_reached: 'Evidence search hit the step limit',
+  max_rounds_reached: 'Evidence search hit the round limit',
+  max_steps_reached: 'Evidence search hit the round limit',
   deadline_reached: 'Answer still useful, evidence search timed out',
   stream_interrupted: 'Answer stream interrupted',
   agent_error: 'Evidence review recovered',
@@ -49,7 +57,8 @@ const PARTIAL_LABELS: Record<string, string> = {
 
 const PARTIAL_DESCRIPTIONS: Record<string, string> = {
   missing_entity_evidence: 'The answer is grounded, but the agent could not find comparable evidence for every requested entity.',
-  max_steps_reached: 'The agent used its available steps and returned the best grounded answer it could support.',
+  max_rounds_reached: 'The agent used its available evidence rounds and returned the best grounded answer it could support.',
+  max_steps_reached: 'The agent used its available evidence rounds and returned the best grounded answer it could support.',
   deadline_reached: 'The agent returned the best grounded answer before the longer evidence search completed.',
   stream_interrupted: 'The connection to the answer stream was interrupted. Retry the question to generate a complete response.',
   agent_error: 'The system recovered from an evidence review issue and returned the available grounded answer.',
@@ -192,6 +201,26 @@ export const formatAgentStepCountLabel = (steps: AgentTraceStep[]): string => {
     return 'No trace yet';
   }
   return `${completed}/${steps.length} checks`;
+};
+
+export const mergeAgentTraceSteps = (
+  existing: AgentTraceStep[],
+  incoming: AgentTraceStep[],
+): AgentTraceStep[] => {
+  if (incoming.length === 0) {
+    return existing;
+  }
+  const merged = [...existing];
+  incoming.forEach(step => {
+    const key = traceEventKey(step);
+    const index = merged.findIndex(candidate => traceEventKey(candidate) === key);
+    if (index >= 0) {
+      merged[index] = step;
+    } else {
+      merged.push(step);
+    }
+  });
+  return merged;
 };
 
 export const shouldShowLiveAgentTracePanel = ({
