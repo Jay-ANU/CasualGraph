@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from rag.agent_types import AgentToolObservation
@@ -60,13 +61,19 @@ class AgentToolRegistry:
         use_hyde = bool(args.get("use_hyde", False))
 
         if strategy == "layered":
+            active_filters = self._filters_for_search(args)
             layered = retrieve_layered_context(
                 query=query,
                 top_k=top_k,
-                filters=self.filters,
+                filters=active_filters,
                 primary_queries=_clean_string_list(args.get("primary_queries")),
                 use_hyde=use_hyde,
                 history_block=self.history_block,
+            )
+            layered = _filter_layered_sources_for_target(
+                layered,
+                expected_entity=str(args.get("expected_entity") or "").strip(),
+                expected_document_ids=_clean_string_list(args.get("document_ids")) or [],
             )
             layered = filter_layered_sources_by_relevance(query, layered) or {}
             sources = _flatten_layered_sources(layered)
@@ -79,23 +86,32 @@ class AgentToolRegistry:
             )
 
         if strategy == "hybrid":
+            active_filters = self._filters_for_search(args)
             sources = retrieve_hybrid(
                 query=query,
                 top_k=top_k,
-                filters=self.filters,
+                filters=active_filters,
                 use_hyde=use_hyde,
                 history_block=self.history_block,
             )
             resolved_strategy = "hybrid"
         else:
+            active_filters = self._filters_for_search(args)
             sources = retrieve_context(
                 query=query,
                 top_k=top_k,
-                filters=self.filters,
+                filters=active_filters,
                 use_hyde=use_hyde,
                 history_block=self.history_block,
             )
             resolved_strategy = "vector"
+        expected_entity = str(args.get("expected_entity") or "").strip()
+        expected_document_ids = _clean_string_list(args.get("document_ids")) or []
+        sources = _filter_sources_for_target(
+            sources,
+            expected_entity=expected_entity,
+            expected_document_ids=expected_document_ids,
+        )
         sources = filter_sources_by_relevance(query, sources)
 
         return AgentToolObservation(
@@ -105,6 +121,16 @@ class AgentToolRegistry:
             data={"sources": sources, "strategy": resolved_strategy, "top_k": top_k},
             error=None if sources else "no_sources",
         )
+
+    def _filters_for_search(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        filters = dict(self.filters)
+        document_ids = _clean_string_list(args.get("document_ids"))
+        if document_ids is not None:
+            filters["document_ids"] = document_ids
+        preferred_document_id = str(args.get("preferred_document_id") or "").strip()
+        if preferred_document_id:
+            filters["preferred_document_id"] = preferred_document_id
+        return filters
 
     def _read_chunks(self, args: Dict[str, Any]) -> AgentToolObservation:
         chunks = args.get("chunks")
@@ -219,6 +245,67 @@ def _flatten_layered_sources(layers: Dict[str, List[Dict[str, Any]]]) -> List[Di
             row["agent_layer"] = layer_name
             output.append(row)
     return output
+
+
+def _filter_layered_sources_for_target(
+    layers: Dict[str, List[Dict[str, Any]]],
+    *,
+    expected_entity: str,
+    expected_document_ids: List[str],
+) -> Dict[str, List[Dict[str, Any]]]:
+    return {
+        layer_name: _filter_sources_for_target(
+            list(rows or []),
+            expected_entity=expected_entity if layer_name == "primary" else "",
+            expected_document_ids=expected_document_ids if layer_name == "primary" else [],
+        )
+        for layer_name, rows in (layers or {}).items()
+    }
+
+
+def _filter_sources_for_target(
+    sources: List[Dict[str, Any]],
+    *,
+    expected_entity: str,
+    expected_document_ids: List[str],
+) -> List[Dict[str, Any]]:
+    expected_ids = {str(item).strip() for item in expected_document_ids or [] if str(item).strip()}
+    expected_entity = str(expected_entity or "").strip()
+    if not expected_ids and not expected_entity:
+        return list(sources or [])
+
+    output: List[Dict[str, Any]] = []
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        document_id = str(source.get("document_id") or "").strip()
+        if expected_ids and document_id in expected_ids:
+            output.append(source)
+            continue
+        if expected_entity and _source_mentions_entity(source, expected_entity):
+            output.append(source)
+    return output
+
+
+def _source_mentions_entity(source: Dict[str, Any], entity: str) -> bool:
+    tokens = _entity_tokens(entity)
+    if not tokens:
+        return False
+    blob = " ".join(
+        str(source.get(key) or "")
+        for key in ("document_id", "document_title", "title", "source", "text", "content")
+    ).lower()
+    if not blob:
+        return False
+    normalized_entity = " ".join(tokens)
+    if normalized_entity and normalized_entity in blob:
+        return True
+    blob_tokens = set(_entity_tokens(blob))
+    return bool(blob_tokens) and set(tokens).issubset(blob_tokens)
+
+
+def _entity_tokens(value: str) -> List[str]:
+    return [token.lower() for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]*", str(value or "")) if len(token) >= 2]
 
 
 def _truncate_words(text: str, limit: int) -> str:

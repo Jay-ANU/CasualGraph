@@ -848,20 +848,30 @@ def _missing_routing_entities(payload: Dict[str, Any], retrieval_filters: Option
 
 
 def _apply_agent_reflexion(payload: Dict[str, Any], retrieval_filters: Optional[Dict]) -> Dict[str, Any]:
-    missing = _missing_routing_entities(payload, retrieval_filters)
-    if not missing:
+    existing_reflexion = payload.get("reflexion") if isinstance(payload.get("reflexion"), dict) else {}
+    if existing_reflexion:
+        reflexion = dict(existing_reflexion)
+        missing = [str(item).strip().lower() for item in reflexion.get("missing_entities") or [] if str(item).strip()]
+    else:
+        missing = _missing_routing_entities(payload, retrieval_filters)
+        if not missing:
+            return payload
+        reflexion = {
+            "status": "partial_entity_coverage",
+            "missing_entities": missing,
+        }
+
+    if not reflexion:
         return payload
     routing = dict(payload.get("routing") or {})
-    routing["reflexion"] = {
-        "status": "partial_entity_coverage",
-        "missing_entities": missing,
-    }
+    routing["reflexion"] = reflexion
     payload["routing"] = routing
     answer_intent = dict(payload.get("answer_intent") or {})
     answer_intent["reflexion"] = routing["reflexion"]
     payload["answer_intent"] = answer_intent
-    payload["partial"] = True
-    payload["partial_reason"] = "missing_entity_evidence"
+    if missing:
+        payload["partial"] = True
+        payload["partial_reason"] = "missing_entity_evidence"
     return payload
 
 

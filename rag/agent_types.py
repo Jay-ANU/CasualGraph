@@ -48,16 +48,31 @@ class AgentTraceStep:
     status: StepStatus
     summary: str
     elapsed_ms: float = 0.0
+    phase: str = "observation"
+    plan_step: Optional[int] = None
+    plan: Optional[List[Dict[str, Any]]] = None
+    reflexion: Optional[Dict[str, Any]] = None
+    meta: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "step": self.step,
             "stage": self.stage,
             "tool": self.tool,
             "status": self.status,
             "summary": self.summary,
             "elapsed_ms": round(self.elapsed_ms, 2),
+            "phase": self.phase,
         }
+        if self.plan_step is not None:
+            payload["plan_step"] = self.plan_step
+        if self.plan is not None:
+            payload["plan"] = self.plan
+        if self.reflexion is not None:
+            payload["reflexion"] = self.reflexion
+        if self.meta:
+            payload["meta"] = self.meta
+        return payload
 
 
 @dataclass
@@ -78,3 +93,4 @@ class AgentRunResult:
     trace: List[AgentTraceStep]
     partial: bool = False
     partial_reason: Optional[str] = None
+    reflexion: Dict[str, Any] = field(default_factory=dict)

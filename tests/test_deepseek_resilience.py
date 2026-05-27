@@ -1,11 +1,13 @@
+import pytest
+
 import rag.deepseek_resilience as resilience
 
 
-def setup_function():
+@pytest.fixture(autouse=True)
+def isolated_resilience_state(monkeypatch):
+    monkeypatch.setattr(resilience, "_redis_available", lambda: False)
     resilience.reset_state()
-
-
-def teardown_function():
+    yield
     resilience.reset_state()
 
 

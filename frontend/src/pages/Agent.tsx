@@ -3,11 +3,11 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { motion } from 'framer-motion';
-import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainCircuit, Network, FolderOpen, FileUp, FileText, Plus, Paperclip, CheckCircle2, AlertCircle, Circle, ArrowUp, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainCircuit, Network, FolderOpen, FileUp, FileText, Plus, Paperclip, CheckCircle2, AlertCircle, Circle, ArrowUp, ThumbsUp, ThumbsDown, ClipboardList, GitBranch, Eye, ShieldCheck, BookOpen } from 'lucide-react';
 import { GraphVisualizer } from '../components';
 import { useAuth } from '../contexts/AuthContext';
 import type { GraphData, GraphEdge, GraphHighlightPath, GraphNode } from '../types/graph';
-import type { AgentTraceStep, FeedbackPayload, FeedbackRating, FeedbackReasonTag, RagReasoningMode, RagResponse } from '../types/api';
+import type { AgentTraceStep, FeedbackPayload, FeedbackRating, FeedbackReasonTag, RagReasoningMode, RagResponse, RagSource } from '../types/api';
 import {
   STORAGE_KEYS,
   buildChatMessage,
@@ -28,7 +28,6 @@ import {
   formatAgentPartialDescription,
   formatAgentPartialLabel,
   formatAgentStageLabel,
-  formatAgentStepCountLabel,
   formatAgentTraceSummary,
 } from './agent/agentTraceUi';
 
@@ -530,62 +529,152 @@ const normalizeAgentTraceSteps = (steps: unknown): AgentTraceStep[] => {
         status: String(raw.status || 'running'),
         summary: String(raw.summary || ''),
         elapsed_ms: typeof raw.elapsed_ms === 'number' ? raw.elapsed_ms : undefined,
+        phase: typeof raw.phase === 'string' ? raw.phase : undefined,
+        plan_step: typeof raw.plan_step === 'number' ? raw.plan_step : undefined,
+        plan: Array.isArray(raw.plan) ? raw.plan as Record<string, unknown>[] : undefined,
+        reflexion: raw.reflexion && typeof raw.reflexion === 'object' ? raw.reflexion as Record<string, unknown> : undefined,
         meta: raw.meta && typeof raw.meta === 'object' ? raw.meta as Record<string, unknown> : undefined,
       };
     });
 };
 
+const getTracePhaseCounts = (steps: AgentTraceStep[]) => {
+  const planSteps = new Set<number>();
+  const phases = new Set<string>();
+  steps.forEach(step => {
+    if (typeof step.plan_step === 'number') {
+      planSteps.add(step.plan_step);
+    }
+    if (step.phase) {
+      phases.add(String(step.phase));
+    }
+  });
+  return {
+    planSteps: planSteps.size,
+    phases: phases.size,
+    replans: steps.filter(step => step.phase === 'replan').length,
+    hasReflection: steps.some(step => step.phase === 'reflexion' || step.reflexion),
+  };
+};
+
+const getLatestReflexion = (steps: AgentTraceStep[]): Record<string, unknown> | undefined => {
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const reflexion = steps[index]?.reflexion;
+    if (reflexion && typeof reflexion === 'object') {
+      return reflexion as Record<string, unknown>;
+    }
+  }
+  return undefined;
+};
+
+const formatReflexionCoverage = (steps: AgentTraceStep[], partial?: boolean, partialReason?: string | null): string => {
+  if (partial) {
+    return formatAgentPartialLabel(partialReason);
+  }
+  const reflexion = getLatestReflexion(steps);
+  const status = String(reflexion?.status || '').trim();
+  if (status === 'complete') return 'Coverage checked';
+  if (status === 'not_required') return 'Evidence checked';
+  if (status === 'partial_entity_coverage') return 'Coverage limited';
+  return steps.length > 0 ? 'Review complete' : 'Answer ready';
+};
+
+const getTraceIconForPhase = (phase?: string | null) => {
+  switch (phase) {
+    case 'plan':
+      return ClipboardList;
+    case 'thought':
+      return BrainCircuit;
+    case 'action':
+      return GitBranch;
+    case 'observation':
+      return Eye;
+    case 'replan':
+      return GitBranch;
+    case 'reflexion':
+      return ShieldCheck;
+    case 'final':
+      return CheckCircle2;
+    default:
+      return Circle;
+  }
+};
+
+const formatSourceDocumentLabel = (source: RagSource): string => (
+  String(source.document_title || source.document_id || 'Report evidence')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .trim() || 'Report evidence'
+);
+
 const AgentRunBadges: React.FC<{
   steps: AgentTraceStep[];
   partial?: boolean;
   partialReason?: string | null;
-}> = ({ steps, partial, partialReason }) => (
-  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-medium">
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink px-2.5 py-1 text-white shadow-sm">
-      <BrainCircuit className="h-3.5 w-3.5" />
-      Evidence review
-    </span>
-    {steps.length > 0 && (
-      <span className="inline-flex items-center rounded-full border border-hairline bg-slate-50 px-2.5 py-1 text-ink-steel">
-        {formatAgentStepCountLabel(steps)}
+}> = ({ steps, partial, partialReason }) => {
+  const phaseCounts = getTracePhaseCounts(steps);
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink px-2.5 py-1 text-white shadow-sm">
+        <BrainCircuit className="h-3.5 w-3.5" />
+        Agent path
       </span>
-    )}
-    {partial && (
-      <span
-        className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800"
-        title={formatAgentPartialDescription(partialReason)}
-      >
-        <AlertCircle className="h-3.5 w-3.5" />
-        {formatAgentPartialLabel(partialReason)}
-      </span>
-    )}
-  </div>
-);
+      {steps.length > 0 && (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-white px-2.5 py-1 text-ink-steel">
+          <ClipboardList className="h-3 w-3" />
+          {phaseCounts.planSteps || steps.length} planned steps
+        </span>
+      )}
+      {phaseCounts.hasReflection && (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-white px-2.5 py-1 text-ink-steel">
+          <ShieldCheck className="h-3 w-3" />
+          {formatReflexionCoverage(steps, partial, partialReason)}
+        </span>
+      )}
+      {phaseCounts.replans > 0 && (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-blue-700">
+          <GitBranch className="h-3 w-3" />
+          {phaseCounts.replans} replan
+        </span>
+      )}
+      {partial && (
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800"
+          title={formatAgentPartialDescription(partialReason)}
+        >
+          <AlertCircle className="h-3.5 w-3.5" />
+          {formatAgentPartialLabel(partialReason)}
+        </span>
+      )}
+    </div>
+  );
+};
 
 const AgentTracePanel: React.FC<{ steps: AgentTraceStep[] }> = ({ steps }) => {
-  const visibleSteps = steps.slice(-5);
+  const visibleSteps = steps.slice(-8);
   const completedCount = steps.filter(step => String(step.status || '').toLowerCase() === 'completed').length;
   const progressPercent = steps.length > 0
     ? Math.max(12, Math.min(100, Math.round((completedCount / steps.length) * 100)))
     : 12;
   const runningStep = [...steps].reverse().find(step => String(step.status || '').toLowerCase() === 'running');
   const currentLabel = runningStep ? formatAgentStageLabel(runningStep) : 'Reviewing evidence';
+  const phaseCounts = getTracePhaseCounts(steps);
 
   return (
-    <div className="mt-3 max-w-xl overflow-hidden rounded-xl border border-hairline bg-white shadow-[0_14px_40px_rgba(15,23,42,0.08)]">
-      <div className="border-b border-hairline bg-slate-50 px-3.5 py-3">
+    <div className="mt-4 overflow-hidden rounded-2xl border border-hairline bg-white shadow-[0_18px_44px_rgba(15,23,42,0.08)]">
+      <div className="border-b border-hairline bg-gradient-to-r from-slate-50 via-white to-blue-50/60 px-4 py-3.5">
         <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-2.5">
-            <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-white">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-ink text-white shadow-sm">
               <BrainCircuit className="h-3.5 w-3.5" />
             </span>
             <div className="min-w-0">
-              <div className="text-[12px] font-semibold text-ink-charcoal">Evidence review</div>
+              <div className="text-[12px] font-semibold text-ink-charcoal">Plan / Act / Reflect</div>
               <div className="mt-0.5 text-[11px] leading-4 text-ink-steel">{currentLabel}</div>
             </div>
           </div>
           <span className="shrink-0 rounded-full border border-hairline bg-white px-2 py-0.5 text-[11px] font-medium text-ink-steel">
-            {formatAgentStepCountLabel(steps)}
+            {phaseCounts.planSteps || completedCount} steps
           </span>
         </div>
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
@@ -594,38 +683,46 @@ const AgentTracePanel: React.FC<{ steps: AgentTraceStep[] }> = ({ steps }) => {
             style={{ width: `${progressPercent}%` }}
           />
         </div>
+        <div className="mt-3 flex flex-wrap gap-1.5 text-[10px] font-semibold text-ink-steel">
+          {['plan', 'thought', 'action', 'observation', 'reflexion'].map(phase => (
+            <span key={phase} className="rounded-full border border-hairline bg-white px-2 py-0.5 capitalize">
+              {phase === 'reflexion' ? 'reflect' : phase}
+            </span>
+          ))}
+        </div>
       </div>
 
-      <div className="space-y-2 p-3">
+      <div className="relative p-3.5">
+        <div className="absolute bottom-4 left-[25px] top-4 w-px bg-hairline" aria-hidden="true" />
         {visibleSteps.map((step, traceIndex) => {
           const status = String(step.status || '').toLowerCase();
-          const TraceIcon = status === 'running'
-            ? Loader2
-            : status === 'completed'
-              ? CheckCircle2
-              : status === 'failed'
-                ? AlertCircle
-                : Circle;
+          const PhaseIcon = getTraceIconForPhase(step.phase);
+          const TraceIcon = status === 'running' ? Loader2 : status === 'failed' ? AlertCircle : PhaseIcon;
           const summary = formatAgentTraceSummary(step);
           return (
             <div
               key={`${step.step}-${step.tool || step.stage}-${traceIndex}`}
-              className="flex min-w-0 items-start gap-2.5 rounded-lg border border-transparent px-1.5 py-1"
+              className="relative flex min-w-0 items-start gap-3 rounded-xl px-1.5 py-2"
             >
-              <span className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
+              <span className={`z-10 mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${
                 status === 'running'
-                  ? 'bg-slate-900 text-white'
+                  ? 'border-ink bg-ink text-white'
                   : status === 'completed'
-                    ? 'bg-emerald-50 text-emerald-700'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                     : status === 'failed'
-                      ? 'bg-red-50 text-red-600'
-                      : 'bg-slate-100 text-ink-stone'
+                      ? 'border-red-200 bg-red-50 text-red-600'
+                      : 'border-hairline bg-white text-ink-stone'
               }`}>
                 <TraceIcon className={`h-3 w-3 ${status === 'running' ? 'animate-spin' : ''}`} />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="text-[12px] font-medium leading-5 text-ink-charcoal">
-                  {formatAgentStageLabel(step)}
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <div className="text-[12px] font-semibold leading-5 text-ink-charcoal">
+                    {formatAgentStageLabel(step)}
+                  </div>
+                  {typeof step.plan_step === 'number' && (
+                    <span className="font-mono text-[10px] text-ink-stone">#{step.plan_step}</span>
+                  )}
                 </div>
                 {summary && (
                   <div className="text-[11px] leading-4 text-ink-steel">
@@ -636,6 +733,46 @@ const AgentTracePanel: React.FC<{ steps: AgentTraceStep[] }> = ({ steps }) => {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+};
+
+const EvidenceRail: React.FC<{ sources: RagSource[] }> = ({ sources }) => {
+  if (!sources.length) return null;
+  const shownSources = sources.slice(0, 4);
+  return (
+    <div className="mt-4 border-t border-hairline pt-3.5">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[12px] font-semibold text-ink-charcoal">
+          <BookOpen className="h-3.5 w-3.5 text-ink-steel" />
+          Evidence
+        </div>
+        <div className="text-[11px] font-medium text-ink-stone">
+          {sources.length} cited {sources.length === 1 ? 'source' : 'sources'}
+        </div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {shownSources.map((source, sourceIdx) => (
+          <div
+            key={`${source.chunk_id || source.document_id || sourceIdx}-${sourceIdx}`}
+            className="min-w-0 rounded-xl border border-hairline bg-slate-50/70 px-3 py-2.5"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-hairline bg-white text-ink-steel">
+                <FileText className="h-3.5 w-3.5" />
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-[12px] font-semibold text-ink-charcoal">
+                  {formatSourceDocumentLabel(source)}
+                </div>
+                <div className="truncate font-mono text-[10px] text-ink-stone">
+                  {formatSourceChipLabel(source)}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2534,32 +2671,42 @@ ${isDuplicate
                             <Network className="h-4 w-4" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="cg-message-assistant prose prose-sm max-w-none text-[14px] leading-[1.7] text-ink-charcoal [&>p]:mb-2.5 [&>ul]:pl-4 [&>ol]:pl-4 [&>ul>li]:mb-1.5 [&>ol>li]:mb-1.5 [&>h1]:font-display [&>h2]:font-display [&>h3]:font-display [&>h4]:font-display [&>code]:font-mono [&>pre]:font-mono">
-                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}>
-                                {normalizeStreamingMarkdown(message.content)}
-                              </ReactMarkdown>
-                            </div>
+                            <article className="max-w-3xl overflow-hidden rounded-2xl border border-hairline bg-white shadow-[0_18px_48px_rgba(15,23,42,0.07)]">
+                              <div className="border-b border-hairline bg-gradient-to-r from-slate-50 via-white to-slate-50 px-4 py-3">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-hairline bg-white text-ink-charcoal shadow-sm">
+                                      <Network className="h-3.5 w-3.5" />
+                                    </span>
+                                    <div className="min-w-0">
+                                      <div className="text-[12px] font-semibold text-ink-charcoal">Answer</div>
+                                      <div className="text-[11px] leading-4 text-ink-stone">
+                                        {message.data?.sources?.length ? `${message.data.sources.length} cited source${message.data.sources.length === 1 ? '' : 's'}` : 'Generated response'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {isAgentAnswer && (
+                                    <AgentRunBadges
+                                      steps={messageAgentTrace}
+                                      partial={message.data?.partial}
+                                      partialReason={message.data?.partialReason}
+                                    />
+                                  )}
+                                </div>
+                              </div>
+                              <div className="px-4 py-4 sm:px-5">
+                                <div className="cg-message-assistant prose prose-sm max-w-none text-[14px] leading-[1.75] text-ink-charcoal prose-headings:mb-2 prose-headings:mt-4 prose-headings:font-display prose-p:mb-3 prose-ul:pl-4 prose-ol:pl-4 prose-li:mb-1.5 prose-strong:text-ink [&>p:first-child]:mt-0 [&>p:last-child]:mb-0 [&>code]:font-mono [&>pre]:font-mono">
+                                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}>
+                                    {normalizeStreamingMarkdown(message.content)}
+                                  </ReactMarkdown>
+                                </div>
+                                <EvidenceRail sources={message.data?.sources || []} />
+                              </div>
+                            </article>
 
-                            {isAgentAnswer && (
-                              <AgentRunBadges
-                                steps={messageAgentTrace}
-                                partial={message.data?.partial}
-                                partialReason={message.data?.partialReason}
-                              />
-                            )}
-
-                            {message.data?.sources && message.data.sources.length > 0 && (
-                              <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                                <span className="cg-eyebrow text-ink-steel">Cites</span>
-                                {message.data.sources.slice(0, 4).map((source, sourceIdx) => (
-                                  <span
-                                    key={`${source.chunk_id || source.document_id || sourceIdx}-${sourceIdx}`}
-                                    className="inline-flex items-center gap-1 rounded-md border border-hairline bg-white px-2 py-0.5 text-[11px] font-medium text-ink-charcoal"
-                                  >
-                                    <FileText className="h-3 w-3 text-ink-stone" />
-                                    {formatSourceChipLabel(source)}
-                                  </span>
-                                ))}
+                            {isAgentAnswer && messageAgentTrace.length > 0 && (
+                              <div className="max-w-3xl">
+                                <AgentTracePanel steps={messageAgentTrace} />
                               </div>
                             )}
 

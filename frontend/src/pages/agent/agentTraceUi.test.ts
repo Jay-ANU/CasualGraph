@@ -11,6 +11,12 @@ describe('agent trace UI labels', () => {
     expect(formatAgentStageLabel({ step: 3, stage: 'synthesizing', tool: 'summarize_evidence', status: 'completed', summary: '' })).toBe('Drafting grounded answer');
   });
 
+  it('uses phase labels for plan-execute-react traces', () => {
+    expect(formatAgentStageLabel({ step: 1, stage: 'planning', phase: 'plan', status: 'planned', summary: '' })).toBe('Plan');
+    expect(formatAgentStageLabel({ step: 2, stage: 'planning', phase: 'thought', status: 'completed', summary: '' })).toBe('Reasoning');
+    expect(formatAgentStageLabel({ step: 3, stage: 'planning', phase: 'reflexion', status: 'completed', summary: '' })).toBe('Reflection');
+  });
+
   it('sanitizes trace summaries that mention backend function names', () => {
     expect(formatAgentTraceSummary({
       step: 1,
@@ -27,6 +33,22 @@ describe('agent trace UI labels', () => {
       status: 'completed',
       summary: 'get_graph_context completed.',
     })).toBe('Cross-checking entities and relationships.');
+
+    expect(formatAgentTraceSummary({
+      step: 3,
+      stage: 'searching_reports',
+      tool: 'search_documents',
+      status: 'running',
+      summary: 'Action: search_documents for Apple.',
+    })).toBe('Searching report evidence for Apple.');
+
+    expect(formatAgentTraceSummary({
+      step: 4,
+      stage: 'planning',
+      phase: 'thought',
+      status: 'completed',
+      summary: 'Thought: verify targeted report evidence for Apple before using it in the answer.',
+    })).toBe('verify targeted report evidence for Apple before using it in the answer.');
   });
 
   it('uses evidence-quality wording for partial answers', () => {

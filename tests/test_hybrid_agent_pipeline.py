@@ -101,6 +101,7 @@ def test_agent_path_delegates_to_runner(monkeypatch):
                 sources=[{"chunk_id": "chunk_1", "text": "evidence"}],
                 graph_sources={"text": "", "edges": [], "nodes": [], "matched_entities": []},
                 trace=[],
+                reflexion={"status": "complete", "covered_entities": ["apple"], "missing_entities": []},
             )
 
     monkeypatch.setattr(pipeline, "AgentRunner", FakeRunner)
@@ -114,6 +115,7 @@ def test_agent_path_delegates_to_runner(monkeypatch):
     assert result["path"] == "agent"
     assert result["backend"] == "agent_test"
     assert result["routing"]["strategy"] == "agent"
+    assert result["routing"]["reflexion"]["status"] == "complete"
     assert result["timings_ms"]["generate"] >= 0.0
 
 

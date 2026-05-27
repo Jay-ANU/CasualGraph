@@ -39,6 +39,10 @@ export interface AgentTraceStep {
   status: AgentTraceStatus;
   summary: string;
   elapsed_ms?: number;
+  phase?: 'plan' | 'thought' | 'action' | 'observation' | 'replan' | 'reflexion' | 'final' | string;
+  plan_step?: number;
+  plan?: Record<string, unknown>[];
+  reflexion?: Record<string, unknown>;
   meta?: Record<string, unknown>;
 }
 

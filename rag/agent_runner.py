@@ -57,7 +57,7 @@ ProgressCallback = Callable[[AgentTraceStep], None]
 
 
 class AgentRunner:
-    """Run a fixed, bounded evidence plan against an agent tool registry."""
+    """Run a bounded evidence plan with reflexion-driven replanning."""
 
     def __init__(self, registry: Any, budget: AgentBudget) -> None:
         self.registry = registry
@@ -73,8 +73,22 @@ class AgentRunner:
     ) -> AgentRunResult:
         started = time.monotonic()
         mode = _normalize_reasoning_mode(reasoning_mode)
-        plan = self._build_plan(question=question, reasoning_mode=mode)
+        pending = list(self._build_plan(question=question, reasoning_mode=mode))
         trace: List[AgentTraceStep] = []
+        _emit_trace_step(
+            trace,
+            AgentTraceStep(
+                step=1,
+                stage="planning",
+                tool=None,
+                status="planned",
+                summary=_plan_summary(pending),
+                elapsed_ms=(time.monotonic() - started) * 1000,
+                phase="plan",
+                plan=_serialize_plan(pending),
+            ),
+            progress_callback,
+        )
         sources: List[Dict[str, Any]] = []
         graph_sources: Dict[str, Any] = {}
         layered_sources: Dict[str, List[Dict[str, Any]]] = {}
@@ -82,8 +96,9 @@ class AgentRunner:
         executed_steps = 0
         partial = False
         partial_reason: Optional[str] = None
+        replanned_entities: set[str] = set()
 
-        for call in plan:
+        while pending:
             if executed_steps >= max(0, int(self.budget.max_steps)):
                 partial = True
                 partial_reason = "max_steps_reached"
@@ -93,18 +108,35 @@ class AgentRunner:
                 partial_reason = "deadline_reached"
                 break
 
-            step_number = executed_steps + 1
+            call = pending.pop(0)
+            plan_step = executed_steps + 1
             stage = _stage_for_tool(call.tool)
             arguments = self._resolve_arguments(call, question=question, sources=sources, graph=graph_sources)
-            running_step = AgentTraceStep(
-                step=step_number,
+            thought_step = AgentTraceStep(
+                step=len(trace) + 1,
+                stage="planning",
+                tool=call.tool,
+                status="completed",
+                summary=_react_thought_summary(call, arguments, plan_step=plan_step),
+                elapsed_ms=(time.monotonic() - started) * 1000,
+                phase="thought",
+                plan_step=plan_step,
+                meta=_react_meta(call, arguments),
+            )
+            _emit_trace_step(trace, thought_step, progress_callback)
+
+            action_step = AgentTraceStep(
+                step=len(trace) + 1,
                 stage=stage,
                 tool=call.tool,
                 status="running",
-                summary=f"Running {call.tool}.",
+                summary=_react_action_summary(call, arguments),
                 elapsed_ms=(time.monotonic() - started) * 1000,
+                phase="action",
+                plan_step=plan_step,
+                meta=_react_meta(call, arguments),
             )
-            _emit_trace_step(trace, running_step, progress_callback)
+            _emit_trace_step(trace, action_step, progress_callback)
 
             tool_started = time.monotonic()
             observation = self._call_tool(call.tool, arguments)
@@ -119,20 +151,75 @@ class AgentRunner:
                 if evidence_summary:
                     evidence_summaries.append(evidence_summary)
 
-            completed_step = AgentTraceStep(
-                step=step_number,
+            observation_step = AgentTraceStep(
+                step=len(trace) + 1,
                 stage=stage,
                 tool=call.tool,
                 status="completed" if observation.ok else "failed",
-                summary=summary,
+                summary=_react_observation_summary(observation, summary),
                 elapsed_ms=(time.monotonic() - tool_started) * 1000,
+                phase="observation",
+                plan_step=plan_step,
+                meta={
+                    **_react_meta(call, arguments),
+                    "ok": bool(observation.ok),
+                    "error": observation.error,
+                },
             )
-            _emit_trace_step(trace, completed_step, progress_callback)
+            _emit_trace_step(trace, observation_step, progress_callback)
 
-            if call is not plan[-1] and self._deadline_reached(started):
+            if call.tool == "search_documents":
+                replan_calls = self._build_reflexion_replan(
+                    question=question,
+                    reasoning_mode=mode,
+                    sources=sources,
+                    graph_sources=graph_sources,
+                    pending=pending,
+                    replanned_entities=replanned_entities,
+                )
+                if replan_calls:
+                    for replan_call in replan_calls:
+                        entity_key = _entity_key(str(replan_call.arguments.get("expected_entity") or ""))
+                        if entity_key:
+                            replanned_entities.add(entity_key)
+                    replanning_step = AgentTraceStep(
+                        step=len(trace) + 1,
+                        stage="planning",
+                        tool=None,
+                        status="completed",
+                        summary=_replan_summary(replan_calls),
+                        elapsed_ms=(time.monotonic() - started) * 1000,
+                        phase="replan",
+                        plan=_serialize_plan(replan_calls),
+                        reflexion={"status": "replanned_missing_entity_evidence"},
+                    )
+                    _emit_trace_step(trace, replanning_step, progress_callback)
+                    pending = [*replan_calls, *pending]
+
+            if pending and self._deadline_reached(started):
                 partial = True
                 partial_reason = "deadline_reached"
                 break
+
+        reflexion = self._build_reflexion_report(
+            sources=sources,
+            graph_sources=graph_sources,
+            replanned_entities=replanned_entities,
+        )
+        if reflexion.get("missing_entities") and not partial:
+            partial = True
+            partial_reason = "missing_entity_evidence"
+        reflexion_step = AgentTraceStep(
+            step=len(trace) + 1,
+            stage="partial" if partial else "completed",
+            tool=None,
+            status="completed",
+            summary=_reflexion_summary(reflexion),
+            elapsed_ms=(time.monotonic() - started) * 1000,
+            phase="reflexion",
+            reflexion=reflexion,
+        )
+        _emit_trace_step(trace, reflexion_step, progress_callback)
 
         answer, backend = _synthesize_answer(
             question=question,
@@ -145,12 +232,13 @@ class AgentRunner:
             answer_intent=answer_intent,
         )
         final_step = AgentTraceStep(
-            step=executed_steps + 1,
+            step=len(trace) + 1,
             stage="partial" if partial else "completed",
             tool=None,
             status="completed",
             summary="Synthesized an answer from collected evidence." if sources or graph_sources else "No usable evidence was collected.",
             elapsed_ms=(time.monotonic() - started) * 1000,
+            phase="final",
         )
         _emit_trace_step(trace, final_step, progress_callback)
 
@@ -162,6 +250,7 @@ class AgentRunner:
             trace=trace,
             partial=partial,
             partial_reason=partial_reason,
+            reflexion=reflexion,
         )
 
     def _build_plan(self, question: str, reasoning_mode: str) -> List[AgentToolCall]:
@@ -172,16 +261,78 @@ class AgentRunner:
         else:
             search_args = {"query": question, "strategy": "hybrid", "top_k": 5, "use_hyde": False}
             graph_args = {"question": question, "limit": 8, "max_triples": 8}
-        search_queries = _routing_sub_questions(getattr(self.registry, "filters", None)) or [question]
-        search_calls = [
-            AgentToolCall(tool="search_documents", arguments={**search_args, "query": search_query})
-            for search_query in search_queries
-        ]
+        targets = _routing_targets(getattr(self.registry, "filters", None), question=question)
+        if targets:
+            search_calls = [_search_call_for_target(search_args, target) for target in targets]
+        else:
+            search_queries = _routing_sub_questions(getattr(self.registry, "filters", None)) or [question]
+            search_calls = [
+                AgentToolCall(tool="search_documents", arguments={**search_args, "query": search_query})
+                for search_query in search_queries
+            ]
         return [
             *search_calls,
             AgentToolCall(tool="get_graph_context", arguments=graph_args),
             AgentToolCall(tool="summarize_evidence", arguments={}),
         ]
+
+    def _build_reflexion_replan(
+        self,
+        *,
+        question: str,
+        reasoning_mode: str,
+        sources: List[Dict[str, Any]],
+        graph_sources: Dict[str, Any],
+        pending: List[AgentToolCall],
+        replanned_entities: set[str],
+    ) -> List[AgentToolCall]:
+        targets = _routing_targets(getattr(self.registry, "filters", None), question=question)
+        if not targets:
+            return []
+        pending_entities = {
+            _entity_key(str(call.arguments.get("expected_entity") or ""))
+            for call in pending
+            if call.tool == "search_documents"
+        }
+        if reasoning_mode == "deep":
+            search_args = {"query": question, "strategy": "layered", "top_k": 8, "use_hyde": False}
+        else:
+            search_args = {"query": question, "strategy": "hybrid", "top_k": 5, "use_hyde": False}
+        output: List[AgentToolCall] = []
+        for target in _missing_targets(targets, sources=sources, graph_sources=graph_sources):
+            entity_key = _entity_key(target.get("entity") or "")
+            if not entity_key or entity_key in pending_entities or entity_key in replanned_entities:
+                continue
+            replan_target = dict(target)
+            replan_target["query"] = _replan_query(question=question, entity=str(target.get("entity") or ""))
+            call = _search_call_for_target(search_args, replan_target)
+            call.arguments["replan_reason"] = "missing_entity_evidence"
+            output.append(call)
+        return output
+
+    def _build_reflexion_report(
+        self,
+        *,
+        sources: List[Dict[str, Any]],
+        graph_sources: Dict[str, Any],
+        replanned_entities: set[str],
+    ) -> Dict[str, Any]:
+        targets = _routing_targets(getattr(self.registry, "filters", None), question="")
+        if not targets:
+            return {"status": "not_required", "replanned_entities": []}
+        missing = _missing_targets(targets, sources=sources, graph_sources=graph_sources)
+        missing_entities = [str(item.get("entity") or "").strip().lower() for item in missing if str(item.get("entity") or "").strip()]
+        covered_entities = [
+            str(item.get("entity") or "").strip().lower()
+            for item in targets
+            if str(item.get("entity") or "").strip().lower() not in missing_entities
+        ]
+        return {
+            "status": "complete" if not missing_entities else "partial_entity_coverage",
+            "covered_entities": covered_entities,
+            "missing_entities": missing_entities,
+            "replanned_entities": sorted(replanned_entities),
+        }
 
     def _resolve_arguments(
         self,
@@ -238,6 +389,7 @@ def agent_result_to_payload(result: AgentRunResult, reasoning_mode: str) -> Dict
         "sources": _serialize_sources(result.sources),
         "graph_sources": _serialize_graph_sources(result.graph_sources),
         "backend": result.backend,
+        "reflexion": dict(result.reflexion or {}),
     }
 
 
@@ -558,6 +710,73 @@ def _default_budget(reasoning_mode: str) -> AgentBudget:
     return AgentBudget(max_steps=3, deadline_seconds=20)
 
 
+def _serialize_plan(calls: List[AgentToolCall]) -> List[Dict[str, Any]]:
+    plan: List[Dict[str, Any]] = []
+    for index, call in enumerate(calls or [], start=1):
+        arguments = dict(call.arguments or {})
+        item: Dict[str, Any] = {
+            "plan_step": index,
+            "tool": call.tool,
+            "stage": _stage_for_tool(call.tool),
+        }
+        for key in ("query", "strategy", "top_k", "expected_entity", "document_ids", "preferred_document_id", "replan_reason"):
+            value = arguments.get(key)
+            if value not in (None, "", [], {}):
+                item[key] = value
+        plan.append(item)
+    return plan
+
+
+def _plan_summary(calls: List[AgentToolCall]) -> str:
+    count = len(calls or [])
+    if count == 1:
+        return "Planned 1 evidence step before execution."
+    return f"Planned {count} evidence steps before execution."
+
+
+def _react_meta(call: AgentToolCall, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    meta: Dict[str, Any] = {"tool": call.tool}
+    for key in ("query", "strategy", "top_k", "expected_entity", "document_ids", "preferred_document_id", "replan_reason"):
+        value = arguments.get(key)
+        if value not in (None, "", [], {}):
+            meta[key] = value
+    return meta
+
+
+def _react_thought_summary(call: AgentToolCall, arguments: Dict[str, Any], *, plan_step: int) -> str:
+    expected_entity = str(arguments.get("expected_entity") or "").strip()
+    if call.tool == "search_documents" and expected_entity:
+        return f"Thought: verify targeted report evidence for {expected_entity} before using it in the answer."
+    if call.tool == "search_documents":
+        return "Thought: search the selected report scope for evidence relevant to the question."
+    if call.tool in {"get_graph_context", "query_neo4j"}:
+        return "Thought: cross-check whether graph context can strengthen or correct the retrieved evidence."
+    if call.tool == "summarize_evidence":
+        return "Thought: consolidate the collected observations before drafting the answer."
+    return f"Thought: choose the next action for evidence plan step {plan_step}."
+
+
+def _react_action_summary(call: AgentToolCall, arguments: Dict[str, Any]) -> str:
+    expected_entity = str(arguments.get("expected_entity") or "").strip()
+    if expected_entity:
+        return f"Action: {call.tool} for {expected_entity}."
+    return f"Action: {call.tool}."
+
+
+def _react_observation_summary(observation: AgentToolObservation, fallback: str) -> str:
+    return fallback or _observation_summary(observation)
+
+
+def _reflexion_summary(reflexion: Dict[str, Any]) -> str:
+    missing = [str(item).strip() for item in (reflexion or {}).get("missing_entities") or [] if str(item).strip()]
+    if missing:
+        return f"Reflexion: evidence is still missing for {', '.join(missing)}."
+    status = str((reflexion or {}).get("status") or "").strip()
+    if status == "not_required":
+        return "Reflexion: no explicit multi-entity coverage check was required."
+    return "Reflexion: evidence coverage satisfies the current plan."
+
+
 def _routing_sub_questions(filters: Any) -> List[str]:
     if not isinstance(filters, dict):
         return []
@@ -573,6 +792,166 @@ def _routing_sub_questions(filters: Any) -> List[str]:
         if len(cleaned) >= 4:
             break
     return cleaned
+
+
+def _routing_targets(filters: Any, *, question: str) -> List[Dict[str, Any]]:
+    if not isinstance(filters, dict):
+        return []
+    hint = filters.get("routing_hint")
+    if not isinstance(hint, dict) or not hint.get("needs_agent"):
+        return []
+    entities = _clean_labels(hint.get("entities"))
+    if not entities:
+        return []
+    document_ids = _clean_labels(hint.get("target_document_ids"))
+    sub_questions = _routing_sub_questions(filters)
+    targets: List[Dict[str, Any]] = []
+    for index, entity in enumerate(entities[:4]):
+        document_id = _document_id_for_entity(index=index, entity=entity, entities=entities, document_ids=document_ids)
+        targets.append(
+            {
+                "entity": entity,
+                "document_id": document_id,
+                "query": _query_for_entity(entity=entity, sub_questions=sub_questions, question=question),
+            }
+        )
+    return targets
+
+
+def _document_id_for_entity(*, index: int, entity: str, entities: List[str], document_ids: List[str]) -> str:
+    if not document_ids:
+        return ""
+    if len(document_ids) == len(entities) and index < len(document_ids):
+        return document_ids[index]
+    if len(document_ids) == 1 and len(entities) == 1:
+        return document_ids[0]
+    entity_tokens = set(_entity_tokens(entity))
+    if not entity_tokens:
+        return ""
+    for document_id in document_ids:
+        document_tokens = set(_entity_tokens(document_id.replace("_", " ").replace("-", " ")))
+        if entity_tokens and entity_tokens.issubset(document_tokens):
+            return document_id
+    return ""
+
+
+def _search_call_for_target(search_args: Dict[str, Any], target: Dict[str, Any]) -> AgentToolCall:
+    arguments = {**search_args, "query": str(target.get("query") or search_args.get("query") or "").strip()}
+    entity = str(target.get("entity") or "").strip()
+    document_id = str(target.get("document_id") or "").strip()
+    if entity:
+        arguments["expected_entity"] = entity
+    if document_id:
+        arguments["document_ids"] = [document_id]
+        arguments["preferred_document_id"] = document_id
+    return AgentToolCall(tool="search_documents", arguments=arguments)
+
+
+def _query_for_entity(*, entity: str, sub_questions: List[str], question: str) -> str:
+    entity_key = _entity_key(entity)
+    for sub_question in sub_questions:
+        if entity_key and _entity_key(entity) in _entity_key(sub_question):
+            return sub_question
+    base = str(question or "").strip()
+    if base:
+        return f"Find report evidence specifically for {entity}. {base}"
+    return f"Find report evidence specifically for {entity}."
+
+
+def _replan_query(*, question: str, entity: str) -> str:
+    base = str(question or "").strip()
+    if base:
+        return f"Re-check retrieved report evidence specifically for {entity}. {base}"
+    return f"Re-check retrieved report evidence specifically for {entity}."
+
+
+def _missing_targets(
+    targets: List[Dict[str, Any]],
+    *,
+    sources: List[Dict[str, Any]],
+    graph_sources: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    return [
+        target
+        for target in targets
+        if not _target_has_coverage(target, sources=sources, graph_sources=graph_sources)
+    ]
+
+
+def _target_has_coverage(
+    target: Dict[str, Any],
+    *,
+    sources: List[Dict[str, Any]],
+    graph_sources: Dict[str, Any],
+) -> bool:
+    document_id = str(target.get("document_id") or "").strip()
+    entity = str(target.get("entity") or "").strip()
+    if document_id:
+        for source in sources or []:
+            if isinstance(source, dict) and str(source.get("document_id") or "").strip() == document_id:
+                return True
+    if not entity:
+        return False
+    blob = _entity_blob(sources=sources, graph_sources=graph_sources)
+    entity_tokens = set(_entity_tokens(entity))
+    if not entity_tokens:
+        return False
+    entity_phrase = " ".join(_entity_tokens(entity))
+    if entity_phrase and entity_phrase in blob:
+        return True
+    return entity_tokens.issubset(set(_entity_tokens(blob)))
+
+
+def _entity_blob(*, sources: List[Dict[str, Any]], graph_sources: Dict[str, Any]) -> str:
+    parts: List[str] = []
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        parts.extend(
+            [
+                str(source.get("document_id") or ""),
+                str(source.get("document_title") or ""),
+                str(source.get("title") or ""),
+                str(source.get("text") or source.get("content") or ""),
+            ]
+        )
+    if isinstance(graph_sources, dict):
+        parts.append(str(graph_sources.get("text") or ""))
+    return " ".join(parts).lower()
+
+
+def _clean_labels(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    output: List[str] = []
+    seen = set()
+    for item in value:
+        label = str(item or "").strip()
+        key = label.lower()
+        if not label or key in seen:
+            continue
+        output.append(label)
+        seen.add(key)
+    return output
+
+
+def _entity_key(value: str) -> str:
+    return " ".join(_entity_tokens(value))
+
+
+def _entity_tokens(value: str) -> List[str]:
+    return [term.lower() for term in _WORD_PATTERN.findall(str(value or "")) if len(term) >= 2]
+
+
+def _replan_summary(calls: List[AgentToolCall]) -> str:
+    entities = [
+        str(call.arguments.get("expected_entity") or "").strip()
+        for call in calls
+        if str(call.arguments.get("expected_entity") or "").strip()
+    ]
+    if entities:
+        return f"Reflexion found missing entity evidence; replanning targeted search for: {', '.join(entities)}."
+    return "Reflexion found missing evidence; replanning targeted search."
 
 
 def _normalize_reasoning_mode(reasoning_mode: str) -> str:

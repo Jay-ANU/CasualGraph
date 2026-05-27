@@ -26,6 +26,16 @@ const STAGE_LABELS: Record<string, string> = {
   failed: 'Evidence search stopped',
 };
 
+const PHASE_LABELS: Record<string, string> = {
+  plan: 'Plan',
+  thought: 'Reasoning',
+  action: 'Action',
+  observation: 'Observation',
+  replan: 'Replan',
+  reflexion: 'Reflection',
+  final: 'Final answer',
+};
+
 const PARTIAL_LABELS: Record<string, string> = {
   missing_entity_evidence: 'Limited evidence coverage',
   max_steps_reached: 'Evidence search hit the step limit',
@@ -92,6 +102,10 @@ const rewriteCountSummary = (summary: string): string | null => {
 };
 
 export const formatAgentStageLabel = (step: AgentTraceUiStep): string => {
+  const phase = String((step as { phase?: string }).phase || '').trim();
+  if (phase && PHASE_LABELS[phase]) {
+    return PHASE_LABELS[phase];
+  }
   const tool = String(step.tool || '').trim();
   if (tool && TOOL_LABELS[tool]) {
     return TOOL_LABELS[tool];
@@ -127,6 +141,22 @@ export const formatAgentTraceSummary = (
   }
   if (summary === 'Search query is required.') {
     return 'The evidence search could not be prepared.';
+  }
+  if (/^Thought:\s*/i.test(summary)) {
+    return summary.replace(/^Thought:\s*/i, '');
+  }
+  if (/^Action:\s*search_documents(?:\s+for\s+(.+?))?\.$/i.test(summary)) {
+    const match = summary.match(/^Action:\s*search_documents(?:\s+for\s+(.+?))?\.$/i);
+    return match?.[1] ? `Searching report evidence for ${match[1]}.` : 'Searching report evidence.';
+  }
+  if (/^Action:\s*(get_graph_context|query_neo4j)\.$/i.test(summary)) {
+    return 'Checking graph relationships.';
+  }
+  if (/^Action:\s*summarize_evidence\.$/i.test(summary)) {
+    return 'Condensing collected evidence.';
+  }
+  if (/^Reflexion:\s*/i.test(summary)) {
+    return summary.replace(/^Reflexion:\s*/i, '');
   }
 
   if (TOOL_NAME_PATTERN.test(summary)) {
