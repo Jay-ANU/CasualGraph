@@ -2,6 +2,7 @@ import {
   formatAgentPartialLabel,
   formatAgentStageLabel,
   formatAgentTraceSummary,
+  shouldShowLiveAgentTracePanel,
 } from './agentTraceUi';
 
 describe('agent trace UI labels', () => {
@@ -55,5 +56,30 @@ describe('agent trace UI labels', () => {
     expect(formatAgentPartialLabel('missing_entity_evidence')).toBe('Limited evidence coverage');
     expect(formatAgentPartialLabel('deadline_reached')).toBe('Answer still useful, evidence search timed out');
     expect(formatAgentPartialLabel('stream_interrupted')).toBe('Answer stream interrupted');
+  });
+
+  it('only shows the trace panel while evidence retrieval is still live', () => {
+    const steps = [{ step: 1, stage: 'planning', phase: 'action', status: 'running', summary: '' }];
+
+    expect(shouldShowLiveAgentTracePanel({
+      activeAgentPath: 'agent',
+      steps,
+      showPipelineStatus: true,
+      hasAnswerStarted: false,
+    })).toBe(true);
+
+    expect(shouldShowLiveAgentTracePanel({
+      activeAgentPath: 'agent',
+      steps,
+      showPipelineStatus: true,
+      hasAnswerStarted: true,
+    })).toBe(false);
+
+    expect(shouldShowLiveAgentTracePanel({
+      activeAgentPath: 'agent',
+      steps,
+      showPipelineStatus: false,
+      hasAnswerStarted: false,
+    })).toBe(false);
   });
 });

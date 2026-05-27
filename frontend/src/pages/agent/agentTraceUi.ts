@@ -190,3 +190,20 @@ export const formatAgentStepCountLabel = (steps: AgentTraceStep[]): string => {
   }
   return `${completed}/${steps.length} checks`;
 };
+
+export const shouldShowLiveAgentTracePanel = ({
+  activeAgentPath,
+  steps,
+  showPipelineStatus,
+  hasAnswerStarted,
+}: {
+  activeAgentPath?: string | null;
+  steps: Partial<AgentTraceStep>[];
+  showPipelineStatus: boolean;
+  hasAnswerStarted: boolean;
+}): boolean => (
+  activeAgentPath === 'agent' &&
+  steps.length > 0 &&
+  showPipelineStatus &&
+  !hasAnswerStarted
+);

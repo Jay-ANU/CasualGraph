@@ -29,6 +29,7 @@ import {
   formatAgentPartialLabel,
   formatAgentStageLabel,
   formatAgentTraceSummary,
+  shouldShowLiveAgentTracePanel,
 } from './agent/agentTraceUi';
 
 interface CausalRelationship {
@@ -557,28 +558,6 @@ const getTracePhaseCounts = (steps: AgentTraceStep[]) => {
   };
 };
 
-const getLatestReflexion = (steps: AgentTraceStep[]): Record<string, unknown> | undefined => {
-  for (let index = steps.length - 1; index >= 0; index -= 1) {
-    const reflexion = steps[index]?.reflexion;
-    if (reflexion && typeof reflexion === 'object') {
-      return reflexion as Record<string, unknown>;
-    }
-  }
-  return undefined;
-};
-
-const formatReflexionCoverage = (steps: AgentTraceStep[], partial?: boolean, partialReason?: string | null): string => {
-  if (partial) {
-    return formatAgentPartialLabel(partialReason);
-  }
-  const reflexion = getLatestReflexion(steps);
-  const status = String(reflexion?.status || '').trim();
-  if (status === 'complete') return 'Coverage checked';
-  if (status === 'not_required') return 'Evidence checked';
-  if (status === 'partial_entity_coverage') return 'Coverage limited';
-  return steps.length > 0 ? 'Review complete' : 'Answer ready';
-};
-
 const getTraceIconForPhase = (phase?: string | null) => {
   switch (phase) {
     case 'plan':
@@ -607,46 +586,19 @@ const formatSourceDocumentLabel = (source: RagSource): string => (
     .trim() || 'Report evidence'
 );
 
-const AgentRunBadges: React.FC<{
-  steps: AgentTraceStep[];
+const AnswerWarningBadge: React.FC<{
   partial?: boolean;
   partialReason?: string | null;
-}> = ({ steps, partial, partialReason }) => {
-  const phaseCounts = getTracePhaseCounts(steps);
+}> = ({ partial, partialReason }) => {
+  if (!partial) return null;
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink px-2.5 py-1 text-white shadow-sm">
-        <BrainCircuit className="h-3.5 w-3.5" />
-        Agent path
-      </span>
-      {steps.length > 0 && (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-white px-2.5 py-1 text-ink-steel">
-          <ClipboardList className="h-3 w-3" />
-          {phaseCounts.planSteps || steps.length} planned steps
-        </span>
-      )}
-      {phaseCounts.hasReflection && (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-white px-2.5 py-1 text-ink-steel">
-          <ShieldCheck className="h-3 w-3" />
-          {formatReflexionCoverage(steps, partial, partialReason)}
-        </span>
-      )}
-      {phaseCounts.replans > 0 && (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-blue-700">
-          <GitBranch className="h-3 w-3" />
-          {phaseCounts.replans} replan
-        </span>
-      )}
-      {partial && (
-        <span
-          className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800"
-          title={formatAgentPartialDescription(partialReason)}
-        >
-          <AlertCircle className="h-3.5 w-3.5" />
-          {formatAgentPartialLabel(partialReason)}
-        </span>
-      )}
-    </div>
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800"
+      title={formatAgentPartialDescription(partialReason)}
+    >
+      <AlertCircle className="h-3.5 w-3.5" />
+      {formatAgentPartialLabel(partialReason)}
+    </span>
   );
 };
 
@@ -2686,8 +2638,7 @@ ${isDuplicate
                                     </div>
                                   </div>
                                   {isAgentAnswer && (
-                                    <AgentRunBadges
-                                      steps={messageAgentTrace}
+                                    <AnswerWarningBadge
                                       partial={message.data?.partial}
                                       partialReason={message.data?.partialReason}
                                     />
@@ -2703,12 +2654,6 @@ ${isDuplicate
                                 <EvidenceRail sources={message.data?.sources || []} />
                               </div>
                             </article>
-
-                            {isAgentAnswer && messageAgentTrace.length > 0 && (
-                              <div className="max-w-3xl">
-                                <AgentTracePanel steps={messageAgentTrace} />
-                              </div>
-                            )}
 
                             {canSubmitFeedback && (
                               <div className="mt-3">
@@ -2844,7 +2789,12 @@ ${isDuplicate
                       <div className="mt-1.5 text-[11px] text-ink-stone">
                         Step {Math.min(loadingStepIndex + 1, loadingSteps.length)}/{loadingSteps.length}
                       </div>
-                      {activeAgentPath === 'agent' && agentTrace.length > 0 && (
+                      {shouldShowLiveAgentTracePanel({
+                        activeAgentPath,
+                        steps: agentTrace,
+                        showPipelineStatus,
+                        hasAnswerStarted: false,
+                      }) && (
                         <AgentTracePanel steps={agentTrace} />
                       )}
                       {showLongWaitHint && (
