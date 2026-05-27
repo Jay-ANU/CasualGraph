@@ -16,6 +16,7 @@ from configs.settings import (
     deepseek_configured,
 )
 from rag.agent_types import AgentBudget, HybridRouteDecision
+from rag import deepseek_resilience
 
 
 _FAST_BUDGET = AgentBudget(max_steps=0, deadline_seconds=4)
@@ -148,6 +149,29 @@ def _decide_with_deepseek(
     preferred_document_id: Optional[str],
     answer_intent: Dict[str, Any],
 ) -> Optional[HybridRouteDecision]:
+    cache_payload = {
+        "text": str(text or "").strip(),
+        "reasoning_mode": str(reasoning_mode or "").strip().lower(),
+        "document_count": int(document_count or 0),
+        "preferred_document_id_present": bool(preferred_document_id),
+        "answer_intent": answer_intent or {},
+        "model": RAG_HYBRID_AGENT_ROUTER_MODEL,
+    }
+    cache_hit, cached_value = deepseek_resilience.cache_lookup("hybrid_agent_router", cache_payload)
+    if cache_hit:
+        if not isinstance(cached_value, dict):
+            return None
+        path = str(cached_value.get("path") or "").strip().lower()
+        if path not in _VALID_PATHS:
+            return None
+        return _decision(
+            path=path,
+            reason=str(cached_value.get("reason") or "deepseek:cached_route"),
+            confidence=_safe_confidence(cached_value.get("confidence"), fallback=0.7),
+            reasoning_mode=reasoning_mode,
+        )
+    if deepseek_resilience.circuit_is_open("hybrid_agent_router"):
+        return None
     if not deepseek_configured():
         return None
     try:
@@ -213,13 +237,22 @@ User question:
         path = str(parsed.get("path") or "").strip().lower()
         if path not in _VALID_PATHS:
             return None
-        return _decision(
+        decision = _decision(
             path=path,
             reason=f"deepseek:{str(parsed.get('reason') or 'semantic_route')}",
             confidence=_safe_confidence(parsed.get("confidence"), fallback=0.7),
             reasoning_mode=reasoning_mode,
         )
+        deepseek_resilience.cache_store(
+            "hybrid_agent_router",
+            cache_payload,
+            {"path": decision.path, "reason": decision.reason, "confidence": decision.confidence},
+        )
+        deepseek_resilience.record_success("hybrid_agent_router")
+        return decision
     except Exception as exc:
+        deepseek_resilience.cache_failure("hybrid_agent_router", cache_payload)
+        deepseek_resilience.record_failure("hybrid_agent_router")
         print(f"[rag.hybrid_agent_router] DeepSeek router fell back: {type(exc).__name__}: {exc}")
         return None
 

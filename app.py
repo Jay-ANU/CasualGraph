@@ -844,6 +844,7 @@ from configs.settings import (
     deepseek_configured,
     neo4j_configured,
 )
+from rag import deepseek_resilience
 from user_memory_service import (
     delete_user_memory,
     format_memories_for_prompt,
@@ -2082,7 +2083,26 @@ def _resolve_document_ids_with_deepseek(
     candidates: List[Dict[str, Any]],
     query_terms: List[str],
 ) -> List[str]:
-    if not candidates or not deepseek_configured():
+    if not candidates:
+        return []
+    cache_payload = {
+        "question": str(question or "").strip(),
+        "query_terms": list(query_terms or []),
+        "candidates": [
+            {
+                "document_id": item.get("document_id"),
+                "score": item.get("score"),
+                "identity_score": item.get("identity_score"),
+                "matched_terms": item.get("matched_terms") or [],
+            }
+            for item in candidates[:12]
+        ],
+        "model": RAG_ANSWER_INTENT_ROUTER_MODEL,
+    }
+    cache_hit, cached_value = deepseek_resilience.cache_lookup("document_resolver", cache_payload)
+    if cache_hit:
+        return [str(item).strip() for item in (cached_value or []) if str(item).strip()][:3]
+    if deepseek_resilience.circuit_is_open("document_resolver") or not deepseek_configured():
         return []
     try:
         import openai
@@ -2144,6 +2164,8 @@ def _resolve_document_ids_with_deepseek(
             raw = response["choices"][0]["message"]["content"] or ""
         parsed = _parse_json_object_text(str(raw))
     except Exception as exc:
+        deepseek_resilience.cache_failure("document_resolver", cache_payload)
+        deepseek_resilience.record_failure("document_resolver")
         print(f"[rag.document_resolver] DeepSeek resolver skipped: {type(exc).__name__}: {exc}")
         return []
 
@@ -2154,13 +2176,18 @@ def _resolve_document_ids_with_deepseek(
     except (TypeError, ValueError):
         confidence = 0.0
     if confidence < 0.45:
+        deepseek_resilience.cache_store("document_resolver", cache_payload, [])
+        deepseek_resilience.record_success("document_resolver")
         return []
     resolved: List[str] = []
     for value in parsed.get("document_ids") or []:
         document_id = str(value or "").strip()
         if document_id and document_id in allowed_ids and document_id not in resolved:
             resolved.append(document_id)
-    return resolved[:3]
+    resolved = resolved[:3]
+    deepseek_resilience.cache_store("document_resolver", cache_payload, resolved)
+    deepseek_resilience.record_success("document_resolver")
+    return resolved
 
 
 def _scope_document_ids_for_query(question: str, entries: List[Dict[str, Any]]) -> Tuple[List[str], List[str]]:

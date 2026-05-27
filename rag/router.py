@@ -20,6 +20,7 @@ from configs.settings import (
     RAG_ROUTER_TIMEOUT,
     deepseek_configured,
 )
+from rag import deepseek_resilience
 from rag.esg_lexicon import ESG_KEYWORDS
 
 
@@ -136,6 +137,17 @@ def _last_assistant_has_evidence(history_block: str) -> bool:
 
 
 def _route_with_llm(query: str, history_block: str, mode: str) -> Optional[Dict[str, object]]:
+    cache_payload = {
+        "query": str(query or "").strip(),
+        "history": _history_signature(history_block),
+        "mode": str(mode or "").strip().lower(),
+        "model": RAG_ROUTER_MODEL,
+    }
+    cache_hit, cached_value = deepseek_resilience.cache_lookup("retrieval_router", cache_payload)
+    if cache_hit:
+        return dict(cached_value) if isinstance(cached_value, dict) else None
+    if deepseek_resilience.circuit_is_open("retrieval_router"):
+        return None
     if not deepseek_configured():
         return None
     try:
@@ -198,8 +210,13 @@ Query:
         strategy = str(parsed.get("strategy") or "vector_only")
         if strategy not in {"no_retrieval", "vector_only", "hybrid", "multi_query", "decomposition", "graph_first", "layered"}:
             strategy = "vector_only"
-        return _result(strategy, str(parsed.get("reason") or "deepseek_classification"), "deepseek")
+        result = _result(strategy, str(parsed.get("reason") or "deepseek_classification"), "deepseek")
+        deepseek_resilience.cache_store("retrieval_router", cache_payload, result)
+        deepseek_resilience.record_success("retrieval_router")
+        return result
     except Exception as exc:
+        deepseek_resilience.cache_failure("retrieval_router", cache_payload)
+        deepseek_resilience.record_failure("retrieval_router")
         print(f"[rag.router] DeepSeek router fell back: {type(exc).__name__}: {exc}")
         return None
 

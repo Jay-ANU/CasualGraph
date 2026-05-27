@@ -18,6 +18,7 @@ from configs.settings import (
     RAG_ANSWER_INTENT_ROUTER_TIMEOUT,
     deepseek_configured,
 )
+from rag import deepseek_resilience
 
 
 AnswerIntent = Dict[str, Any]
@@ -117,6 +118,16 @@ def classify_answer_intent(query: str, history_block: str = "") -> AnswerIntent:
 
 
 def _classify_with_deepseek(query: str, history_block: str) -> Optional[AnswerIntent]:
+    cache_payload = {
+        "query": str(query or "").strip(),
+        "history": _history_signature(history_block),
+        "model": RAG_ANSWER_INTENT_ROUTER_MODEL,
+    }
+    cache_hit, cached_value = deepseek_resilience.cache_lookup("answer_intent", cache_payload)
+    if cache_hit:
+        return dict(cached_value) if isinstance(cached_value, dict) else None
+    if deepseek_resilience.circuit_is_open("answer_intent"):
+        return None
     try:
         import openai
     except Exception:
@@ -184,8 +195,13 @@ User question:
             )
             raw = response["choices"][0]["message"]["content"] or ""
         parsed = _parse_json_object(str(raw))
-        return _normalize_intent(parsed, backend="deepseek")
+        result = _normalize_intent(parsed, backend="deepseek")
+        deepseek_resilience.cache_store("answer_intent", cache_payload, result)
+        deepseek_resilience.record_success("answer_intent")
+        return result
     except Exception as exc:
+        deepseek_resilience.cache_failure("answer_intent", cache_payload)
+        deepseek_resilience.record_failure("answer_intent")
         print(f"[rag.answer_intent] DeepSeek router fell back: {type(exc).__name__}: {exc}")
         return None
 
