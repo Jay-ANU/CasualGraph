@@ -63,6 +63,7 @@ export interface RagSource {
   text: string;
   document_id?: string;
   document_title?: string;
+  source?: string;
   document_group?: string;
   source_type?: string;
   domain?: string;

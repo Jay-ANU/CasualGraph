@@ -447,7 +447,7 @@ def _term_coverage(item: Dict, query_terms: set[str]) -> float:
         return 0.0
     haystack = " ".join(
         str(item.get(key) or "")
-        for key in ("document_title", "title", "text", "chunk_id", "domain", "source_type")
+        for key in ("document_title", "title", "source", "text", "chunk_id", "domain", "source_type")
     ).lower()
     if not haystack:
         return 0.0

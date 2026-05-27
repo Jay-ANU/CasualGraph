@@ -36,6 +36,7 @@ from rag.retriever import retrieve_context, retrieve_context_multi, retrieve_lay
 from rag.hybrid_agent_router import decide_hybrid_path
 from rag.router import _CJK_PRONOUN_PATTERN, _PRONOUN_PATTERN, route_query
 from rag.source_relevance import filter_layered_sources_by_relevance, filter_sources_by_relevance
+from rag.source_titles import display_document_title
 from rag.strategies import STRATEGY_REGISTRY
 
 
@@ -572,7 +573,7 @@ def _source_trace_labels(sources: List[Dict], limit: int = 3) -> List[str]:
     labels: List[str] = []
     seen = set()
     for source in sources:
-        title = str(source.get("document_title") or source.get("document_id") or "report").strip()
+        title = display_document_title(source)
         chunk = str(source.get("chunk_id") or "").strip()
         label = f"{title} · {chunk}" if chunk else title
         if label in seen:
@@ -1626,7 +1627,8 @@ def _serialize_sources(sources: List[Dict]) -> List[Dict]:
             "chunk_id": item["chunk_id"],
             "text": item["text"],
             "document_id": item.get("document_id"),
-            "document_title": item.get("document_title"),
+            "document_title": display_document_title(item),
+            "source": item.get("source"),
             "document_group": item.get("document_group"),
             "source_type": item.get("source_type"),
             "domain": item.get("domain"),

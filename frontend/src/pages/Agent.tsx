@@ -18,6 +18,7 @@ import {
   type ChatSession,
 } from './agent/chatSession';
 import {
+  formatSourceDocumentTitle,
   formatSourceChipLabel,
   getLoadingSteps,
   normalizeMathForMarkdown,
@@ -592,10 +593,7 @@ const getTracePhaseCounts = (steps: AgentTraceStep[]) => {
 };
 
 const formatSourceDocumentLabel = (source: RagSource): string => (
-  String(source.document_title || source.document_id || 'Report evidence')
-    .replace(/\.[a-z0-9]+$/i, '')
-    .replace(/[_-]+/g, ' ')
-    .trim() || 'Report evidence'
+  formatSourceDocumentTitle(source)
 );
 
 const AnswerWarningBadge: React.FC<{

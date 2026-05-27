@@ -41,11 +41,58 @@ export const readSseEvents = async (
   }
 };
 
+const LOW_VALUE_TITLE_TOKENS = new Set([
+  'report',
+  'reports',
+  'sustainability',
+  'esg',
+  'environmental',
+  'social',
+  'governance',
+  'annual',
+  'update',
+  'full',
+  'pdf',
+]);
+
+export const cleanSourceName = (value?: string): string => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const fileName = raw.split(/[\\/]/).pop() || raw;
+  return fileName
+    .replace(/\.[a-z0-9]{1,8}$/i, '')
+    .replace(/^[0-9a-f]{16,}[\s_-]+/i, '')
+    .replace(/[\s_-]+/g, ' ')
+    .trim();
+};
+
+const meaningfulTitleTokens = (value: string): Set<string> => (
+  new Set(
+    (value.match(/[a-z0-9]+/gi) || [])
+      .map(token => token.toLowerCase())
+      .filter(token => token.length > 1 && !/^\d+$/.test(token) && !LOW_VALUE_TITLE_TOKENS.has(token))
+  )
+);
+
+export const formatSourceDocumentTitle = (source: RagSource): string => {
+  const title = cleanSourceName(source.document_title);
+  const sourceName = cleanSourceName(source.source);
+  const documentId = cleanSourceName(source.document_id);
+
+  if (sourceName) {
+    const titleTokens = meaningfulTitleTokens(title);
+    const sourceTokens = meaningfulTitleTokens(sourceName);
+    const hasOverlap = Array.from(titleTokens).some(token => sourceTokens.has(token));
+    if (!title || (sourceTokens.size > 0 && titleTokens.size > 0 && !hasOverlap)) {
+      return sourceName;
+    }
+  }
+  return title || sourceName || documentId || 'Report evidence';
+};
+
 export const formatSourceChipLabel = (source: RagSource): string => {
-  const rawDoc = String(source.document_title || source.document_id || 'source');
-  const shortDoc = rawDoc
-    .replace(/\.[a-z0-9]+$/i, '')
-    .split(/[\s_-]+/)
+  const shortDoc = formatSourceDocumentTitle(source)
+    .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .join(' ')

@@ -18,6 +18,7 @@ from rag.agent_types import (
     AgentTraceStep,
     StepStatus,
 )
+from rag.source_titles import display_document_title
 
 
 INSUFFICIENT_CONTEXT_ANSWER = "The provided reports do not contain enough information to answer this question."
@@ -645,7 +646,7 @@ def _source_labels(sources: List[Dict[str, Any]], limit: int = 3) -> List[str]:
     for item in sources:
         if not isinstance(item, dict):
             continue
-        title = str(item.get("document_title") or item.get("document_id") or "report").strip()
+        title = display_document_title(item)
         chunk = str(item.get("chunk_id") or item.get("id") or "").strip()
         label = f"{title} · {chunk}" if chunk else title
         if label in seen:
@@ -1117,7 +1118,8 @@ def _serialize_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "chunk_id": item.get("chunk_id") or item.get("id"),
                 "text": item.get("text") or item.get("content"),
                 "document_id": item.get("document_id"),
-                "document_title": item.get("document_title"),
+                "document_title": display_document_title(item),
+                "source": item.get("source"),
                 "document_group": item.get("document_group"),
                 "source_type": item.get("source_type"),
                 "domain": item.get("domain"),

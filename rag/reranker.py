@@ -12,6 +12,7 @@ from configs.settings import (
     RERANKER_TOP_K_AFTER,
     RERANKER_TOP_K_BEFORE,
 )
+from rag.source_titles import display_document_title
 
 
 _RERANKER: Optional["Reranker"] = None
@@ -99,7 +100,7 @@ def _get_reranker() -> Reranker:
 
 
 def _candidate_text(item: Dict[str, Any]) -> str:
-    title = str(item.get("document_title") or item.get("title") or item.get("document_id") or "").strip()
+    title = display_document_title(item)
     text = str(item.get("text") or item.get("content") or "").strip()
     if title and text:
         return f"{title}\n\n{text}"
