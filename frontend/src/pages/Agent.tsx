@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { motion } from 'framer-motion';
-import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainCircuit, Network, FolderOpen, FileUp, FileText, Plus, Paperclip, CheckCircle2, AlertCircle, Circle, ArrowUp, ThumbsUp, ThumbsDown, ClipboardList, GitBranch, Eye, ShieldCheck, BookOpen } from 'lucide-react';
+import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainCircuit, Network, FolderOpen, FileUp, FileText, Plus, Paperclip, CheckCircle2, AlertCircle, Circle, ArrowUp, ThumbsUp, ThumbsDown, GitBranch, Eye, ShieldCheck, X } from 'lucide-react';
 import { GraphVisualizer } from '../components';
 import { useAuth } from '../contexts/AuthContext';
 import type { GraphData, GraphEdge, GraphHighlightPath, GraphNode } from '../types/graph';
@@ -29,7 +29,6 @@ import {
   formatAgentPartialLabel,
   formatAgentStageLabel,
   formatAgentTraceSummary,
-  shouldShowLiveAgentTracePanel,
 } from './agent/agentTraceUi';
 
 interface CausalRelationship {
@@ -540,43 +539,11 @@ const normalizeAgentTraceSteps = (steps: unknown): AgentTraceStep[] => {
 };
 
 const getTracePhaseCounts = (steps: AgentTraceStep[]) => {
-  const planSteps = new Set<number>();
-  const phases = new Set<string>();
+  const uniqueSteps = new Set<string>();
   steps.forEach(step => {
-    if (typeof step.plan_step === 'number') {
-      planSteps.add(step.plan_step);
-    }
-    if (step.phase) {
-      phases.add(String(step.phase));
-    }
+    uniqueSteps.add(`${step.plan_step || step.step}-${step.phase || step.stage || step.tool || 'event'}`);
   });
-  return {
-    planSteps: planSteps.size,
-    phases: phases.size,
-    replans: steps.filter(step => step.phase === 'replan').length,
-    hasReflection: steps.some(step => step.phase === 'reflexion' || step.reflexion),
-  };
-};
-
-const getTraceIconForPhase = (phase?: string | null) => {
-  switch (phase) {
-    case 'plan':
-      return ClipboardList;
-    case 'thought':
-      return BrainCircuit;
-    case 'action':
-      return GitBranch;
-    case 'observation':
-      return Eye;
-    case 'replan':
-      return GitBranch;
-    case 'reflexion':
-      return ShieldCheck;
-    case 'final':
-      return CheckCircle2;
-    default:
-      return Circle;
-  }
+  return uniqueSteps.size;
 };
 
 const formatSourceDocumentLabel = (source: RagSource): string => (
@@ -602,131 +569,320 @@ const AnswerWarningBadge: React.FC<{
   );
 };
 
-const AgentTracePanel: React.FC<{ steps: AgentTraceStep[] }> = ({ steps }) => {
-  const visibleSteps = steps.slice(-8);
-  const completedCount = steps.filter(step => String(step.status || '').toLowerCase() === 'completed').length;
-  const progressPercent = steps.length > 0
-    ? Math.max(12, Math.min(100, Math.round((completedCount / steps.length) * 100)))
-    : 12;
-  const runningStep = [...steps].reverse().find(step => String(step.status || '').toLowerCase() === 'running');
-  const currentLabel = runningStep ? formatAgentStageLabel(runningStep) : 'Reviewing evidence';
-  const phaseCounts = getTracePhaseCounts(steps);
+type AgentDrawerTab = 'process' | 'files';
+
+const getTraceStatus = (step: AgentTraceStep) => String(step.status || '').toLowerCase();
+
+const formatTraceDuration = (step: AgentTraceStep) => {
+  if (typeof step.elapsed_ms !== 'number' || step.elapsed_ms <= 0) return '';
+  const seconds = step.elapsed_ms / 1000;
+  return `${seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(2)}s`;
+};
+
+const getEventVerb = (step: AgentTraceStep) => {
+  const status = getTraceStatus(step);
+  if (status === 'running') return 'Ongoing';
+  if (status === 'failed') return 'Failed';
+  if (status === 'completed') return 'Completed';
+  if (status === 'planned' || status === 'pending') return 'Queued';
+  if (status) {
+    return status
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, char => char.toUpperCase());
+  }
+  return 'Completed';
+};
+
+const formatMiniMaxEventTitle = (step: AgentTraceStep) => {
+  const phase = String(step.phase || '').toLowerCase();
+  const tool = String(step.tool || '').trim();
+  const verb = getEventVerb(step);
+
+  if (tool === 'search_documents') return `${verb} Web Search`;
+  if (tool === 'read_chunks') return `${verb} Read Evidence`;
+  if (tool === 'get_graph_context' || tool === 'query_neo4j') return `${verb} Graph Context`;
+  if (tool === 'summarize_evidence') return `${verb} Answer Synthesis`;
+  if (phase === 'plan' || phase === 'thought' || phase === 'reflexion') return 'Thinking Process';
+  if (phase === 'replan') return 'Replanned evidence search';
+  if (phase === 'observation') return 'Evidence update';
+  if (phase === 'final') return 'Final answer';
+  return formatAgentStageLabel(step);
+};
+
+const getMiniMaxEventIcon = (step: AgentTraceStep) => {
+  const phase = String(step.phase || '').toLowerCase();
+  const tool = String(step.tool || '').trim();
+  if (tool === 'search_documents') return Search;
+  if (tool === 'read_chunks') return FileText;
+  if (tool === 'get_graph_context' || tool === 'query_neo4j') return Network;
+  if (tool === 'summarize_evidence' || phase === 'final') return CheckCircle2;
+  if (phase === 'replan') return GitBranch;
+  if (phase === 'observation') return Eye;
+  if (phase === 'reflexion') return ShieldCheck;
+  if (phase === 'plan' || phase === 'thought') return BrainCircuit;
+  return Circle;
+};
+
+const getVisibleTraceSteps = (steps: AgentTraceStep[], limit = 12) => {
+  const seen = new Set<string>();
+  return steps
+    .filter(step => {
+      const key = `${step.step}|${step.phase || ''}|${step.tool || ''}|${step.status || ''}|${step.summary || ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(-limit);
+};
+
+const MiniMaxTraceEvents: React.FC<{
+  steps: AgentTraceStep[];
+  compact?: boolean;
+}> = ({ steps, compact = false }) => {
+  const visibleSteps = getVisibleTraceSteps(steps, compact ? 8 : 16);
+  if (visibleSteps.length === 0) return null;
 
   return (
-    <div className="mt-4 overflow-hidden rounded-2xl border border-hairline bg-white shadow-[0_18px_44px_rgba(15,23,42,0.08)]">
-      <div className="border-b border-hairline bg-gradient-to-r from-slate-50 via-white to-blue-50/60 px-4 py-3.5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-ink text-white shadow-sm">
-              <BrainCircuit className="h-3.5 w-3.5" />
-            </span>
-            <div className="min-w-0">
-              <div className="text-[12px] font-semibold text-ink-charcoal">Plan / Act / Reflect</div>
-              <div className="mt-0.5 text-[11px] leading-4 text-ink-steel">{currentLabel}</div>
-            </div>
-          </div>
-          <span className="shrink-0 rounded-full border border-hairline bg-white px-2 py-0.5 text-[11px] font-medium text-ink-steel">
-            {phaseCounts.planSteps || completedCount} steps
-          </span>
-        </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
-          <div
-            className="h-full rounded-full bg-ink transition-all duration-500 ease-out"
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
-        <div className="mt-3 flex flex-wrap gap-1.5 text-[10px] font-semibold text-ink-steel">
-          {['plan', 'thought', 'action', 'observation', 'reflexion'].map(phase => (
-            <span key={phase} className="rounded-full border border-hairline bg-white px-2 py-0.5 capitalize">
-              {phase === 'reflexion' ? 'reflect' : phase}
-            </span>
-          ))}
-        </div>
-      </div>
+    <div className={compact ? 'mt-3 space-y-2' : 'space-y-1.5'}>
+      {visibleSteps.map((step, traceIndex) => {
+        const status = getTraceStatus(step);
+        const Icon = status === 'running' ? Loader2 : status === 'failed' ? AlertCircle : getMiniMaxEventIcon(step);
+        const summary = formatAgentTraceSummary(step);
+        const duration = formatTraceDuration(step);
+        const isThinking = ['plan', 'thought', 'reflexion'].includes(String(step.phase || '').toLowerCase());
+        const title = formatMiniMaxEventTitle(step);
 
-      <div className="relative p-3.5">
-        <div className="absolute bottom-4 left-[25px] top-4 w-px bg-hairline" aria-hidden="true" />
-        {visibleSteps.map((step, traceIndex) => {
-          const status = String(step.status || '').toLowerCase();
-          const PhaseIcon = getTraceIconForPhase(step.phase);
-          const TraceIcon = status === 'running' ? Loader2 : status === 'failed' ? AlertCircle : PhaseIcon;
-          const summary = formatAgentTraceSummary(step);
+        if (compact && isThinking) {
           return (
-            <div
-              key={`${step.step}-${step.tool || step.stage}-${traceIndex}`}
-              className="relative flex min-w-0 items-start gap-3 rounded-xl px-1.5 py-2"
-            >
-              <span className={`z-10 mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${
-                status === 'running'
-                  ? 'border-ink bg-ink text-white'
-                  : status === 'completed'
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : status === 'failed'
-                      ? 'border-red-200 bg-red-50 text-red-600'
-                      : 'border-hairline bg-white text-ink-stone'
-              }`}>
-                <TraceIcon className={`h-3 w-3 ${status === 'running' ? 'animate-spin' : ''}`} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                  <div className="text-[12px] font-semibold leading-5 text-ink-charcoal">
-                    {formatAgentStageLabel(step)}
-                  </div>
-                  {typeof step.plan_step === 'number' && (
-                    <span className="font-mono text-[10px] text-ink-stone">#{step.plan_step}</span>
-                  )}
-                </div>
-                {summary && (
-                  <div className="text-[11px] leading-4 text-ink-steel">
-                    {summary}
-                  </div>
-                )}
-              </div>
+            <div key={`${step.step}-${traceIndex}-${title}`} className="flex min-w-0 items-center gap-2 text-[12px] text-ink-stone">
+              <span>{title}</span>
+              {duration && <span className="font-mono text-[11px]">{duration}</span>}
+              <span className="text-ink-faint">›</span>
             </div>
           );
-        })}
-      </div>
+        }
+
+        return (
+          <div
+            key={`${step.step}-${traceIndex}-${title}`}
+            className={compact
+              ? 'flex w-fit max-w-full items-center gap-2 rounded-full border border-hairline bg-white px-3 py-1.5 text-[12px] text-ink-steel shadow-[0_1px_1px_rgba(0,0,0,0.02)]'
+              : 'flex min-w-0 items-start gap-3 rounded-lg px-2.5 py-2 transition hover:bg-surface-soft'
+            }
+          >
+            <span className={`inline-flex shrink-0 items-center justify-center rounded-md ${
+              compact ? 'h-4 w-4' : 'mt-0.5 h-7 w-7 border border-hairline bg-white'
+            } ${
+              status === 'running'
+                ? 'text-ink'
+                : status === 'failed'
+                  ? 'text-red-600'
+                  : 'text-ink-stone'
+            }`}>
+              <Icon className={`${compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} ${status === 'running' ? 'animate-spin' : ''}`} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <span className={`truncate font-medium ${compact ? 'text-[12px] text-ink-steel' : 'text-[13px] text-ink-charcoal'}`}>
+                  {title}
+                </span>
+                {duration && (
+                  <span className="font-mono text-[11px] text-ink-stone">{duration}</span>
+                )}
+              </div>
+              {!compact && summary && (
+                <p className="mt-0.5 line-clamp-2 text-[12px] leading-5 text-ink-steel">
+                  {summary}
+                </p>
+              )}
+              {compact && summary && !isThinking && (
+                <span className="min-w-0 truncate font-mono text-[11px] text-ink-stone">
+                  {summary.replace(/^Searching report evidence for\s*/i, '').replace(/\.$/, '')}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 };
 
-const EvidenceRail: React.FC<{ sources: RagSource[] }> = ({ sources }) => {
+const groupSourcesByDocument = (sources: RagSource[]) => {
+  const groups = new Map<string, { key: string; title: string; sources: RagSource[] }>();
+  sources.forEach((source, index) => {
+    const title = formatSourceDocumentLabel(source);
+    const key = String(source.document_id || source.document_title || title || index);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.sources.push(source);
+      return;
+    }
+    groups.set(key, { key, title, sources: [source] });
+  });
+  return Array.from(groups.values());
+};
+
+const EvidenceRail: React.FC<{
+  sources: RagSource[];
+  onOpenFiles?: () => void;
+}> = ({ sources, onOpenFiles }) => {
   if (!sources.length) return null;
-  const shownSources = sources.slice(0, 4);
   return (
-    <div className="mt-4 border-t border-hairline pt-3.5">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-[12px] font-semibold text-ink-charcoal">
-          <BookOpen className="h-3.5 w-3.5 text-ink-steel" />
-          Evidence
+    <div className="mt-5">
+      <button
+        type="button"
+        onClick={onOpenFiles}
+        className="inline-flex items-center gap-2 rounded-lg border border-hairline bg-white px-4 py-3 text-[13px] font-medium text-ink-charcoal transition hover:border-ink hover:bg-surface-soft"
+      >
+        <FolderOpen className="h-4 w-4 text-ink-stone" />
+        <span>View all evidence</span>
+        <span className="font-mono text-[11px] text-ink-stone">{sources.length}</span>
+      </button>
+    </div>
+  );
+};
+
+const AgentWorkspaceDrawer: React.FC<{
+  open: boolean;
+  tab: AgentDrawerTab;
+  onTabChange: (tab: AgentDrawerTab) => void;
+  onClose: () => void;
+  steps: AgentTraceStep[];
+  sources: RagSource[];
+  isLoading: boolean;
+  currentLoadingStep: string;
+}> = ({ open, tab, onTabChange, onClose, steps, sources, isLoading, currentLoadingStep }) => {
+  if (!open) return null;
+  const currentStep = [...steps].reverse().find(step => getTraceStatus(step) === 'running') || [...steps].reverse()[0];
+  const fileGroups = groupSourcesByDocument(sources);
+  const stepCount = getTracePhaseCounts(steps);
+
+  return (
+    <>
+    <button
+      type="button"
+      aria-label="Close process drawer"
+      className="fixed inset-0 z-30 bg-black/20 xl:hidden"
+      onClick={onClose}
+    />
+    <aside className="fixed bottom-0 right-0 top-[72px] z-40 flex w-[min(92vw,430px)] min-h-0 shrink-0 flex-col border-l border-hairline bg-white shadow-2xl xl:static xl:z-auto xl:w-[44vw] xl:min-w-[420px] xl:max-w-[920px] xl:shadow-none">
+      <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
+        <div className="inline-flex rounded-lg bg-surface-soft p-1">
+          {([
+            ['process', 'Current Process'],
+            ['files', 'Files'],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => onTabChange(id)}
+              className={`rounded-md px-3 py-1.5 text-[13px] font-medium transition ${
+                tab === id ? 'bg-white text-ink shadow-sm' : 'text-ink-stone hover:text-ink'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-        <div className="text-[11px] font-medium text-ink-stone">
-          {sources.length} cited {sources.length === 1 ? 'source' : 'sources'}
-        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-stone transition hover:bg-surface-soft hover:text-ink"
+          aria-label="Close process drawer"
+          title="Close"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {shownSources.map((source, sourceIdx) => (
-          <div
-            key={`${source.chunk_id || source.document_id || sourceIdx}-${sourceIdx}`}
-            className="min-w-0 rounded-xl border border-hairline bg-slate-50/70 px-3 py-2.5"
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-hairline bg-white text-ink-steel">
-                <FileText className="h-3.5 w-3.5" />
-              </span>
-              <div className="min-w-0">
-                <div className="truncate text-[12px] font-semibold text-ink-charcoal">
-                  {formatSourceDocumentLabel(source)}
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {tab === 'process' ? (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-hairline bg-white p-3">
+              <div className="flex items-center gap-3">
+                <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-hairline ${
+                  isLoading ? 'bg-white text-ink' : 'bg-success-bg text-success'
+                }`}>
+                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-ink-charcoal">
+                    {isLoading ? (currentStep ? formatMiniMaxEventTitle(currentStep) : currentLoadingStep) : 'Process complete'}
+                  </div>
+                  <div className="mt-0.5 text-[12px] text-ink-stone">
+                    {stepCount > 0 ? `${stepCount} recorded events` : 'Waiting for the first retrieval event'}
+                  </div>
                 </div>
-                <div className="truncate font-mono text-[10px] text-ink-stone">
-                  {formatSourceChipLabel(source)}
-                </div>
+                <span className={`ml-auto h-2 w-2 rounded-full ${isLoading ? 'bg-blue-500' : 'bg-success'}`} />
               </div>
             </div>
+
+            {steps.length > 0 ? (
+              <MiniMaxTraceEvents steps={steps} />
+            ) : (
+              <div className="rounded-xl border border-dashed border-hairline bg-surface-soft px-4 py-8 text-center text-[13px] text-ink-stone">
+                Search, reading, and verification events will appear here.
+              </div>
+            )}
+
+            {fileGroups.length > 0 && (
+              <div className="space-y-2 border-t border-hairline pt-4">
+                <div className="text-[12px] font-semibold text-ink-charcoal">Files produced</div>
+                {fileGroups.map(group => (
+                  <div key={group.key} className="flex min-w-0 items-center gap-3 rounded-xl border border-hairline bg-white px-3 py-3">
+                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
+                      <FileText className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium text-ink-charcoal">{group.title}</div>
+                      <div className="font-mono text-[11px] text-ink-stone">{group.sources.length} evidence chunks</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        ))}
+        ) : (
+          <div className="space-y-3">
+            {sources.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-hairline bg-surface-soft px-4 py-10 text-center text-[13px] text-ink-stone">
+                No cited evidence yet.
+              </div>
+            ) : (
+              <>
+                {fileGroups.map(group => (
+                  <div key={group.key} className="rounded-xl border border-hairline bg-white">
+                    <div className="flex items-center gap-3 border-b border-hairline px-3 py-3">
+                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
+                        <FileText className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-semibold text-ink-charcoal">{group.title}</div>
+                        <div className="font-mono text-[11px] text-ink-stone">{group.sources.length} cited chunks</div>
+                      </div>
+                    </div>
+                    <div className="divide-y divide-hairline-soft">
+                      {group.sources.slice(0, 8).map((source, sourceIdx) => (
+                        <div key={`${group.key}-${source.chunk_id || sourceIdx}`} className="px-3 py-3">
+                          <div className="font-mono text-[11px] text-ink-stone">{formatSourceChipLabel(source)}</div>
+                          {source.text && (
+                            <p className="mt-1 line-clamp-3 text-[12px] leading-5 text-ink-steel">
+                              {source.text}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
       </div>
-    </div>
+    </aside>
+    </>
   );
 };
 
@@ -750,6 +906,9 @@ const Agent: React.FC = () => {
   const [loadingElapsedMs, setLoadingElapsedMs] = useState(0);
   const [activeAgentPath, setActiveAgentPath] = useState<'rag' | 'agent' | null>(null);
   const [agentTrace, setAgentTrace] = useState<AgentTraceStep[]>([]);
+  const [agentDrawerOpen, setAgentDrawerOpen] = useState(true);
+  const [agentDrawerTab, setAgentDrawerTab] = useState<AgentDrawerTab>('process');
+  const [agentDrawerSourcesOverride, setAgentDrawerSourcesOverride] = useState<RagSource[] | null>(null);
   // Tier selector: 'flash' (OpenAI gpt-5.4-mini, fast) vs 'deep' (Anthropic
   // Claude, layered retrieval + graph context). URL accepts ?tier=deep; legacy
   // ?mode=predict is honored as Deep so old bookmarks still work.
@@ -1868,6 +2027,9 @@ ${isDuplicate
     setLoadingStepIndex(0);
     setActiveAgentPath(null);
     setAgentTrace([]);
+    setAgentDrawerOpen(true);
+    setAgentDrawerTab('process');
+    setAgentDrawerSourcesOverride(null);
     try {
       let sessionId = currentSessionId;
       let sessionIdToActivateAfterFirstTurn = '';
@@ -1945,12 +2107,18 @@ ${isDuplicate
     setConversation([]);
     setActiveAgentPath(null);
     setAgentTrace([]);
+    setAgentDrawerOpen(false);
+    setAgentDrawerTab('process');
+    setAgentDrawerSourcesOverride(null);
     setActiveTab('chat');
   };
   const handleSelectSession = (id: string) => {
     setCurrentSessionId(id);
     setActiveAgentPath(null);
     setAgentTrace([]);
+    setAgentDrawerOpen(true);
+    setAgentDrawerTab('process');
+    setAgentDrawerSourcesOverride(null);
     setActiveTab('chat');
   };
   const handleDeleteSession = async (id: string) => {
@@ -1968,6 +2136,7 @@ ${isDuplicate
         setCurrentSessionId('');
         persistCurrentSessionId('');
         setConversation([]);
+        setAgentDrawerOpen(false);
       }
     } catch (error) {
       console.error('Delete chat session failed:', error);
@@ -2327,6 +2496,22 @@ ${isDuplicate
   const selectedGraphNode = displayedGraph?.nodes.find((node: GraphNode) => node.id === selectedGraphNodeId) || null;
   const selectedGraphEdge = displayedGraph?.edges.find((edge: GraphEdge) => getGraphEdgeId(edge) === selectedGraphEdgeId) || null;
   const graphViewTitle = selectedDocument?.title || 'Focused report graph';
+  const latestAgentMessage = [...displayedConversation].reverse().find((message) => (
+    message.type === 'agent' &&
+    (
+      Boolean(message.content.trim()) ||
+      Boolean(message.data?.agentTrace?.length) ||
+      Boolean(message.data?.sources?.length)
+    )
+  ));
+  const drawerTrace = agentTrace.length > 0 ? agentTrace : (latestAgentMessage?.data?.agentTrace || []);
+  const drawerSources = agentDrawerSourcesOverride || latestAgentMessage?.data?.sources || [];
+  const hasAgentWorkspace = activeTab === 'chat' && (
+    isLoading ||
+    activeAgentPath === 'agent' ||
+    drawerTrace.length > 0 ||
+    drawerSources.length > 0
+  );
   return (
     <div className="cg-workspace h-[calc(100vh-72px)] overflow-hidden text-ink">
       <input
@@ -2343,113 +2528,130 @@ ${isDuplicate
         }}
       />
       <div className="flex h-full w-full overflow-hidden border-t border-hairline bg-transparent">
-        <aside className="cg-sidebar hidden h-full w-60 shrink-0 border-r lg:flex lg:flex-col xl:w-64">
-          <div className="border-b border-hairline bg-surface-soft px-3 py-3">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-steel">Agent</div>
-                <div className="mt-1 font-display text-[16px] font-semibold tracking-normal text-ink">Research Desk</div>
-              </div>
-              <span className="rounded-full bg-success-bg px-2 py-0.5 text-[10px] font-semibold text-success">
-                Live
-              </span>
-            </div>
+        <aside className="hidden h-full w-[184px] shrink-0 border-r border-hairline bg-white lg:flex lg:flex-col">
+          <div className="space-y-1 px-2 py-3">
             <button
               onClick={handleNewSession}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-ink-charcoal whitespace-nowrap"
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] font-semibold text-ink transition hover:bg-surface-soft"
             >
               <Plus className="h-4 w-4" />
-              New chat
+              New Task
             </button>
-          </div>
-
-          <div className="flex min-h-0 flex-1 flex-col bg-surface-soft">
-            <div className="flex items-center justify-between px-3 pb-1.5 pt-3">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-steel">Chats</div>
-              <div className="text-xs text-ink-stone">{chatSessions.length}</div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
-              {isChatSessionsLoading && chatSessions.length === 0 && (
-                <div className="px-3 py-4 text-xs text-ink-stone">
-                  Loading conversations…
-                </div>
-              )}
-              {chatSessionsError && (
-                <div className="px-3 py-2 text-xs text-red-500">
-                  {chatSessionsError}
-                </div>
-              )}
-              {chatSessions.length === 0 ? (
-                <div className="px-3 py-6 text-center text-xs text-ink-stone">
-                  No conversations yet
-                </div>
-              ) : (
-                [...chatSessions]
-                  .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
-                  .map((session) => {
-                    const isActive = session.id === currentSessionId;
-                    return (
-                      <div
-                        key={session.id}
-                        className={`group/session relative mb-1 px-0 ${
-                          isActive
-                            ? 'cg-list-row cg-list-row-active'
-                            : 'rounded-md border border-transparent hover:border-hairline hover:bg-white'
-                        }`}
-                      >
-                        <button
-                          onClick={() => handleSelectSession(session.id)}
-                          className="block w-full px-2.5 py-2.5 pr-8 text-left"
-                        >
-                          <div className={`line-clamp-1 text-[13px] font-semibold leading-[1.35] ${isActive ? 'text-ink' : 'text-ink-charcoal'}`}>
-                            {session.title || 'New chat'}
-                          </div>
-                          <div className="mt-1 text-[12px] text-ink-stone">
-                            {formatRelativeTime(session.updatedAt)}
-                          </div>
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (window.confirm('Delete this conversation?')) {
-                              handleDeleteSession(session.id);
-                            }
-                          }}
-                          className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-ink-stone transition hover:bg-hairline hover:text-red-600 ${
-                            isActive ? 'opacity-100' : 'opacity-0 group-hover/session:opacity-100'
-                          }`}
-                          title="Delete chat"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    );
-                  })
-              )}
-            </div>
-          </div>
-
-          <div className="border-t border-hairline bg-surface-soft p-2">
             <button
-              onClick={handleUploadEntry}
-              className={`mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition ${
-                activeTab === 'upload' ? 'bg-white font-medium text-ink shadow-sm' : 'text-ink-charcoal hover:bg-white'
+              onClick={() => setActiveTab('chat')}
+              className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition ${
+                activeTab === 'chat' ? 'bg-surface-soft font-semibold text-ink' : 'text-ink-charcoal hover:bg-surface-soft'
               }`}
             >
-              <FileUp className="h-4 w-4" />
-              Upload
-              {isUploading && <span className="ml-auto h-2 w-2 rounded-full bg-ink" />}
+              <Search className="h-4 w-4" />
+              Search
             </button>
             <button
               onClick={() => setActiveTab('documents')}
               className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition ${
-                activeTab === 'documents' ? 'bg-white font-medium text-ink shadow-sm' : 'text-ink-charcoal hover:bg-white'
+                activeTab === 'documents' ? 'bg-surface-soft font-semibold text-ink' : 'text-ink-charcoal hover:bg-surface-soft'
               }`}
             >
               <FolderOpen className="h-4 w-4" />
-              Library
+              Assets
               <span className="ml-auto text-[11px] text-ink-stone">{totalDocuments}</span>
             </button>
+          </div>
+
+          <div className="border-t border-hairline px-2 py-3">
+            <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-stone">
+              CausalGraph Lab
+            </div>
+            {[
+              { label: 'Research Agent', meta: 'Beta', icon: BrainCircuit, action: () => setActiveTab('chat') },
+              { label: 'Graph Reasoner', meta: '', icon: Network, action: () => setActiveTab('documents') },
+              { label: 'Skills', meta: 'New', icon: Zap, action: handleUploadEntry },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={item.action}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-ink-charcoal transition hover:bg-surface-soft hover:text-ink"
+                >
+                  <Icon className="h-4 w-4" />
+                  <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+                  {item.meta && <span className="text-[10px] text-ink-stone">{item.meta}</span>}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="border-t border-hairline px-2 py-3">
+            <button
+              type="button"
+              onClick={() => setActiveTab('documents')}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-ink-charcoal transition hover:bg-surface-soft hover:text-ink"
+            >
+              <Database className="h-4 w-4" />
+              Explore Evidence
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto border-t border-hairline px-2 py-3">
+            <div className="mb-1 flex items-center justify-between px-2">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-stone">Task History</div>
+              <div className="text-[11px] text-ink-stone">{chatSessions.length}</div>
+            </div>
+            {isChatSessionsLoading && chatSessions.length === 0 && (
+              <div className="px-2 py-3 text-[12px] text-ink-stone">Loading...</div>
+            )}
+            {chatSessionsError && (
+              <div className="px-2 py-2 text-[12px] text-red-500">{chatSessionsError}</div>
+            )}
+            {chatSessions.length === 0 ? (
+              <div className="px-2 py-4 text-[12px] text-ink-stone">No tasks yet</div>
+            ) : (
+              [...chatSessions]
+                .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
+                .map((session) => {
+                  const isActive = session.id === currentSessionId;
+                  return (
+                    <div key={session.id} className="group/session relative">
+                      <button
+                        onClick={() => handleSelectSession(session.id)}
+                        className={`mb-1 block w-full rounded-lg px-2.5 py-2 pr-8 text-left text-[12px] transition ${
+                          isActive ? 'bg-surface-soft font-semibold text-ink' : 'text-ink-charcoal hover:bg-surface-soft'
+                        }`}
+                      >
+                        <span className="block truncate">{session.title || 'New task'}</span>
+                        <span className="mt-0.5 block text-[11px] font-normal text-ink-stone">{formatRelativeTime(session.updatedAt)}</span>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm('Delete this conversation?')) {
+                            handleDeleteSession(session.id);
+                          }
+                        }}
+                        className="absolute right-1 top-2 rounded-md p-1 text-ink-stone opacity-0 transition hover:bg-white hover:text-red-600 group-hover/session:opacity-100"
+                        title="Delete task"
+                        aria-label="Delete task"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  );
+                })
+            )}
+          </div>
+
+          <div className="border-t border-hairline px-3 py-3">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-semibold text-white">
+                {String(user?.username || user?.email || 'U').trim().charAt(0).toUpperCase()}
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-[12px] font-semibold text-ink">{user?.username || user?.email || 'User'}</div>
+                <div className="text-[11px] text-ink-stone">Free</div>
+              </div>
+            </div>
           </div>
         </aside>
 
@@ -2503,13 +2705,38 @@ ${isDuplicate
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <button
-                        onClick={handleUploadEntry}
-                        className="inline-flex h-8 items-center gap-1.5 rounded-full border border-hairline bg-canvas px-3 text-[12px] font-semibold text-ink-charcoal transition hover:border-ink"
-                        title="Upload report"
+                        onClick={handleNewSession}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-hairline bg-white text-ink-charcoal transition hover:border-ink hover:bg-surface-soft"
+                        title="New task"
+                        aria-label="New task"
                       >
-                        <FileUp className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Upload</span>
+                        <Plus className="h-4 w-4" />
                       </button>
+                      <button
+                        onClick={handleUploadEntry}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-hairline bg-white text-ink-charcoal transition hover:border-ink hover:bg-surface-soft"
+                        title="Upload report"
+                        aria-label="Upload report"
+                      >
+                        <FileUp className="h-4 w-4" />
+                      </button>
+                      {hasAgentWorkspace && (
+                        <button
+                          onClick={() => {
+                            setAgentDrawerOpen(prev => !prev);
+                            setAgentDrawerTab('process');
+                          }}
+                          className={`hidden h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-semibold transition xl:inline-flex ${
+                            agentDrawerOpen
+                              ? 'border-ink bg-ink text-white'
+                              : 'border-hairline bg-white text-ink-charcoal hover:border-ink hover:bg-surface-soft'
+                          }`}
+                          title="Current process"
+                        >
+                          <Network className="h-3.5 w-3.5" />
+                          Process
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -2530,23 +2757,17 @@ ${isDuplicate
                     className="flex flex-1 items-center justify-center"
                   >
                     <div className="w-full max-w-3xl px-4 py-10 text-center sm:px-8">
-                      <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-hairline bg-white text-ink shadow-sm">
-                        <MessageSquare className="h-5 w-5" />
-                      </div>
-                      <h1 className="font-display text-[30px] font-semibold leading-[1.16] tracking-normal text-ink sm:text-[38px]">
-                        Ask across your reports
+                      <h1 className="font-display text-[32px] font-semibold leading-[1.12] tracking-normal text-ink sm:text-[44px]">
+                        CausalGraph Agent
                       </h1>
-                      <p className="mx-auto mt-3 max-w-xl text-[14px] leading-6 text-ink-steel sm:text-[15px]">
-                        Start with a question, upload a report, or choose a smaller document scope.
-                      </p>
-                      <div className="mt-6 flex flex-wrap justify-center gap-2">
+                      <div className="mt-7 flex flex-wrap justify-center gap-2">
                         <button
                           type="button"
                           onClick={handleUploadEntry}
                           className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-ink-charcoal"
                         >
                           <FileUp className="h-4 w-4" />
-                          Upload report
+                          Upload
                         </button>
                         <button
                           type="button"
@@ -2554,7 +2775,7 @@ ${isDuplicate
                           className="inline-flex items-center gap-2 rounded-full border border-hairline bg-white px-4 py-2 text-[13px] font-semibold text-ink-charcoal shadow-sm transition hover:border-ink hover:text-ink"
                         >
                           <FolderOpen className="h-4 w-4" />
-                          Choose reports
+                          Assets
                         </button>
                       </div>
                       <div className="mt-5 flex flex-wrap justify-center gap-2">
@@ -2589,8 +2810,8 @@ ${isDuplicate
                           transition={{ duration: 0.35 }}
                           className="group flex flex-col items-end"
                         >
-                          <div className="cg-message-user max-w-[80%] px-5 py-3 text-[14px] leading-[1.55] shadow-sm">
-                            <div className="prose prose-sm prose-invert max-w-none leading-[1.55] [&>p]:mb-1 [&>p:last-child]:mb-0 [&>ul]:pl-4 [&>ol]:pl-4">
+                          <div className="max-w-[680px] rounded-xl bg-surface-soft px-4 py-3 text-[14px] leading-[1.55] text-ink-charcoal">
+                            <div className="prose prose-sm max-w-none leading-[1.55] text-ink-charcoal prose-p:text-ink-charcoal [&>p]:mb-1 [&>p:last-child]:mb-0 [&>ul]:pl-4 [&>ol]:pl-4">
                               <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}>
                                 {normalizeMathForMarkdown(message.content)}
                               </ReactMarkdown>
@@ -2609,6 +2830,7 @@ ${isDuplicate
                     const canSubmitFeedback = Boolean(message.content.trim() && message.data?.backend);
                     const messageAgentTrace = message.data?.agentTrace || [];
                     const isAgentAnswer = message.data?.agentPath === 'agent' || messageAgentTrace.length > 0;
+                    const hasAssistantContent = message.content.trim().length > 0;
 
                     return (
                       <motion.div
@@ -2623,37 +2845,41 @@ ${isDuplicate
                             <Network className="h-4 w-4" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <article className="max-w-3xl overflow-hidden rounded-2xl border border-hairline bg-white shadow-[0_18px_48px_rgba(15,23,42,0.07)]">
-                              <div className="border-b border-hairline bg-gradient-to-r from-slate-50 via-white to-slate-50 px-4 py-3">
-                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                  <div className="flex min-w-0 items-center gap-2">
-                                    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-hairline bg-white text-ink-charcoal shadow-sm">
-                                      <Network className="h-3.5 w-3.5" />
-                                    </span>
-                                    <div className="min-w-0">
-                                      <div className="text-[12px] font-semibold text-ink-charcoal">Answer</div>
-                                      <div className="text-[11px] leading-4 text-ink-stone">
-                                        {message.data?.sources?.length ? `${message.data.sources.length} cited source${message.data.sources.length === 1 ? '' : 's'}` : 'Generated response'}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  {isAgentAnswer && (
-                                    <AnswerWarningBadge
-                                      partial={message.data?.partial}
-                                      partialReason={message.data?.partialReason}
-                                    />
-                                  )}
+                            <div className="max-w-[820px]">
+                              {isAgentAnswer && !hasAssistantContent && (
+                                <MiniMaxTraceEvents steps={messageAgentTrace} compact />
+                              )}
+                              {isAgentAnswer && hasAssistantContent && message.data?.partial && (
+                                <div className="mb-3">
+                                  <AnswerWarningBadge
+                                    partial={message.data?.partial}
+                                    partialReason={message.data?.partialReason}
+                                  />
                                 </div>
-                              </div>
-                              <div className="px-4 py-4 sm:px-5">
-                                <div className="cg-message-assistant prose prose-sm max-w-none text-[14px] leading-[1.75] text-ink-charcoal prose-headings:mb-2 prose-headings:mt-4 prose-headings:font-display prose-p:mb-3 prose-ul:pl-4 prose-ol:pl-4 prose-li:mb-1.5 prose-strong:text-ink [&>p:first-child]:mt-0 [&>p:last-child]:mb-0 [&>code]:font-mono [&>pre]:font-mono">
+                              )}
+                              {hasAssistantContent ? (
+                                <div className="cg-message-assistant prose prose-sm max-w-none text-[14px] leading-[1.78] text-ink-charcoal prose-headings:mb-2 prose-headings:mt-5 prose-headings:font-display prose-p:mb-3 prose-ul:pl-4 prose-ol:pl-4 prose-li:mb-1.5 prose-strong:text-ink [&>p:first-child]:mt-0 [&>p:last-child]:mb-0 [&>code]:font-mono [&>pre]:font-mono">
                                   <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}>
                                     {normalizeStreamingMarkdown(message.content)}
                                   </ReactMarkdown>
                                 </div>
-                                <EvidenceRail sources={message.data?.sources || []} />
-                              </div>
-                            </article>
+                              ) : (
+                                <div className="mt-2 flex items-center gap-2 text-[14px] text-ink-steel">
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  <span>{currentLoadingStep}</span>
+                                </div>
+                              )}
+                              {hasAssistantContent && (
+                                <EvidenceRail
+                                  sources={message.data?.sources || []}
+                                  onOpenFiles={() => {
+                                    setAgentDrawerSourcesOverride(message.data?.sources || []);
+                                    setAgentDrawerOpen(true);
+                                    setAgentDrawerTab('files');
+                                  }}
+                                />
+                              )}
+                            </div>
 
                             {canSubmitFeedback && (
                               <div className="mt-3">
@@ -2780,31 +3006,25 @@ ${isDuplicate
                   })}
 
                   {showPipelineStatus && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-5">
-                      <div className="cg-eyebrow mb-3 text-ink-charcoal">Assistant</div>
-                      <div className="flex items-center gap-2 text-[15px] text-ink-steel">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        <span>{currentLoadingStep}</span>
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-4">
+                      <div className="max-w-[820px]">
+                        <p className="text-[14px] leading-6 text-ink-charcoal">Received. I’m working on it.</p>
+                        {agentTrace.length > 0 ? (
+                          <MiniMaxTraceEvents steps={agentTrace} compact />
+                        ) : (
+                          <div className="mt-3 flex w-fit items-center gap-2 rounded-full border border-hairline bg-white px-3 py-1.5 text-[12px] text-ink-steel">
+                            <Loader2 className="h-3 w-3 animate-spin text-ink" />
+                            <span>{currentLoadingStep}</span>
+                          </div>
+                        )}
                       </div>
-                      <div className="mt-1.5 text-[11px] text-ink-stone">
-                        Step {Math.min(loadingStepIndex + 1, loadingSteps.length)}/{loadingSteps.length}
-                      </div>
-                      {shouldShowLiveAgentTracePanel({
-                        activeAgentPath,
-                        steps: agentTrace,
-                        showPipelineStatus,
-                        hasAnswerStarted: false,
-                      }) && (
-                        <AgentTracePanel steps={agentTrace} />
-                      )}
                       {showLongWaitHint && (
-                        <p className="mt-2 text-[12px] text-ink-steel">
+                        <p className="mt-2 max-w-[820px] text-[12px] text-ink-steel">
                           {loadingHintText}
                         </p>
                       )}
                     </motion.div>
                   )}
-                  {showPipelineStatus && <div aria-hidden="true" className="h-[34vh] min-h-40 max-h-80 shrink-0" />}
                   <div ref={conversationEndRef} />
                 </div>
               </div>
@@ -2953,6 +3173,18 @@ ${isDuplicate
               </div>
             </div>
           </section>
+          {hasAgentWorkspace && (
+            <AgentWorkspaceDrawer
+              open={agentDrawerOpen}
+              tab={agentDrawerTab}
+              onTabChange={setAgentDrawerTab}
+              onClose={() => setAgentDrawerOpen(false)}
+              steps={drawerTrace}
+              sources={drawerSources}
+              isLoading={isLoading}
+              currentLoadingStep={currentLoadingStep}
+            />
+          )}
           </div>
         )}
 

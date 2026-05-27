@@ -27,12 +27,12 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 const PHASE_LABELS: Record<string, string> = {
-  plan: 'Plan',
-  thought: 'Reasoning',
-  action: 'Action',
-  observation: 'Observation',
-  replan: 'Replan',
-  reflexion: 'Reflection',
+  plan: 'Thinking Process',
+  thought: 'Thinking Process',
+  action: 'Working step',
+  observation: 'Evidence update',
+  replan: 'Replanned evidence search',
+  reflexion: 'Thinking Process',
   final: 'Final answer',
 };
 
@@ -103,12 +103,12 @@ const rewriteCountSummary = (summary: string): string | null => {
 
 export const formatAgentStageLabel = (step: AgentTraceUiStep): string => {
   const phase = String((step as { phase?: string }).phase || '').trim();
-  if (phase && PHASE_LABELS[phase]) {
-    return PHASE_LABELS[phase];
-  }
   const tool = String(step.tool || '').trim();
   if (tool && TOOL_LABELS[tool]) {
     return TOOL_LABELS[tool];
+  }
+  if (phase && PHASE_LABELS[phase]) {
+    return PHASE_LABELS[phase];
   }
   const stage = String(step.stage || '').trim();
   return STAGE_LABELS[stage] || prettifyFallbackLabel(stage || 'Evidence check');

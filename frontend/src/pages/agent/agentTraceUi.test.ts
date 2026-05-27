@@ -12,10 +12,11 @@ describe('agent trace UI labels', () => {
     expect(formatAgentStageLabel({ step: 3, stage: 'synthesizing', tool: 'summarize_evidence', status: 'completed', summary: '' })).toBe('Drafting grounded answer');
   });
 
-  it('uses phase labels for plan-execute-react traces', () => {
-    expect(formatAgentStageLabel({ step: 1, stage: 'planning', phase: 'plan', status: 'planned', summary: '' })).toBe('Plan');
-    expect(formatAgentStageLabel({ step: 2, stage: 'planning', phase: 'thought', status: 'completed', summary: '' })).toBe('Reasoning');
-    expect(formatAgentStageLabel({ step: 3, stage: 'planning', phase: 'reflexion', status: 'completed', summary: '' })).toBe('Reflection');
+  it('uses MiniMax-style phase labels for plan-execute-react traces', () => {
+    expect(formatAgentStageLabel({ step: 1, stage: 'planning', phase: 'plan', status: 'planned', summary: '' })).toBe('Thinking Process');
+    expect(formatAgentStageLabel({ step: 2, stage: 'planning', phase: 'thought', status: 'completed', summary: '' })).toBe('Thinking Process');
+    expect(formatAgentStageLabel({ step: 3, stage: 'planning', phase: 'reflexion', status: 'completed', summary: '' })).toBe('Thinking Process');
+    expect(formatAgentStageLabel({ step: 4, stage: 'planning', phase: 'action', tool: 'search_documents', status: 'completed', summary: '' })).toBe('Searching reports');
   });
 
   it('sanitizes trace summaries that mention backend function names', () => {
