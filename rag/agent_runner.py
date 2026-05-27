@@ -172,8 +172,13 @@ class AgentRunner:
         else:
             search_args = {"query": question, "strategy": "hybrid", "top_k": 5, "use_hyde": False}
             graph_args = {"question": question, "limit": 8, "max_triples": 8}
+        search_queries = _routing_sub_questions(getattr(self.registry, "filters", None)) or [question]
+        search_calls = [
+            AgentToolCall(tool="search_documents", arguments={**search_args, "query": search_query})
+            for search_query in search_queries
+        ]
         return [
-            AgentToolCall(tool="search_documents", arguments=search_args),
+            *search_calls,
             AgentToolCall(tool="get_graph_context", arguments=graph_args),
             AgentToolCall(tool="summarize_evidence", arguments={}),
         ]
@@ -551,6 +556,23 @@ def _default_budget(reasoning_mode: str) -> AgentBudget:
     if _normalize_reasoning_mode(reasoning_mode) == "deep":
         return AgentBudget(max_steps=8, deadline_seconds=90)
     return AgentBudget(max_steps=3, deadline_seconds=20)
+
+
+def _routing_sub_questions(filters: Any) -> List[str]:
+    if not isinstance(filters, dict):
+        return []
+    hint = filters.get("routing_hint")
+    if not isinstance(hint, dict) or not hint.get("needs_agent"):
+        return []
+    cleaned: List[str] = []
+    for value in hint.get("sub_questions") or []:
+        query = str(value or "").strip()
+        if not query or query in cleaned:
+            continue
+        cleaned.append(query)
+        if len(cleaned) >= 4:
+            break
+    return cleaned
 
 
 def _normalize_reasoning_mode(reasoning_mode: str) -> str:

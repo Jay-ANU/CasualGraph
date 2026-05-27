@@ -33,6 +33,18 @@ def _legacy_nvidia_entry(suffix: str):
     }
 
 
+def _apple_entry():
+    return {
+        "document_id": "apple_esg_20260501000000",
+        "title": "Apple_ESG",
+        "source": "Apple_ESG.pdf",
+        "document_group": "user_upload",
+        "owner_user_id": "",
+        "visibility_scope": "",
+        "paths": {"graph": ""},
+    }
+
+
 def _global_entry(document_id: str = "costco_sustainability_report_2025"):
     return {
         "document_id": document_id,
@@ -93,6 +105,47 @@ def test_duplicate_entity_candidates_do_not_fall_back_to_unrelated_global_docume
     assert "costco_sustainability_report_2025" not in context["filters"]["document_ids"]
 
 
+def test_multi_entity_comparison_resolves_each_target_document(monkeypatch):
+    entries = [_legacy_aa_entry(), _apple_entry()]
+    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
+    monkeypatch.setattr(app, "_resolve_document_ids_with_deepseek", lambda question, candidates, query_terms: [])
+
+    context = app._resolve_rag_request_context(
+        app.RagAskRequest(
+            question="Across between American Airlines and Apple, what would be the main difference in carbon emission and why is that?"
+        ),
+        _user(),
+    )
+
+    assert context["error_response"] is None
+    assert set(context["filters"]["document_ids"]) == {
+        "aa_sustainability_report_2022_20260501043104",
+        "apple_esg_20260501000000",
+    }
+    assert context["filters"]["document_scope_source"] == "entity_resolver"
+
+
+def test_multi_entity_comparison_context_forces_agent_route(monkeypatch):
+    entries = [_legacy_aa_entry(), _apple_entry()]
+    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
+    monkeypatch.setattr(app, "_resolve_document_ids_with_deepseek", lambda question, candidates, query_terms: [])
+
+    context = app._resolve_rag_request_context(
+        app.RagAskRequest(
+            question="Across between American Airlines and Apple, what would be the main difference in carbon emission and why is that?"
+        ),
+        _user(),
+    )
+
+    routing_hint = context["filters"]["routing_hint"]
+    assert routing_hint["needs_agent"] is True
+    assert set(routing_hint["target_document_ids"]) == {
+        "aa_sustainability_report_2022_20260501043104",
+        "apple_esg_20260501000000",
+    }
+    assert any("carbon emission" in item.lower() for item in routing_hint["sub_questions"])
+
+
 def test_positive_candidate_fallback_prefers_document_identity_matches():
     ids = app._positive_document_ids_from_candidates(
         [
@@ -102,6 +155,13 @@ def test_positive_candidate_fallback_prefers_document_identity_matches():
     )
 
     assert ids == ["nvidia_report"]
+
+
+def test_short_acronym_terms_do_not_fuzzy_match_unrelated_words():
+    score, matched = app._document_scope_score(["aa"], {"are", "annual", "analysis"})
+
+    assert score == 0.0
+    assert matched == []
 
 
 def test_general_answer_context_preserves_document_scope_for_entity_mentions(monkeypatch):

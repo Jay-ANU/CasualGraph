@@ -761,13 +761,16 @@ def _pre_route_hybrid_path(
     if active_answer_intent is None:
         active_answer_intent = classify_answer_intent(query=query, history_block=history_block)
     active_answer_intent = _coerce_entity_scoped_general_intent(active_answer_intent, retrieval_filters)
-    decision = decide_hybrid_path(
-        question=query,
-        reasoning_mode=tier,
-        document_ids=list((retrieval_filters or {}).get("document_ids") or []),
-        preferred_document_id=(retrieval_filters or {}).get("preferred_document_id"),
-        answer_intent=active_answer_intent,
-    )
+    if _routing_hint_needs_agent(retrieval_filters):
+        decision = _decision_from_routing_hint(tier)
+    else:
+        decision = decide_hybrid_path(
+            question=query,
+            reasoning_mode=tier,
+            document_ids=list((retrieval_filters or {}).get("document_ids") or []),
+            preferred_document_id=(retrieval_filters or {}).get("preferred_document_id"),
+            answer_intent=active_answer_intent,
+        )
     timings["route"] = round((time.perf_counter() - route_started) * 1000, 2)
     return {
         "answer_intent": dict(active_answer_intent or {}),
@@ -787,6 +790,79 @@ def _agent_routing_payload(decision: HybridRouteDecision) -> Dict[str, Any]:
         "fallback_chain": [],
         "fallbacks_used": [],
     }
+
+
+def _routing_hint_needs_agent(retrieval_filters: Optional[Dict]) -> bool:
+    hint = (retrieval_filters or {}).get("routing_hint")
+    return isinstance(hint, dict) and bool(hint.get("needs_agent"))
+
+
+def _decision_from_routing_hint(reasoning_mode: str) -> HybridRouteDecision:
+    tier = _resolve_tier(reasoning_mode)
+    budget = AgentBudget(max_steps=8, deadline_seconds=90) if tier == "deep" else AgentBudget(max_steps=5, deadline_seconds=30)
+    return HybridRouteDecision(
+        path="agent",
+        reason="routing_hint_needs_agent",
+        confidence=0.9,
+        budget=budget,
+    )
+
+
+def _tokenize_entity(value: str) -> set[str]:
+    return {term.lower() for term in _WORD_PATTERN.findall(str(value or "")) if len(term) >= 2}
+
+
+def _source_blob_for_reflexion(payload: Dict[str, Any]) -> str:
+    parts: List[str] = []
+    for item in payload.get("sources") or []:
+        if not isinstance(item, dict):
+            continue
+        parts.extend([
+            str(item.get("document_id") or ""),
+            str(item.get("document_title") or ""),
+            str(item.get("text") or ""),
+        ])
+    graph_sources = payload.get("graph_sources") or {}
+    if isinstance(graph_sources, dict):
+        parts.append(str(graph_sources.get("text") or ""))
+    return " ".join(parts).lower()
+
+
+def _missing_routing_entities(payload: Dict[str, Any], retrieval_filters: Optional[Dict]) -> List[str]:
+    hint = (retrieval_filters or {}).get("routing_hint")
+    if not isinstance(hint, dict):
+        return []
+    blob = _source_blob_for_reflexion(payload)
+    if not blob:
+        return [str(item).strip().lower() for item in hint.get("entities") or [] if str(item).strip()]
+    missing: List[str] = []
+    for entity in hint.get("entities") or []:
+        label = str(entity or "").strip().lower()
+        if not label:
+            continue
+        tokens = _tokenize_entity(label)
+        if label in blob or (tokens and tokens.issubset(_tokenize_entity(blob))):
+            continue
+        missing.append(label)
+    return missing
+
+
+def _apply_agent_reflexion(payload: Dict[str, Any], retrieval_filters: Optional[Dict]) -> Dict[str, Any]:
+    missing = _missing_routing_entities(payload, retrieval_filters)
+    if not missing:
+        return payload
+    routing = dict(payload.get("routing") or {})
+    routing["reflexion"] = {
+        "status": "partial_entity_coverage",
+        "missing_entities": missing,
+    }
+    payload["routing"] = routing
+    answer_intent = dict(payload.get("answer_intent") or {})
+    answer_intent["reflexion"] = routing["reflexion"]
+    payload["answer_intent"] = answer_intent
+    payload["partial"] = True
+    payload["partial_reason"] = "missing_entity_evidence"
+    return payload
 
 
 def _agent_synthesis_answer_intent(query: str, answer_intent_mode: str) -> str:
@@ -823,6 +899,7 @@ def _answer_with_agent_path(
     payload["routing"] = _agent_routing_payload(decision)
     payload["answer_intent"] = answer_intent
     payload["answer_mode"] = synthesis_answer_intent
+    payload = _apply_agent_reflexion(payload, retrieval_filters)
     return _finalize_response(
         payload=payload,
         timings=timings,
@@ -1158,6 +1235,7 @@ def stream_answer_question(
                     payload["routing"] = _agent_routing_payload(decision)
                     payload["answer_intent"] = answer_intent
                     payload["answer_mode"] = synthesis_answer_intent
+                    payload = _apply_agent_reflexion(payload, retrieval_filters)
                     event = {
                         "type": "done",
                         "payload": _finalize_response(

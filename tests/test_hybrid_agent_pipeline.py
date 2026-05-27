@@ -117,6 +117,113 @@ def test_agent_path_delegates_to_runner(monkeypatch):
     assert result["timings_ms"]["generate"] >= 0.0
 
 
+def test_routing_hint_forces_agent_even_when_router_prefers_rag(monkeypatch):
+    def fail_prepare(**kwargs):
+        raise AssertionError("agent hint must route before normal RAG preparation")
+
+    monkeypatch.setattr(pipeline, "_prepare_answer_context", fail_prepare)
+    monkeypatch.setattr(
+        pipeline,
+        "decide_hybrid_path",
+        lambda **kwargs: pipeline.HybridRouteDecision(
+            path="rag",
+            reason="router_prefers_rag",
+            confidence=0.8,
+            budget=pipeline.AgentBudget(max_steps=0, deadline_seconds=12),
+        ),
+    )
+
+    class FakeRunner:
+        def __init__(self, registry, budget):
+            self.registry = registry
+            self.budget = budget
+
+        def run(self, question, reasoning_mode, history_block, answer_intent="evidence", progress_callback=None):
+            return pipeline.AgentRunResult(
+                answer="Agent comparison answer",
+                backend="agent_test",
+                sources=[{"chunk_id": "chunk_aa", "document_id": "aa", "text": "AA evidence"}],
+                graph_sources={},
+                trace=[],
+            )
+
+    monkeypatch.setattr(pipeline, "AgentRunner", FakeRunner)
+
+    result = pipeline.answer_question(
+        "Across between American Airlines and Apple, what is the main difference in carbon emission?",
+        reasoning_mode="flash",
+        retrieval_filters={
+            "document_ids": ["aa", "apple"],
+            "routing_hint": {
+                "needs_agent": True,
+                "entities": ["american airlines", "apple"],
+                "target_document_ids": ["aa", "apple"],
+                "sub_questions": ["Find carbon emission evidence for American Airlines.", "Find carbon emission evidence for Apple."],
+            },
+        },
+        answer_intent={"mode": "hybrid", "confidence": 0.9},
+    )
+
+    assert result["path"] == "agent"
+    assert result["routing"]["reason"] == "routing_hint_needs_agent"
+    assert result["answer"] == "Agent comparison answer"
+
+
+def test_agent_reflexion_marks_missing_entities_without_discarding_partial_answer(monkeypatch):
+    monkeypatch.setattr(
+        pipeline,
+        "decide_hybrid_path",
+        lambda **kwargs: pipeline.HybridRouteDecision(
+            path="rag",
+            reason="router_prefers_rag",
+            confidence=0.8,
+            budget=pipeline.AgentBudget(max_steps=0, deadline_seconds=12),
+        ),
+    )
+
+    class FakeRunner:
+        def __init__(self, registry, budget):
+            self.registry = registry
+            self.budget = budget
+
+        def run(self, question, reasoning_mode, history_block, answer_intent="evidence", progress_callback=None):
+            return pipeline.AgentRunResult(
+                answer="AA reports fuel-related emissions evidence; Apple evidence was not found in this run.",
+                backend="agent_test",
+                sources=[
+                    {
+                        "chunk_id": "chunk_aa",
+                        "document_id": "aa",
+                        "document_title": "American Airlines sustainability",
+                        "text": "American Airlines discusses aviation fuel emissions.",
+                    }
+                ],
+                graph_sources={},
+                trace=[],
+            )
+
+    monkeypatch.setattr(pipeline, "AgentRunner", FakeRunner)
+
+    result = pipeline.answer_question(
+        "Across between American Airlines and Apple, what is the main difference in carbon emission?",
+        reasoning_mode="flash",
+        retrieval_filters={
+            "document_ids": ["aa", "apple"],
+            "routing_hint": {
+                "needs_agent": True,
+                "entities": ["american airlines", "apple"],
+                "target_document_ids": ["aa", "apple"],
+                "sub_questions": ["Find carbon emission evidence for American Airlines.", "Find carbon emission evidence for Apple."],
+            },
+        },
+        answer_intent={"mode": "hybrid", "confidence": 0.9},
+    )
+
+    assert result["answer"].startswith("AA reports")
+    assert result["backend"] == "agent_test"
+    assert result["routing"]["reflexion"]["missing_entities"] == ["apple"]
+
+
 def test_stream_agent_path_emits_agent_done_payload(monkeypatch):
     def fail_prepare(**kwargs):
         raise AssertionError("agent stream path must not prepare retrieval context before routing")

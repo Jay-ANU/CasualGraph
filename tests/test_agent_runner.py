@@ -3,8 +3,9 @@ from rag.agent_types import AgentBudget, AgentToolObservation
 
 
 class FakeRegistry:
-    def __init__(self):
+    def __init__(self, filters=None):
         self.calls = []
+        self.filters = filters or {}
 
     def call(self, tool_name, arguments):
         self.calls.append((tool_name, arguments))
@@ -42,6 +43,34 @@ def test_runner_collects_sources_and_trace():
     assert result.sources[0]["chunk_id"] == "chunk_1"
     assert any(step.tool == "search_documents" and step.status == "completed" for step in result.trace)
     assert result.answer
+
+
+def test_runner_replans_searches_from_routing_sub_questions():
+    registry = FakeRegistry(
+        filters={
+            "routing_hint": {
+                "needs_agent": True,
+                "sub_questions": [
+                    "Find carbon emission evidence for American Airlines.",
+                    "Find carbon emission evidence for Apple.",
+                ],
+            }
+        }
+    )
+    runner = AgentRunner(registry=registry, budget=AgentBudget(max_steps=4, deadline_seconds=90))
+
+    runner.run(
+        question="Across between American Airlines and Apple, what is the main difference in carbon emission?",
+        reasoning_mode="flash",
+        history_block="",
+        answer_intent="hybrid",
+    )
+
+    search_queries = [arguments["query"] for tool, arguments in registry.calls if tool == "search_documents"]
+    assert search_queries[:2] == [
+        "Find carbon emission evidence for American Airlines.",
+        "Find carbon emission evidence for Apple.",
+    ]
 
 
 def test_runner_hybrid_synthesis_replaces_bare_insufficient_answer(monkeypatch):

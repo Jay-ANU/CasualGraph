@@ -76,6 +76,24 @@ _ENTITY_POSSESSIVE_PATTERN = re.compile(r"\b([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Z
 _ENTITY_ACRONYM_PATTERN = re.compile(r"\b[A-Z]{2,8}\b")
 _ENTITY_TITLE_PHRASE_PATTERN = re.compile(r"\b([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){1,4})\b")
 _ENTITY_SPLIT_PATTERN = re.compile(r"[^A-Za-z0-9&]+")
+_COMPARISON_REQUEST_PATTERN = re.compile(
+    r"\b(compare|contrast|versus|vs\.?|between|across|difference|different|differ|main difference|which|better|worse)\b|"
+    r"比较|对比|差异|区别|哪个",
+    re.I,
+)
+_COMPARISON_BETWEEN_PATTERN = re.compile(
+    r"\bbetween\s+(.+?)\s+and\s+(.+?)(?=,|\?|\.|\b(?:what|why|how|which|who|where|when|would|will|can|should|is|are)\b|$)",
+    re.I,
+)
+_COMPARISON_VERUS_PATTERN = re.compile(
+    r"\b([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,4})\s+(?:vs\.?|versus)\s+([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,4})\b",
+    re.I,
+)
+_COMPARISON_COMPARE_PATTERN = re.compile(
+    r"\b(?:compare|contrast)\s+(?:between\s+)?(.+?)\s+(?:and|with|against|to|versus|vs\.?)\s+(.+?)(?=,|\?|\.|\b(?:on|by|for|in|about|what|why|how|which|who|where|when)\b|$)",
+    re.I,
+)
+_SINGLE_ENTITY_TITLE_PATTERN = re.compile(r"\b[A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,4}\b")
 _ENTITY_ALIAS_MAP: Dict[str, Tuple[str, ...]] = {}
 _DOCUMENT_ENTITY_TERMS_CACHE: Dict[str, Tuple[float, set[str]]] = {}
 _ENTITY_STOP_WORDS = {
@@ -1796,6 +1814,10 @@ def _append_entity_term(terms: List[str], value: str) -> None:
 
 def _alias_terms_for_entity(tokens: List[str], joined: str) -> List[str]:
     keys = {joined, *tokens}
+    if 1 < len(tokens) <= 6:
+        acronym = "".join(token[0] for token in tokens if token)
+        if len(acronym) >= 2:
+            keys.add(acronym)
     if "american" in tokens and any(token in {"flight", "flights", "airline", "airlines"} for token in tokens):
         keys.add("american flight")
     aliases: List[str] = []
@@ -1989,6 +2011,8 @@ def _document_scope_score(query_terms: List[str], document_terms: set[str]) -> T
                 score += 2.0 * fuzzy
                 matched.append(term)
         else:
+            if len(term) <= 2:
+                continue
             fuzzy = _best_term_similarity(term, list(document_terms))
             if fuzzy >= 0.78:
                 score += 4.0 * fuzzy
@@ -2065,9 +2089,10 @@ def _positive_document_ids_from_candidates(
         if abs(float(item.get("score") or 0.0) - top_score) < 0.001
     ]
     identity_matches = [item for item in top_candidates if float(item.get("identity_score") or 0.0) > 0]
+    strong_identity_matches = [item for item in identity_matches if float(item.get("identity_score") or 0.0) >= min(5.0, top_score)]
     if require_identity and not identity_matches:
         return []
-    selected_candidates = identity_matches or top_candidates
+    selected_candidates = strong_identity_matches or identity_matches or top_candidates
     output: List[str] = []
     for item in selected_candidates:
         document_id = str(item.get("document_id") or "").strip()
@@ -2215,6 +2240,287 @@ def _scope_document_ids_for_query(question: str, entries: List[Dict[str, Any]]) 
     return [], query_terms
 
 
+def _terms_for_entity_phrase(phrase: str) -> List[str]:
+    tokens = _filtered_entity_tokens(phrase)
+    if not tokens:
+        return []
+    terms: List[str] = []
+    joined = " ".join(tokens)
+    acronym = "".join(token[0] for token in tokens if token) if 1 < len(tokens) <= 6 else ""
+    for value in (joined, *tokens, acronym, *_alias_terms_for_entity(tokens, joined)):
+        if value:
+            _append_entity_term(terms, value)
+    return terms
+
+
+def _entity_label_from_terms(terms: List[str]) -> str:
+    for term in terms:
+        if " " in term:
+            return term
+    return terms[0] if terms else ""
+
+
+def _append_entity_group(groups: List[List[str]], phrase: str) -> None:
+    terms = _terms_for_entity_phrase(phrase)
+    if not terms:
+        return
+    primary = _entity_label_from_terms(terms)
+    if not primary or primary in _ENTITY_STOP_WORDS:
+        return
+    term_set = set(terms)
+    for existing in groups:
+        existing_set = set(existing)
+        if term_set == existing_set:
+            return
+        if primary in existing_set or _entity_label_from_terms(existing) in term_set:
+            return
+    groups.append(terms)
+
+
+def _clean_comparison_entity_phrase(value: str) -> str:
+    text = str(value or "").strip(" \t\r\n,.;:!?()[]{}\"'’")
+    text = re.sub(
+        r"\b(?:what|why|how|which|who|where|when|would|will|can|should|is|are|the|main|difference|carbon|emission|emissions).*$",
+        "",
+        text,
+        flags=re.I,
+    ).strip(" \t\r\n,.;:!?()[]{}\"'’")
+    return text
+
+
+def _extract_query_entity_term_groups(question: str) -> List[List[str]]:
+    text = str(question or "")
+    groups: List[List[str]] = []
+
+    if _COMPARISON_REQUEST_PATTERN.search(text):
+        for pattern in (_COMPARISON_BETWEEN_PATTERN, _COMPARISON_COMPARE_PATTERN, _COMPARISON_VERUS_PATTERN):
+            for match in pattern.finditer(text):
+                _append_entity_group(groups, _clean_comparison_entity_phrase(match.group(1)))
+                _append_entity_group(groups, _clean_comparison_entity_phrase(match.group(2)))
+
+        for match in _SINGLE_ENTITY_TITLE_PATTERN.finditer(text):
+            phrase = _clean_comparison_entity_phrase(match.group(0))
+            tokens = _filtered_entity_tokens(phrase)
+            if not tokens:
+                continue
+            if len(tokens) == 1 and tokens[0] in _ENTITY_STOP_WORDS:
+                continue
+            _append_entity_group(groups, phrase)
+
+    if not groups:
+        terms = _extract_query_entity_terms(text)
+        if terms:
+            groups.append(terms)
+    return groups
+
+
+def _scope_document_ids_for_terms(query_terms: List[str], entries: List[Dict[str, Any]], *, use_llm: bool = True) -> List[str]:
+    if not query_terms:
+        return []
+    candidates = _document_scope_candidates(query_terms, entries, include_zero=False)
+    for resolver in (
+        _confident_document_ids_from_candidates,
+        lambda items: _positive_document_ids_from_candidates(items, require_identity=True),
+    ):
+        ids = resolver(candidates)
+        if ids:
+            return ids
+    if not use_llm:
+        return _positive_document_ids_from_candidates(candidates)
+    resolver_candidates = candidates or _document_scope_candidates(query_terms, entries, include_zero=True)
+    resolved_ids = _resolve_document_ids_with_deepseek(" ".join(query_terms), resolver_candidates, query_terms)
+    if resolved_ids:
+        return resolved_ids
+    return _positive_document_ids_from_candidates(candidates)
+
+
+def _dedupe_document_ids(document_ids: List[str]) -> List[str]:
+    output: List[str] = []
+    seen = set()
+    for value in document_ids:
+        document_id = str(value or "").strip()
+        if not document_id or document_id in seen:
+            continue
+        output.append(document_id)
+        seen.add(document_id)
+    return output
+
+
+def _build_sub_questions(question: str, entity_labels: List[str]) -> List[str]:
+    base = str(question or "").strip()
+    if len(entity_labels) < 2:
+        return [base] if base else []
+    focus = "carbon emission" if re.search(r"\bcarbon emissions?\b|碳排|碳排放", base, re.I) else "relevant evidence"
+    sub_questions = [f"Find {focus} evidence for {label}." for label in entity_labels]
+    sub_questions.append(base)
+    return sub_questions
+
+
+def _request_router_candidates(entries: List[Dict[str, Any]], limit: int = 40) -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
+    for entry in entries[:limit]:
+        document_id = str(entry.get("document_id") or "").strip()
+        if not document_id:
+            continue
+        candidates.append({
+            "document_id": document_id,
+            "title": str(entry.get("title") or "").strip(),
+            "source": str(entry.get("source") or "").strip(),
+            "document_group": str(entry.get("document_group") or "").strip(),
+        })
+    return candidates
+
+
+def _route_request_with_deepseek(question: str, entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    candidates = _request_router_candidates(entries)
+    if not candidates:
+        return None
+    cache_payload = {
+        "question": str(question or "").strip(),
+        "candidates": candidates,
+        "model": RAG_ANSWER_INTENT_ROUTER_MODEL,
+    }
+    cache_hit, cached_value = deepseek_resilience.cache_lookup("request_router", cache_payload)
+    if cache_hit:
+        return dict(cached_value) if isinstance(cached_value, dict) else None
+    if deepseek_resilience.circuit_is_open("request_router") or not deepseek_configured():
+        return None
+    try:
+        import openai
+    except Exception:
+        return None
+
+    prompt = {
+        "task": "Route an ESG/report assistant request. Identify entities, target uploaded documents, sub-questions, answer mode, and whether an agent should be used.",
+        "rules": [
+            "Return only document_id values from candidates.",
+            "Use agent for multi-entity comparisons, multi-question requests, why/explain comparisons, uncertainty analysis, or cross-document synthesis.",
+            "Use evidence or hybrid for company/report questions; use general only when no report evidence is needed.",
+            "If unsure about documents, leave target_document_ids empty but still list entities and sub_questions.",
+        ],
+        "question": question,
+        "candidates": candidates,
+        "schema": {
+            "mode": "evidence|general|hybrid|chitchat",
+            "entities": ["entity name"],
+            "target_document_ids": ["candidate_document_id"],
+            "sub_questions": ["short retrieval question"],
+            "needs_agent": True,
+            "confidence": 0.0,
+            "reason": "short reason",
+        },
+    }
+    messages = [
+        {"role": "system", "content": "You are a structured routing controller. Return JSON only."},
+        {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+    ]
+    try:
+        if hasattr(openai, "OpenAI"):
+            client = openai.OpenAI(
+                api_key=DEEPSEEK_API_KEY,
+                base_url=DEEPSEEK_BASE_URL,
+                timeout=min(float(RAG_ANSWER_INTENT_ROUTER_TIMEOUT), 8.0),
+            )
+            response = client.chat.completions.create(
+                model=RAG_ANSWER_INTENT_ROUTER_MODEL,
+                temperature=0,
+                messages=messages,
+                response_format={"type": "json_object"},
+                max_tokens=420,
+            )
+            raw = response.choices[0].message.content or ""
+        else:
+            openai.api_key = DEEPSEEK_API_KEY
+            openai.api_base = DEEPSEEK_BASE_URL
+            response = openai.ChatCompletion.create(
+                model=RAG_ANSWER_INTENT_ROUTER_MODEL,
+                temperature=0,
+                messages=messages,
+                response_format={"type": "json_object"},
+                request_timeout=min(float(RAG_ANSWER_INTENT_ROUTER_TIMEOUT), 8.0),
+                max_tokens=420,
+            )
+            raw = response["choices"][0]["message"]["content"] or ""
+        parsed = _parse_json_object_text(str(raw))
+    except Exception as exc:
+        deepseek_resilience.cache_failure("request_router", cache_payload)
+        deepseek_resilience.record_failure("request_router")
+        print(f"[rag.request_router] DeepSeek request router fell back: {type(exc).__name__}: {exc}")
+        return None
+
+    allowed_ids = {item["document_id"] for item in candidates}
+    target_ids = _dedupe_document_ids([str(value or "") for value in parsed.get("target_document_ids") or [] if str(value or "").strip() in allowed_ids])
+    mode = str(parsed.get("mode") or "evidence").strip().lower()
+    if mode not in {"evidence", "general", "hybrid", "chitchat"}:
+        mode = "evidence"
+    try:
+        confidence = max(0.0, min(float(parsed.get("confidence") or 0.0), 1.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    result = {
+        "mode": mode,
+        "entities": _dedupe_entity_terms([str(item or "") for item in parsed.get("entities") or []]),
+        "target_document_ids": target_ids,
+        "sub_questions": [str(item).strip() for item in parsed.get("sub_questions") or [] if str(item).strip()][:6],
+        "needs_agent": bool(parsed.get("needs_agent")),
+        "confidence": confidence,
+        "reason": f"deepseek:{str(parsed.get('reason') or 'request_route')}",
+    }
+    deepseek_resilience.cache_store("request_router", cache_payload, result)
+    deepseek_resilience.record_success("request_router")
+    return result
+
+
+def _merge_routing_hints(local_hint: Dict[str, Any], llm_hint: Optional[Dict[str, Any]], question: str) -> Dict[str, Any]:
+    if not llm_hint:
+        return local_hint
+    merged = dict(local_hint)
+    merged["mode"] = str(llm_hint.get("mode") or merged.get("mode") or "evidence")
+    merged["entities"] = _dedupe_entity_terms([*list(merged.get("entities") or []), *list(llm_hint.get("entities") or [])])
+    merged["target_document_ids"] = _dedupe_document_ids([*list(merged.get("target_document_ids") or []), *list(llm_hint.get("target_document_ids") or [])])
+    sub_questions = [*list(llm_hint.get("sub_questions") or []), *list(merged.get("sub_questions") or [])]
+    merged["sub_questions"] = [item for index, item in enumerate(sub_questions) if item and item not in sub_questions[:index]][:6]
+    merged["needs_agent"] = bool(merged.get("needs_agent") or llm_hint.get("needs_agent"))
+    merged["confidence"] = max(float(merged.get("confidence") or 0.0), float(llm_hint.get("confidence") or 0.0))
+    merged["reason"] = str(llm_hint.get("reason") or merged.get("reason") or "entity_scope")
+    if not merged.get("sub_questions"):
+        merged["sub_questions"] = _build_sub_questions(question, list(merged.get("entities") or []))
+    return merged
+
+
+def _build_request_routing_hint(question: str, entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    groups = _extract_query_entity_term_groups(question)
+    entity_labels = [_entity_label_from_terms(group) for group in groups if _entity_label_from_terms(group)]
+    target_ids: List[str] = []
+    for group in groups:
+        target_ids.extend(_scope_document_ids_for_terms(group, entries, use_llm=False))
+    target_ids = _dedupe_document_ids(target_ids)
+    comparison_request = bool(_COMPARISON_REQUEST_PATTERN.search(str(question or "")))
+    needs_agent = (comparison_request and len(entity_labels) >= 2) or len(target_ids) >= 2
+    mode = "hybrid" if needs_agent else "evidence"
+    confidence = 0.82 if needs_agent and target_ids else 0.62 if target_ids else 0.45
+    local_hint = {
+        "mode": mode,
+        "entities": entity_labels,
+        "target_document_ids": target_ids,
+        "sub_questions": _build_sub_questions(question, entity_labels),
+        "needs_agent": needs_agent,
+        "confidence": confidence,
+        "reason": "comparison_entity_scope" if needs_agent else "entity_scope",
+    }
+    if (comparison_request and len(target_ids) < 2) or not target_ids:
+        return _merge_routing_hints(local_hint, _route_request_with_deepseek(question, entries), question)
+    return local_hint
+
+
+def _routing_hint_with_document_ids(routing_hint: Optional[Dict[str, Any]], document_ids: List[str]) -> Optional[Dict[str, Any]]:
+    if not routing_hint:
+        return None
+    hint = dict(routing_hint)
+    hint["target_document_ids"] = _dedupe_document_ids(document_ids or list(hint.get("target_document_ids") or []))
+    return hint
+
+
 def _question_with_recent_user_context(question: str, history: Optional[List[Dict[str, Any]]]) -> str:
     recent_user_turns: List[str] = []
     for item in reversed(history or []):
@@ -2242,6 +2548,8 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
     preferred_document_id = str(request.preferred_document_id or "").strip() or None
     entity_scope_miss = False
     entity_scope_terms: List[str] = []
+    document_scope_source: Optional[str] = None
+    routing_hint: Optional[Dict[str, Any]] = None
     history = request.history
     memory_backend = "disabled"
     if request.session_id and current_user:
@@ -2257,6 +2565,8 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
     if current_user and not _is_admin_user(current_user):
         retrievable_entries = _retrievable_registry_entries(current_user)
         allowed_ids = {str(entry.get("document_id") or "").strip() for entry in retrievable_entries if str(entry.get("document_id") or "").strip()}
+        routing_hint = _build_request_routing_hint(scope_question, retrievable_entries)
+        routing_document_ids = sorted(set(routing_hint.get("target_document_ids") or []) & allowed_ids)
         broad_retrievable_scope = False
         if effective_document_ids or preferred_document_id:
             scoped_ids, scoped_terms = _scope_document_ids_for_query(scope_question, retrievable_entries)
@@ -2268,6 +2578,7 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
                 effective_document_ids = scoped_allowed_ids
                 preferred_document_id = None
                 entity_scope_terms = scoped_terms
+                document_scope_source = "entity_resolver"
         if preferred_document_id:
             if preferred_document_id not in allowed_ids:
                 return _no_accessible_documents_response()
@@ -2276,9 +2587,10 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
         if effective_document_ids:
             effective_document_ids = [doc_id for doc_id in effective_document_ids if doc_id in allowed_ids]
         else:
-            scoped_ids, entity_scope_terms = _scope_document_ids_for_query(scope_question, retrievable_entries)
+            scoped_ids, entity_scope_terms = (routing_document_ids, list(routing_hint.get("entities") or [])) if routing_document_ids else _scope_document_ids_for_query(scope_question, retrievable_entries)
             if scoped_ids:
                 effective_document_ids = sorted(set(scoped_ids) & allowed_ids)
+                document_scope_source = "entity_resolver"
             elif entity_scope_terms and not preferred_document_id:
                 global_ids = {
                     str(entry.get("document_id") or "").strip()
@@ -2303,14 +2615,22 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
             if not entity_scope_miss and not broad_retrievable_scope:
                 return _no_accessible_documents_response()
     elif current_user and _is_admin_user(current_user) and not effective_document_ids and not preferred_document_id:
-        scoped_ids, entity_scope_terms = _scope_document_ids_for_query(scope_question, _retrievable_registry_entries(current_user))
+        retrievable_entries = _retrievable_registry_entries(current_user)
+        routing_hint = _build_request_routing_hint(scope_question, retrievable_entries)
+        scoped_ids = list(routing_hint.get("target_document_ids") or [])
+        entity_scope_terms = list(routing_hint.get("entities") or [])
+        if not scoped_ids:
+            scoped_ids, entity_scope_terms = _scope_document_ids_for_query(scope_question, retrievable_entries)
         if scoped_ids:
             effective_document_ids = scoped_ids
+            document_scope_source = "entity_resolver"
         elif entity_scope_terms:
             entity_scope_miss = True
     elif not current_user:
         public_entries = [entry for entry in _collect_document_entries() if _can_retrieve_entry(None, entry)]
         public_ids = {str(entry.get("document_id") or "").strip() for entry in public_entries if str(entry.get("document_id") or "").strip()}
+        routing_hint = _build_request_routing_hint(scope_question, public_entries)
+        routing_document_ids = sorted(set(routing_hint.get("target_document_ids") or []) & public_ids)
         if preferred_document_id:
             if preferred_document_id not in public_ids:
                 return _no_accessible_documents_response()
@@ -2320,9 +2640,10 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
             if not effective_document_ids:
                 return _no_accessible_documents_response()
         else:
-            scoped_ids, entity_scope_terms = _scope_document_ids_for_query(scope_question, public_entries)
+            scoped_ids, entity_scope_terms = (routing_document_ids, list(routing_hint.get("entities") or [])) if routing_document_ids else _scope_document_ids_for_query(scope_question, public_entries)
             if scoped_ids:
                 effective_document_ids = scoped_ids
+                document_scope_source = "entity_resolver"
             elif entity_scope_terms:
                 entity_scope_miss = True
             else:
@@ -2341,6 +2662,11 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
     }
     if current_user and not _is_admin_user(current_user) and not effective_document_ids:
         filters["owner_user_id"] = str(current_user.get("id") or "")
+    if document_scope_source:
+        filters["document_scope_source"] = document_scope_source
+    scoped_routing_hint = _routing_hint_with_document_ids(routing_hint, effective_document_ids)
+    if scoped_routing_hint:
+        filters["routing_hint"] = scoped_routing_hint
     if entity_scope_miss:
         filters["entity_scope_miss"] = True
         filters["entity_scope_terms"] = entity_scope_terms
@@ -2381,6 +2707,7 @@ def _resolve_general_rag_request_context(
         effective_document_ids.append(preferred_document_id)
     scope_question = _question_with_recent_user_context(request.question, history)
     document_scope_source: Optional[str] = None
+    routing_hint: Optional[Dict[str, Any]] = None
     filters: Dict[str, Any] = {
         "document_ids": [],
         "preferred_document_id": preferred_document_id,
@@ -2396,10 +2723,14 @@ def _resolve_general_rag_request_context(
             for entry in retrievable_entries
             if str(entry.get("document_id") or "").strip()
         }
+        routing_hint = _build_request_routing_hint(scope_question, retrievable_entries)
+        routing_document_ids = sorted(set(routing_hint.get("target_document_ids") or []) & allowed_ids)
         if effective_document_ids:
             effective_document_ids = [doc_id for doc_id in effective_document_ids if doc_id in allowed_ids]
         else:
-            scoped_ids, _ = _scope_document_ids_for_query(scope_question, retrievable_entries)
+            scoped_ids = routing_document_ids
+            if not scoped_ids:
+                scoped_ids, _ = _scope_document_ids_for_query(scope_question, retrievable_entries)
             effective_document_ids = sorted(set(scoped_ids) & allowed_ids)
             if effective_document_ids:
                 document_scope_source = "entity_resolver"
@@ -2411,7 +2742,11 @@ def _resolve_general_rag_request_context(
         if effective_document_ids:
             filters["document_ids"] = effective_document_ids
         else:
-            scoped_ids, _ = _scope_document_ids_for_query(scope_question, _retrievable_registry_entries(current_user))
+            retrievable_entries = _retrievable_registry_entries(current_user)
+            routing_hint = _build_request_routing_hint(scope_question, retrievable_entries)
+            scoped_ids = list(routing_hint.get("target_document_ids") or [])
+            if not scoped_ids:
+                scoped_ids, _ = _scope_document_ids_for_query(scope_question, retrievable_entries)
             if scoped_ids:
                 filters["document_ids"] = scoped_ids
                 document_scope_source = "entity_resolver"
@@ -2422,16 +2757,23 @@ def _resolve_general_rag_request_context(
             for entry in public_entries
             if str(entry.get("document_id") or "").strip()
         }
+        routing_hint = _build_request_routing_hint(scope_question, public_entries)
+        routing_document_ids = sorted(set(routing_hint.get("target_document_ids") or []) & public_ids)
         if effective_document_ids:
             filters["document_ids"] = [doc_id for doc_id in effective_document_ids if doc_id in public_ids]
         else:
-            scoped_ids, _ = _scope_document_ids_for_query(scope_question, public_entries)
+            scoped_ids = routing_document_ids
+            if not scoped_ids:
+                scoped_ids, _ = _scope_document_ids_for_query(scope_question, public_entries)
             if scoped_ids:
                 filters["document_ids"] = sorted(set(scoped_ids) & public_ids)
                 if filters["document_ids"]:
                     document_scope_source = "entity_resolver"
     if document_scope_source:
         filters["document_scope_source"] = document_scope_source
+    scoped_routing_hint = _routing_hint_with_document_ids(routing_hint, list(filters.get("document_ids") or []))
+    if scoped_routing_hint:
+        filters["routing_hint"] = scoped_routing_hint
     return {
         "filters": filters,
         "history": history,
@@ -5362,6 +5704,15 @@ def _encode_sse_event(event: Dict[str, Any]) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
+def _is_recoverable_stream_error(exc: Exception) -> bool:
+    if isinstance(exc, (BrokenPipeError, ConnectionResetError, TimeoutError)):
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) in {32, 54, 104}:
+        return True
+    message = str(exc).lower()
+    return "broken pipe" in message or "connection reset" in message or "stream disconnected" in message
+
+
 def _build_streaming_response(
     *,
     request: RagAskRequest,
@@ -5377,6 +5728,11 @@ def _build_streaming_response(
                 for event in iterator:
                     event_queue.put(event)
             except NotImplementedError:
+                event_queue.put({"type": "done", "payload": fallback_factory()})
+            except Exception as exc:
+                if not _is_recoverable_stream_error(exc):
+                    raise
+                print(f"[rag.stream] recoverable stream failure, using fallback: {type(exc).__name__}: {exc}")
                 event_queue.put({"type": "done", "payload": fallback_factory()})
         except Exception as exc:
             event_queue.put({"type": "error", "message": str(exc)})
