@@ -141,6 +141,14 @@ class AgentRunner:
             tool_started = time.monotonic()
             observation = self._call_tool(call.tool, arguments)
             executed_steps += 1
+            tool_elapsed_ms = (time.monotonic() - tool_started) * 1000
+            action_step.status = "completed" if observation.ok else "failed"
+            action_step.elapsed_ms = tool_elapsed_ms
+            action_step.meta = {
+                **action_step.meta,
+                "ok": bool(observation.ok),
+                "error": observation.error,
+            }
 
             _merge_sources(sources, observation.data.get("sources"))
             _merge_graph(graph_sources, observation.data.get("graph"))
@@ -157,7 +165,7 @@ class AgentRunner:
                 tool=call.tool,
                 status="completed" if observation.ok else "failed",
                 summary=_react_observation_summary(observation, summary),
-                elapsed_ms=(time.monotonic() - tool_started) * 1000,
+                elapsed_ms=tool_elapsed_ms,
                 phase="observation",
                 plan_step=plan_step,
                 meta={

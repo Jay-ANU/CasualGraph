@@ -112,6 +112,8 @@ def test_runner_trace_exposes_plan_execute_react_and_reflexion_phases():
         phases = [event["phase"] for event in events if event.get("plan_step") == plan_step]
         assert phases[:3] == ["thought", "action", "observation"]
 
+    assert not [event for event in events if event.get("status") == "running"]
+
     reflexion_events = [event for event in events if event.get("phase") == "reflexion"]
     assert reflexion_events
     assert reflexion_events[-1]["reflexion"]["status"] == "complete"
