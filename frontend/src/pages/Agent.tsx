@@ -17,6 +17,7 @@ import {
   type ChatMessage,
   type ChatSession,
 } from './agent/chatSession';
+import { formatAccountPlanLabel } from './agent/accountPlan';
 import {
   formatSourceDocumentTitle,
   formatSourceChipLabel,
@@ -1047,6 +1048,7 @@ const AgentWorkspaceDrawer: React.FC<{
 const Agent: React.FC = () => {
   const { isAuthenticated, token, user } = useAuth();
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
+  const accountPlanLabel = formatAccountPlanLabel(user);
   const apiHost = typeof window !== 'undefined' ? window.location.hostname || '127.0.0.1' : '127.0.0.1';
   const localApiHost = apiHost === 'localhost' || apiHost === '127.0.0.1';
   const esgApiBase = process.env.REACT_APP_ESG_API_BASE || (localApiHost ? `http://${apiHost}:8000` : '');
@@ -2998,7 +3000,7 @@ ${isDuplicate
               </span>
               <div className="min-w-0">
                 <div className="truncate text-[12px] font-semibold text-ink">{user?.username || user?.email || 'User'}</div>
-                <div className="text-[11px] text-ink-stone">Free</div>
+                <div className="text-[11px] text-ink-stone">{accountPlanLabel}</div>
               </div>
             </div>
           </div>

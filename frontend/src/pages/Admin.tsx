@@ -143,7 +143,7 @@ const Admin: React.FC = () => {
       const unlimitedUsersPayload = await unlimitedUsersRes.json();
       if (!overviewRes.ok) throw new Error(overviewPayload.detail || overviewPayload.message || 'Unable to load admin overview');
       if (!uploadsRes.ok) throw new Error(uploadsPayload.detail || uploadsPayload.message || 'Unable to load upload logs');
-      if (!unlimitedUsersRes.ok) throw new Error(unlimitedUsersPayload.detail || unlimitedUsersPayload.message || 'Unable to load exclusive users');
+      if (!unlimitedUsersRes.ok) throw new Error(unlimitedUsersPayload.detail || unlimitedUsersPayload.message || 'Unable to load Pro users');
       setOverview(overviewPayload);
       setUploads(Array.isArray(uploadsPayload.uploads) ? uploadsPayload.uploads : []);
       setRagUnlimitedUsers(Array.isArray(unlimitedUsersPayload.users) ? unlimitedUsersPayload.users : []);
@@ -242,20 +242,20 @@ const Admin: React.FC = () => {
         body: JSON.stringify({ email: unlimitedEmail, note: unlimitedNote }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to add exclusive user');
+      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to add Pro user');
       setUnlimitedEmail('');
       setUnlimitedNote('');
-      setActionMessage(`${payload?.user?.email || 'User'} now bypasses RAG usage limits.`);
+      setActionMessage(`${payload?.user?.email || 'User'} is now on Pro with 300 daily points.`);
       await loadAdminData();
     } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : 'Unable to add exclusive user');
+      setActionMessage(err instanceof Error ? err.message : 'Unable to add Pro user');
     } finally {
       setSavingUnlimitedUser(false);
     }
   };
 
   const deleteUnlimitedUser = async (email: string) => {
-    if (!window.confirm(`Remove unlimited RAG access for ${email}?`)) {
+    if (!window.confirm(`Remove Pro access for ${email}?`)) {
       return;
     }
     setActionMessage('');
@@ -266,11 +266,11 @@ const Admin: React.FC = () => {
         headers,
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to remove exclusive user');
-      setActionMessage(`${email} now uses the standard RAG limits.`);
+      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to remove Pro user');
+      setActionMessage(`${email} now uses the Free 30-point daily limit.`);
       await loadAdminData();
     } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : 'Unable to remove exclusive user');
+      setActionMessage(err instanceof Error ? err.message : 'Unable to remove Pro user');
     }
   };
 
@@ -394,7 +394,7 @@ const Admin: React.FC = () => {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-ink">Access controls</h2>
-              <p className="text-sm text-ink-steel">Invite codes and unlimited AI users are hidden until needed.</p>
+              <p className="text-sm text-ink-steel">Invite codes and Pro AI users are hidden until needed.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <button
@@ -429,8 +429,8 @@ const Admin: React.FC = () => {
         <section className="mt-4 rounded-2xl border border-hairline bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-ink">Exclusive AI users</h2>
-              <p className="text-sm text-ink-steel">Accounts listed here bypass Flash and Deep usage limits without receiving admin permissions.</p>
+              <h2 className="text-lg font-semibold text-ink">Pro AI users</h2>
+              <p className="text-sm text-ink-steel">Accounts listed here receive 300 daily AI points without receiving Max/admin permissions.</p>
             </div>
             <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto] lg:min-w-[620px]">
               <input
@@ -491,7 +491,7 @@ const Admin: React.FC = () => {
                 {!loading && ragUnlimitedUsers.length === 0 && (
                   <tr>
                     <td colSpan={4} className="px-4 py-8 text-center text-ink-steel">
-                      No exclusive AI users yet.
+                      No Pro AI users yet.
                     </td>
                   </tr>
                 )}

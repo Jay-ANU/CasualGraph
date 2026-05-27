@@ -210,6 +210,7 @@ _EMAIL_CODE_MAX_ATTEMPTS = max(1, int(os.getenv("EMAIL_CODE_MAX_ATTEMPTS", "5"))
 _EMAIL_CODE_LENGTH = max(4, int(os.getenv("EMAIL_CODE_LENGTH", "6")))
 _RAG_RATE_LIMIT_ENABLED = _env_flag("RAG_RATE_LIMIT_ENABLED", "true")
 _RAG_FREE_DAILY_POINTS = max(1, int(os.getenv("RAG_FREE_DAILY_POINTS", "30")))
+_RAG_PRO_DAILY_POINTS = max(1, int(os.getenv("RAG_PRO_DAILY_POINTS", "300")))
 _RAG_FLASH_POINT_COST = max(1, int(os.getenv("RAG_FLASH_POINT_COST", "1")))
 _RAG_DEEP_POINT_COST = max(1, int(os.getenv("RAG_DEEP_POINT_COST", "5")))
 _RAG_MIN_SECONDS_BETWEEN_REQUESTS = max(0, int(os.getenv("RAG_MIN_SECONDS_BETWEEN_REQUESTS", "20")))
@@ -417,12 +418,24 @@ def _rag_limit_error(status_code: int, message: str, **extra: Any) -> HTTPExcept
     return HTTPException(status_code=status_code, detail=detail)
 
 
-async def _is_rag_unlimited_user(db: aiosqlite.Connection, current_user: Optional[Dict[str, Any]]) -> bool:
+async def _is_rag_pro_user(db: aiosqlite.Connection, current_user: Optional[Dict[str, Any]]) -> bool:
     email = _normalize_email(str((current_user or {}).get("email") or ""))
     if not email:
         return False
     cursor = await db.execute("SELECT 1 FROM rag_unlimited_users WHERE email = ?", (email,))
     return await cursor.fetchone() is not None
+
+
+async def _rag_account_plan(db: aiosqlite.Connection, current_user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if _is_admin_user(current_user):
+        return {"plan": "max", "plan_label": "Max", "points_limit": None, "unlimited": True}
+    if await _is_rag_pro_user(db, current_user):
+        return {"plan": "pro", "plan_label": "Pro", "points_limit": _RAG_PRO_DAILY_POINTS, "unlimited": False}
+    return {"plan": "free", "plan_label": "Free", "points_limit": _RAG_FREE_DAILY_POINTS, "unlimited": False}
+
+
+def _attach_account_plan(user: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
+    return {**user, **plan}
 
 
 async def _enforce_rag_rate_limit(
@@ -432,10 +445,9 @@ async def _enforce_rag_rate_limit(
 ) -> Dict[str, Any]:
     if not _RAG_RATE_LIMIT_ENABLED:
         return {"bypassed": True, "reason": "disabled"}
-    if _is_admin_user(current_user):
-        return {"bypassed": True, "reason": "admin"}
-    if await _is_rag_unlimited_user(db, current_user):
-        return {"bypassed": True, "reason": "unlimited_user"}
+    account_plan = await _rag_account_plan(db, current_user)
+    if account_plan.get("unlimited"):
+        return {"bypassed": True, "reason": "admin", **account_plan}
     if not current_user:
         if not _RAG_ANONYMOUS_ENABLED:
             raise _rag_limit_error(401, "Please sign in to use the AI agent.")
@@ -447,6 +459,7 @@ async def _enforce_rag_rate_limit(
 
     mode = "deep" if str(reasoning_mode or "flash").strip().lower() == "deep" else "flash"
     cost = _rag_point_cost(mode)
+    points_limit = int(account_plan.get("points_limit") or _RAG_FREE_DAILY_POINTS)
     usage_date = _rag_usage_date()
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
@@ -474,18 +487,22 @@ async def _enforce_rag_rate_limit(
                 429,
                 f"Please wait {retry_after} seconds before sending another message.",
                 retry_after_seconds=retry_after,
-                points_limit=_RAG_FREE_DAILY_POINTS,
+                plan=account_plan["plan"],
+                plan_label=account_plan["plan_label"],
+                points_limit=points_limit,
                 points_used=points_used,
-                points_remaining=max(0, _RAG_FREE_DAILY_POINTS - points_used),
+                points_remaining=max(0, points_limit - points_used),
             )
 
-    if points_used + cost > _RAG_FREE_DAILY_POINTS:
+    if points_used + cost > points_limit:
         raise _rag_limit_error(
             429,
             "Daily message limit reached. Please try again tomorrow.",
-            points_limit=_RAG_FREE_DAILY_POINTS,
+            plan=account_plan["plan"],
+            plan_label=account_plan["plan_label"],
+            points_limit=points_limit,
             points_used=points_used,
-            points_remaining=max(0, _RAG_FREE_DAILY_POINTS - points_used),
+            points_remaining=max(0, points_limit - points_used),
             points_required=cost,
             reset_at=f"{usage_date}T23:59:59+00:00",
         )
@@ -511,11 +528,13 @@ async def _enforce_rag_rate_limit(
     await db.commit()
     return {
         "bypassed": False,
+        "plan": account_plan["plan"],
+        "plan_label": account_plan["plan_label"],
         "mode": mode,
         "points_cost": cost,
-        "points_limit": _RAG_FREE_DAILY_POINTS,
+        "points_limit": points_limit,
         "points_used": new_points,
-        "points_remaining": max(0, _RAG_FREE_DAILY_POINTS - new_points),
+        "points_remaining": max(0, points_limit - new_points),
         "request_count": new_request_count,
         "flash_count": new_flash_count,
         "deep_count": new_deep_count,
@@ -1045,15 +1064,16 @@ async def register(req: RegisterRequest, db: aiosqlite.Connection = Depends(_get
     )
     await db.commit()
     token = _make_token(user_id, email)
+    user_payload = {
+        "id": user_id,
+        "email": email,
+        "username": req.username,
+        "role": role,
+        "created_at": _utc_now_iso(),
+    }
     return {
         "token": token,
-        "user": {
-            "id": user_id,
-            "email": email,
-            "username": req.username,
-            "role": role,
-            "created_at": _utc_now_iso(),
-        },
+        "user": _attach_account_plan(user_payload, await _rag_account_plan(db, user_payload)),
     }
 
 
@@ -1066,21 +1086,22 @@ async def login(req: LoginRequest, db: aiosqlite.Connection = Depends(_get_db)):
     if not row or not _check_pw(req.password, row[3]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = _make_token(row[0], row[1])
+    user_payload = {
+        "id": row[0],
+        "email": row[1],
+        "username": row[2],
+        "role": _normalize_role(row[4]),
+        "created_at": row[5],
+    }
     return {
         "token": token,
-        "user": {
-            "id": row[0],
-            "email": row[1],
-            "username": row[2],
-            "role": _normalize_role(row[4]),
-            "created_at": row[5],
-        },
+        "user": _attach_account_plan(user_payload, await _rag_account_plan(db, user_payload)),
     }
 
 
 @app.get("/auth/me")
-async def me(current_user: dict = Depends(get_current_user)):
-    return current_user
+async def me(current_user: dict = Depends(get_current_user), db: aiosqlite.Connection = Depends(_get_db)):
+    return _attach_account_plan(current_user, await _rag_account_plan(db, current_user))
 
 
 @app.get("/admin/overview")

@@ -4,6 +4,10 @@ interface User {
   email: string;
   username: string;
   role?: string;
+  plan?: string;
+  plan_label?: string;
+  points_limit?: number | null;
+  unlimited?: boolean;
   created_at?: string;
 }
 interface AuthContextType {
@@ -36,6 +40,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return {
         ...parsed,
         role: (parsed?.role || 'user').toString().toLowerCase(),
+        plan: (parsed?.plan || (parsed?.role === 'admin' ? 'max' : 'free')).toString().toLowerCase(),
       };
     } catch {
       return null;
@@ -45,6 +50,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const normalizedUser: User = {
       ...userData,
       role: (userData?.role || 'user').toString().toLowerCase(),
+      plan: (userData?.plan || (userData?.role === 'admin' ? 'max' : 'free')).toString().toLowerCase(),
     };
     setToken(newToken);
     setUser(normalizedUser);
@@ -85,6 +91,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const normalizedUser: User = {
           ...serverUser,
           role: (serverUser?.role || 'user').toString().toLowerCase(),
+          plan: (serverUser?.plan || (serverUser?.role === 'admin' ? 'max' : 'free')).toString().toLowerCase(),
         };
         if (!cancelled) {
           setUser(normalizedUser);
