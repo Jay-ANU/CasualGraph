@@ -13,6 +13,7 @@ export interface ChatMessage {
     mode?: string;
     backend?: string;
     agentPath?: AgentPath;
+    flowTrace?: AgentTraceStep[];
     agentTrace?: AgentTraceStep[];
     partial?: boolean;
     partialReason?: string | null;

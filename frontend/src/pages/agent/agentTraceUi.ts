@@ -16,6 +16,9 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 const STAGE_LABELS: Record<string, string> = {
+  routing: 'Routing request',
+  context_ready: 'Preparing RAG context',
+  generating: 'Writing grounded answer',
   planning: 'Planning evidence search',
   searching_reports: 'Searching reports',
   querying_graph: 'Reading graph context',
@@ -27,12 +30,12 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 const PHASE_LABELS: Record<string, string> = {
-  plan: 'Thinking Process',
-  thought: 'Thinking Process',
+  plan: 'Build evidence plan',
+  thought: 'Choose next evidence step',
   action: 'Working step',
   observation: 'Evidence update',
-  replan: 'Replanned evidence search',
-  reflexion: 'Thinking Process',
+  replan: 'Replan missing evidence',
+  reflexion: 'Check evidence coverage',
   final: 'Final answer',
 };
 

@@ -12,10 +12,12 @@ describe('agent trace UI labels', () => {
     expect(formatAgentStageLabel({ step: 3, stage: 'synthesizing', tool: 'summarize_evidence', status: 'completed', summary: '' })).toBe('Drafting grounded answer');
   });
 
-  it('uses MiniMax-style phase labels for plan-execute-react traces', () => {
-    expect(formatAgentStageLabel({ step: 1, stage: 'planning', phase: 'plan', status: 'planned', summary: '' })).toBe('Thinking Process');
-    expect(formatAgentStageLabel({ step: 2, stage: 'planning', phase: 'thought', status: 'completed', summary: '' })).toBe('Thinking Process');
-    expect(formatAgentStageLabel({ step: 3, stage: 'planning', phase: 'reflexion', status: 'completed', summary: '' })).toBe('Thinking Process');
+  it('uses project flow labels for plan-execute-reflexion traces', () => {
+    expect(formatAgentStageLabel({ step: 1, stage: 'routing', status: 'completed', summary: '' })).toBe('Routing request');
+    expect(formatAgentStageLabel({ step: 2, stage: 'context_ready', status: 'completed', summary: '' })).toBe('Preparing RAG context');
+    expect(formatAgentStageLabel({ step: 3, stage: 'planning', phase: 'plan', status: 'planned', summary: '' })).toBe('Build evidence plan');
+    expect(formatAgentStageLabel({ step: 4, stage: 'planning', phase: 'thought', status: 'completed', summary: '' })).toBe('Choose next evidence step');
+    expect(formatAgentStageLabel({ step: 5, stage: 'planning', phase: 'reflexion', status: 'completed', summary: '' })).toBe('Check evidence coverage');
     expect(formatAgentStageLabel({ step: 4, stage: 'planning', phase: 'action', tool: 'search_documents', status: 'completed', summary: '' })).toBe('Searching reports');
   });
 

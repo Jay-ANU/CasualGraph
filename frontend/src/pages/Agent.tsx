@@ -573,6 +573,11 @@ type AgentDrawerTab = 'process' | 'files';
 
 const getTraceStatus = (step: AgentTraceStep) => String(step.status || '').toLowerCase();
 
+const getTraceMetaValue = (step: AgentTraceStep, key: string): string => {
+  const value = step.meta?.[key];
+  return value === undefined || value === null ? '' : String(value).trim();
+};
+
 const formatTraceDuration = (step: AgentTraceStep) => {
   if (typeof step.elapsed_ms !== 'number' || step.elapsed_ms <= 0) return '';
   const seconds = step.elapsed_ms / 1000;
@@ -595,15 +600,28 @@ const getEventVerb = (step: AgentTraceStep) => {
 
 const formatMiniMaxEventTitle = (step: AgentTraceStep) => {
   const phase = String(step.phase || '').toLowerCase();
+  const stage = String(step.stage || '').toLowerCase();
   const tool = String(step.tool || '').trim();
   const verb = getEventVerb(step);
+  const expectedEntity = getTraceMetaValue(step, 'expected_entity');
 
-  if (tool === 'search_documents') return `${verb} Web Search`;
+  if (stage === 'routing') return `${verb} request routing`;
+  if (stage === 'context_ready') return `${verb} RAG context`;
+  if (stage === 'generating') return `${verb} answer generation`;
+
+  if (phase === 'plan') return 'Built evidence plan';
+  if (phase === 'thought' && tool === 'search_documents' && expectedEntity) return `Planned report search for ${expectedEntity}`;
+  if (phase === 'thought' && tool === 'search_documents') return 'Planned report search';
+  if (phase === 'thought' && (tool === 'get_graph_context' || tool === 'query_neo4j')) return 'Planned graph cross-check';
+  if (phase === 'thought' && tool === 'summarize_evidence') return 'Planned evidence synthesis';
+  if (phase === 'thought') return 'Chose next evidence step';
+
+  if (tool === 'search_documents') return `${verb} report search`;
   if (tool === 'read_chunks') return `${verb} Read Evidence`;
   if (tool === 'get_graph_context' || tool === 'query_neo4j') return `${verb} Graph Context`;
-  if (tool === 'summarize_evidence') return `${verb} Answer Synthesis`;
-  if (phase === 'plan' || phase === 'thought' || phase === 'reflexion') return 'Thinking Process';
-  if (phase === 'replan') return 'Replanned evidence search';
+  if (tool === 'summarize_evidence') return `${verb} evidence synthesis`;
+  if (phase === 'reflexion') return 'Checked evidence coverage';
+  if (phase === 'replan') return 'Replanned missing evidence search';
   if (phase === 'observation') return 'Evidence update';
   if (phase === 'final') return 'Final answer';
   return formatAgentStageLabel(step);
@@ -633,6 +651,103 @@ const getVisibleTraceSteps = (steps: AgentTraceStep[], limit = 12) => {
       return true;
     })
     .slice(-limit);
+};
+
+const getGraphEdgeCount = (graphSources: unknown): number => {
+  if (!graphSources || typeof graphSources !== 'object') return 0;
+  const edges = (graphSources as { edges?: unknown }).edges;
+  return Array.isArray(edges) ? edges.length : 0;
+};
+
+const getRoutingStrategy = (payload: Partial<RagResponse> & { routing?: Record<string, unknown> }) => (
+  String(payload.retrieval_strategy || payload.routing?.strategy || '').trim()
+);
+
+const buildPipelineTraceStep = (
+  payload: Partial<RagResponse> & { stream_stage?: string; routing?: Record<string, unknown> },
+  stepNumber: number,
+): AgentTraceStep | null => {
+  const stage = String(payload.stream_stage || '').trim();
+  if (!stage || stage === 'agent_trace') return null;
+
+  const sources = Array.isArray(payload.sources) ? payload.sources.length : 0;
+  const graphEdges = getGraphEdgeCount(payload.graph_sources);
+  const strategy = getRoutingStrategy(payload);
+  const subQueries = Array.isArray(payload.sub_queries) ? payload.sub_queries.length : 0;
+  const rewrittenQuery = String(payload.rewritten_query || '').trim();
+  const routingReason = String(payload.routing?.reason || '').trim();
+
+  if (stage === 'routing') {
+    return {
+      step: stepNumber,
+      stage: 'routing',
+      tool: null,
+      status: 'completed',
+      summary: routingReason || 'Classified the question and selected the retrieval path.',
+      phase: 'routing',
+      meta: {
+        strategy,
+        answer_mode: String((payload as { answer_mode?: string }).answer_mode || ''),
+      },
+    };
+  }
+
+  if (stage === 'context_ready') {
+    const detail = [
+      `${sources} report section${sources === 1 ? '' : 's'}`,
+      graphEdges ? `${graphEdges} graph relationship${graphEdges === 1 ? '' : 's'}` : '',
+      strategy ? `${strategy} retrieval` : '',
+      subQueries > 1 ? `${subQueries} sub-queries` : '',
+    ].filter(Boolean).join(', ');
+    return {
+      step: stepNumber,
+      stage: 'context_ready',
+      tool: null,
+      status: 'completed',
+      summary: detail ? `Prepared context from ${detail}.` : 'Prepared retrieved report and graph context.',
+      phase: 'context_ready',
+      meta: {
+        strategy,
+        rewritten_query: rewrittenQuery,
+        sub_queries: subQueries,
+      },
+    };
+  }
+
+  if (stage === 'planning') {
+    return {
+      step: stepNumber,
+      stage: 'planning',
+      tool: null,
+      status: 'completed',
+      summary: 'Routing selected the reflexion agent path and started the evidence plan.',
+      phase: 'planning',
+      meta: {
+        agent_path: payload.agent_path || payload.path || 'agent',
+        reasoning_mode: payload.reasoning_mode || '',
+      },
+    };
+  }
+
+  if (stage === 'generating') {
+    return {
+      step: stepNumber,
+      stage: 'generating',
+      tool: null,
+      status: 'running',
+      summary: 'Writing the answer from prepared report evidence and graph context.',
+      phase: 'generating',
+    };
+  }
+
+  return {
+    step: stepNumber,
+    stage,
+    tool: null,
+    status: 'completed',
+    summary: formatAgentStageLabel({ step: stepNumber, stage, status: 'completed', summary: '' }),
+    phase: stage,
+  };
 };
 
 const MiniMaxTraceEvents: React.FC<{
@@ -828,7 +943,7 @@ const AgentWorkspaceDrawer: React.FC<{
 
             {fileGroups.length > 0 && (
               <div className="space-y-2 border-t border-hairline pt-4">
-                <div className="text-[12px] font-semibold text-ink-charcoal">Files produced</div>
+                <div className="text-[12px] font-semibold text-ink-charcoal">Evidence used</div>
                 {fileGroups.map(group => (
                   <div key={group.key} className="flex min-w-0 items-center gap-3 rounded-xl border border-hairline bg-white px-3 py-3">
                     <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
@@ -905,6 +1020,7 @@ const Agent: React.FC = () => {
   const [loadingStepIndex, setLoadingStepIndex] = useState(0);
   const [loadingElapsedMs, setLoadingElapsedMs] = useState(0);
   const [activeAgentPath, setActiveAgentPath] = useState<'rag' | 'agent' | null>(null);
+  const [pipelineTrace, setPipelineTrace] = useState<AgentTraceStep[]>([]);
   const [agentTrace, setAgentTrace] = useState<AgentTraceStep[]>([]);
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(true);
   const [agentDrawerTab, setAgentDrawerTab] = useState<AgentDrawerTab>('process');
@@ -1852,9 +1968,19 @@ ${isDuplicate
       pushConversationMessage(placeholderMessage);
 
       let latestMessageData: ChatMessage['data'] = placeholderMessage.data;
+      let latestFlowTrace: AgentTraceStep[] = [];
       let pendingStreamingContent = '';
       let streamingRenderTimer: number | null = null;
       let lastStreamingRenderAt = 0;
+      const appendFlowStep = (
+        payload: Partial<RagResponse> & { stream_stage?: string; routing?: Record<string, unknown> },
+      ) => {
+        const step = buildPipelineTraceStep(payload, latestFlowTrace.length + 1);
+        if (!step) return latestFlowTrace;
+        latestFlowTrace = [...latestFlowTrace, step];
+        setPipelineTrace(latestFlowTrace);
+        return latestFlowTrace;
+      };
       const applyStreamingUpdate = () => {
         streamingRenderTimer = null;
         lastStreamingRenderAt = window.performance.now();
@@ -1907,6 +2033,7 @@ ${isDuplicate
       try {
         await readSseEvents(response, (event) => {
           if (event.type === 'meta') {
+            const nextFlowTrace = appendFlowStep(event.payload);
             if (event.payload.stream_stage === 'routing') {
               onStepChange?.(0);
             } else if (event.payload.stream_stage === 'context_ready') {
@@ -1925,6 +2052,7 @@ ${isDuplicate
             }
             const nextData: Partial<NonNullable<ChatMessage['data']>> = {
               mode: event.payload.mode || latestMessageData?.mode || 'ask',
+              flowTrace: nextFlowTrace,
             };
             if (event.payload.agent_path) {
               nextData.agentPath = event.payload.agent_path;
@@ -1953,6 +2081,27 @@ ${isDuplicate
           if (event.type === 'done') {
             onStepChange?.(tier === 'deep' ? 7 : 3);
             finalPayload = event.payload;
+            const finalFlowTrace = latestFlowTrace.length > 0
+              ? [
+                  ...latestFlowTrace,
+                  {
+                    step: latestFlowTrace.length + 1,
+                    stage: 'generating',
+                    tool: null,
+                    status: 'completed',
+                    summary: 'Delivered the final answer payload with citations and timings.',
+                    phase: 'final',
+                    meta: {
+                      backend: event.payload.backend,
+                      retrieval_strategy: event.payload.retrieval_strategy,
+                    },
+                  },
+                ]
+              : latestFlowTrace;
+            if (finalFlowTrace !== latestFlowTrace) {
+              latestFlowTrace = finalFlowTrace;
+              setPipelineTrace(finalFlowTrace);
+            }
             const finalTrace = normalizeAgentTraceSteps(event.payload.agent_trace);
             const finalAgentPath = event.payload.agent_path || event.payload.path;
             if (finalAgentPath) {
@@ -1968,6 +2117,7 @@ ${isDuplicate
               mode: event.payload.mode || 'ask',
               backend: event.payload.backend,
               agentPath: finalAgentPath,
+              flowTrace: finalFlowTrace,
               agentTrace: finalTrace.length > 0 ? finalTrace : latestMessageData?.agentTrace,
               partial: Boolean(event.payload.partial),
               partialReason: event.payload.partial_reason || null,
@@ -2026,6 +2176,7 @@ ${isDuplicate
     setShowPipelineStatus(true);
     setLoadingStepIndex(0);
     setActiveAgentPath(null);
+    setPipelineTrace([]);
     setAgentTrace([]);
     setAgentDrawerOpen(true);
     setAgentDrawerTab('process');
@@ -2106,6 +2257,7 @@ ${isDuplicate
     persistCurrentSessionId('');
     setConversation([]);
     setActiveAgentPath(null);
+    setPipelineTrace([]);
     setAgentTrace([]);
     setAgentDrawerOpen(false);
     setAgentDrawerTab('process');
@@ -2115,6 +2267,7 @@ ${isDuplicate
   const handleSelectSession = (id: string) => {
     setCurrentSessionId(id);
     setActiveAgentPath(null);
+    setPipelineTrace([]);
     setAgentTrace([]);
     setAgentDrawerOpen(true);
     setAgentDrawerTab('process');
@@ -2136,6 +2289,8 @@ ${isDuplicate
         setCurrentSessionId('');
         persistCurrentSessionId('');
         setConversation([]);
+        setPipelineTrace([]);
+        setAgentTrace([]);
         setAgentDrawerOpen(false);
       }
     } catch (error) {
@@ -2351,6 +2506,11 @@ ${isDuplicate
   const displayedConversation = conversation.filter(
     (message, index) => !(index === 0 && message.type === 'agent' && message.content.includes('CausalGraph'))
   );
+  const hasPendingAssistantMessage = displayedConversation.some(message => (
+    message.type === 'agent' &&
+    !message.content.trim() &&
+    Boolean(message.data?.messageId)
+  ));
   const getFeedbackMessageId = (message: ChatMessage, index: number) => {
     const existing = String(message.data?.messageId || '').trim();
     if (existing) return existing;
@@ -2500,15 +2660,22 @@ ${isDuplicate
     message.type === 'agent' &&
     (
       Boolean(message.content.trim()) ||
+      Boolean(message.data?.flowTrace?.length) ||
       Boolean(message.data?.agentTrace?.length) ||
       Boolean(message.data?.sources?.length)
     )
   ));
-  const drawerTrace = agentTrace.length > 0 ? agentTrace : (latestAgentMessage?.data?.agentTrace || []);
+  const liveTrace = [...pipelineTrace, ...agentTrace];
+  const persistedTrace = [
+    ...(latestAgentMessage?.data?.flowTrace || []),
+    ...(latestAgentMessage?.data?.agentTrace || []),
+  ];
+  const drawerTrace = liveTrace.length > 0 ? liveTrace : persistedTrace;
   const drawerSources = agentDrawerSourcesOverride || latestAgentMessage?.data?.sources || [];
   const hasAgentWorkspace = activeTab === 'chat' && (
     isLoading ||
     activeAgentPath === 'agent' ||
+    pipelineTrace.length > 0 ||
     drawerTrace.length > 0 ||
     drawerSources.length > 0
   );
@@ -2726,7 +2893,7 @@ ${isDuplicate
                             setAgentDrawerOpen(prev => !prev);
                             setAgentDrawerTab('process');
                           }}
-                          className={`hidden h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-semibold transition xl:inline-flex ${
+                          className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-semibold transition ${
                             agentDrawerOpen
                               ? 'border-ink bg-ink text-white'
                               : 'border-hairline bg-white text-ink-charcoal hover:border-ink hover:bg-surface-soft'
@@ -2828,7 +2995,10 @@ ${isDuplicate
                     const feedbackRating = submittedFeedback[feedbackMessageId] || message.data?.feedback?.rating;
                     const feedbackDraft = feedbackDrafts[feedbackMessageId];
                     const canSubmitFeedback = Boolean(message.content.trim() && message.data?.backend);
-                    const messageAgentTrace = message.data?.agentTrace || [];
+                    const messageAgentTrace = [
+                      ...(message.data?.flowTrace || []),
+                      ...(message.data?.agentTrace || []),
+                    ];
                     const isAgentAnswer = message.data?.agentPath === 'agent' || messageAgentTrace.length > 0;
                     const hasAssistantContent = message.content.trim().length > 0;
 
@@ -3005,12 +3175,12 @@ ${isDuplicate
                     );
                   })}
 
-                  {showPipelineStatus && (
+                  {showPipelineStatus && !hasPendingAssistantMessage && (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-4">
                       <div className="max-w-[820px]">
-                        <p className="text-[14px] leading-6 text-ink-charcoal">Received. I’m working on it.</p>
-                        {agentTrace.length > 0 ? (
-                          <MiniMaxTraceEvents steps={agentTrace} compact />
+                        <p className="text-[14px] leading-6 text-ink-charcoal">Routing the question through the report pipeline.</p>
+                        {[...pipelineTrace, ...agentTrace].length > 0 ? (
+                          <MiniMaxTraceEvents steps={[...pipelineTrace, ...agentTrace]} compact />
                         ) : (
                           <div className="mt-3 flex w-fit items-center gap-2 rounded-full border border-hairline bg-white px-3 py-1.5 text-[12px] text-ink-steel">
                             <Loader2 className="h-3 w-3 animate-spin text-ink" />
