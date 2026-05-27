@@ -24,6 +24,13 @@ import {
   normalizeStreamingMarkdown,
   readSseEvents,
 } from './agent/ragUi';
+import {
+  formatAgentPartialDescription,
+  formatAgentPartialLabel,
+  formatAgentStageLabel,
+  formatAgentStepCountLabel,
+  formatAgentTraceSummary,
+} from './agent/agentTraceUi';
 
 interface CausalRelationship {
   cause: string;
@@ -510,17 +517,6 @@ const findPreviousUserPrompt = (messages: ChatMessage[], index: number) => {
   return '';
 };
 
-const formatAgentStage = (step: AgentTraceStep) => {
-  if (step.tool === 'search_documents') return 'Searching reports';
-  if (step.tool === 'get_graph_context') return 'Reading graph';
-  if (step.tool === 'summarize_evidence') return 'Summarizing evidence';
-  if (step.stage === 'completed') return 'Finalizing answer';
-  if (step.stage === 'partial') return 'Partial answer';
-  return step.stage
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, char => char.toUpperCase());
-};
-
 const normalizeAgentTraceSteps = (steps: unknown): AgentTraceStep[] => {
   if (!Array.isArray(steps)) return [];
   return steps
@@ -537,6 +533,112 @@ const normalizeAgentTraceSteps = (steps: unknown): AgentTraceStep[] => {
         meta: raw.meta && typeof raw.meta === 'object' ? raw.meta as Record<string, unknown> : undefined,
       };
     });
+};
+
+const AgentRunBadges: React.FC<{
+  steps: AgentTraceStep[];
+  partial?: boolean;
+  partialReason?: string | null;
+}> = ({ steps, partial, partialReason }) => (
+  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-medium">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink px-2.5 py-1 text-white shadow-sm">
+      <BrainCircuit className="h-3.5 w-3.5" />
+      Evidence review
+    </span>
+    {steps.length > 0 && (
+      <span className="inline-flex items-center rounded-full border border-hairline bg-slate-50 px-2.5 py-1 text-ink-steel">
+        {formatAgentStepCountLabel(steps)}
+      </span>
+    )}
+    {partial && (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800"
+        title={formatAgentPartialDescription(partialReason)}
+      >
+        <AlertCircle className="h-3.5 w-3.5" />
+        {formatAgentPartialLabel(partialReason)}
+      </span>
+    )}
+  </div>
+);
+
+const AgentTracePanel: React.FC<{ steps: AgentTraceStep[] }> = ({ steps }) => {
+  const visibleSteps = steps.slice(-5);
+  const completedCount = steps.filter(step => String(step.status || '').toLowerCase() === 'completed').length;
+  const progressPercent = steps.length > 0
+    ? Math.max(12, Math.min(100, Math.round((completedCount / steps.length) * 100)))
+    : 12;
+  const runningStep = [...steps].reverse().find(step => String(step.status || '').toLowerCase() === 'running');
+  const currentLabel = runningStep ? formatAgentStageLabel(runningStep) : 'Reviewing evidence';
+
+  return (
+    <div className="mt-3 max-w-xl overflow-hidden rounded-xl border border-hairline bg-white shadow-[0_14px_40px_rgba(15,23,42,0.08)]">
+      <div className="border-b border-hairline bg-slate-50 px-3.5 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-white">
+              <BrainCircuit className="h-3.5 w-3.5" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-[12px] font-semibold text-ink-charcoal">Evidence review</div>
+              <div className="mt-0.5 text-[11px] leading-4 text-ink-steel">{currentLabel}</div>
+            </div>
+          </div>
+          <span className="shrink-0 rounded-full border border-hairline bg-white px-2 py-0.5 text-[11px] font-medium text-ink-steel">
+            {formatAgentStepCountLabel(steps)}
+          </span>
+        </div>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
+          <div
+            className="h-full rounded-full bg-ink transition-all duration-500 ease-out"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2 p-3">
+        {visibleSteps.map((step, traceIndex) => {
+          const status = String(step.status || '').toLowerCase();
+          const TraceIcon = status === 'running'
+            ? Loader2
+            : status === 'completed'
+              ? CheckCircle2
+              : status === 'failed'
+                ? AlertCircle
+                : Circle;
+          const summary = formatAgentTraceSummary(step);
+          return (
+            <div
+              key={`${step.step}-${step.tool || step.stage}-${traceIndex}`}
+              className="flex min-w-0 items-start gap-2.5 rounded-lg border border-transparent px-1.5 py-1"
+            >
+              <span className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
+                status === 'running'
+                  ? 'bg-slate-900 text-white'
+                  : status === 'completed'
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : status === 'failed'
+                      ? 'bg-red-50 text-red-600'
+                      : 'bg-slate-100 text-ink-stone'
+              }`}>
+                <TraceIcon className={`h-3 w-3 ${status === 'running' ? 'animate-spin' : ''}`} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[12px] font-medium leading-5 text-ink-charcoal">
+                  {formatAgentStageLabel(step)}
+                </div>
+                {summary && (
+                  <div className="text-[11px] leading-4 text-ink-steel">
+                    {summary}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 };
 
 const Agent: React.FC = () => {
@@ -1970,7 +2072,6 @@ ${isDuplicate
   const loadingSteps = getLoadingSteps(tier);
   const currentLoadingStep = loadingSteps[Math.min(loadingStepIndex, loadingSteps.length - 1)];
   const showLongWaitHint = isLoading && loadingElapsedMs >= 8000;
-  const visibleAgentTrace = agentTrace.slice(-5);
   const loadingHintText =
     loadingElapsedMs >= 15000
       ? 'Still processing — larger corpora can take longer. The request is active.'
@@ -2440,23 +2541,11 @@ ${isDuplicate
                             </div>
 
                             {isAgentAnswer && (
-                              <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-ink-steel">
-                                <span className="inline-flex items-center gap-1 rounded-md border border-hairline bg-white px-2 py-0.5">
-                                  <BrainCircuit className="h-3 w-3 text-ink-charcoal" />
-                                  Evidence agent
-                                </span>
-                                {messageAgentTrace.length > 0 && (
-                                  <span className="inline-flex items-center rounded-md border border-hairline bg-white px-2 py-0.5">
-                                    {messageAgentTrace.length} steps
-                                  </span>
-                                )}
-                                {message.data?.partial && (
-                                  <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
-                                    <AlertCircle className="h-3 w-3" />
-                                    Partial
-                                  </span>
-                                )}
-                              </div>
+                              <AgentRunBadges
+                                steps={messageAgentTrace}
+                                partial={message.data?.partial}
+                                partialReason={message.data?.partialReason}
+                              />
                             )}
 
                             {message.data?.sources && message.data.sources.length > 0 && (
@@ -2608,45 +2697,8 @@ ${isDuplicate
                       <div className="mt-1.5 text-[11px] text-ink-stone">
                         Step {Math.min(loadingStepIndex + 1, loadingSteps.length)}/{loadingSteps.length}
                       </div>
-                      {activeAgentPath === 'agent' && visibleAgentTrace.length > 0 && (
-                        <div className="mt-3 max-w-xl rounded-lg border border-hairline bg-white px-3 py-2 shadow-sm">
-                          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-ink-charcoal">
-                            <BrainCircuit className="h-3.5 w-3.5" />
-                            Evidence agent
-                          </div>
-                          <div className="space-y-1">
-                            {visibleAgentTrace.map((step, traceIndex) => {
-                              const status = String(step.status || '').toLowerCase();
-                              const TraceIcon = status === 'running'
-                                ? Loader2
-                                : status === 'completed'
-                                  ? CheckCircle2
-                                  : status === 'failed'
-                                    ? AlertCircle
-                                    : Circle;
-                              return (
-                                <div
-                                  key={`${step.step}-${step.tool || step.stage}-${traceIndex}`}
-                                  className="flex min-w-0 items-start gap-2 text-[12px] leading-5 text-ink-steel"
-                                >
-                                  <TraceIcon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
-                                    status === 'running'
-                                      ? 'animate-spin text-ink-charcoal'
-                                      : status === 'completed'
-                                        ? 'text-emerald-700'
-                                        : status === 'failed'
-                                          ? 'text-red-600'
-                                          : 'text-ink-stone'
-                                  }`} />
-                                  <span className="min-w-0 flex-1 truncate">
-                                    <span className="font-medium text-ink-charcoal">{formatAgentStage(step)}</span>
-                                    {step.summary ? <span className="text-ink-stone"> · {step.summary}</span> : null}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
+                      {activeAgentPath === 'agent' && agentTrace.length > 0 && (
+                        <AgentTracePanel steps={agentTrace} />
                       )}
                       {showLongWaitHint && (
                         <p className="mt-2 text-[12px] text-ink-steel">

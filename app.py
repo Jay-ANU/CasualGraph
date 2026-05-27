@@ -5713,6 +5713,36 @@ def _is_recoverable_stream_error(exc: Exception) -> bool:
     return "broken pipe" in message or "connection reset" in message or "stream disconnected" in message
 
 
+def _remember_stream_context(context: Dict[str, Any], event: Dict[str, Any]) -> None:
+    if event.get("type") not in {"meta", "done"}:
+        return
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return
+    for key in ("sources", "graph_sources", "agent_path", "path", "agent_trace"):
+        if key in payload and payload[key] not in (None, ""):
+            context[key] = payload[key]
+
+
+def _stream_interrupted_done_payload(request: RagAskRequest, context: Dict[str, Any]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "answer": (
+            "The answer stream was interrupted before a final response was available. "
+            "Please retry the question."
+        ),
+        "sources": context.get("sources") if isinstance(context.get("sources"), list) else [],
+        "backend": "stream_recovery",
+        "partial": True,
+        "partial_reason": "stream_interrupted",
+    }
+    for key in ("graph_sources", "agent_path", "path", "agent_trace"):
+        if key in context:
+            payload[key] = context[key]
+    if request.session_id:
+        payload["session_id"] = request.session_id
+    return payload
+
+
 def _build_streaming_response(
     *,
     request: RagAskRequest,
@@ -5722,10 +5752,13 @@ def _build_streaming_response(
     event_queue: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
 
     def _producer() -> None:
+        stream_context: Dict[str, Any] = {}
         try:
             try:
                 iterator = stream_factory()
                 for event in iterator:
+                    if isinstance(event, dict):
+                        _remember_stream_context(stream_context, event)
                     event_queue.put(event)
             except NotImplementedError:
                 event_queue.put({"type": "done", "payload": fallback_factory()})
@@ -5733,7 +5766,16 @@ def _build_streaming_response(
                 if not _is_recoverable_stream_error(exc):
                     raise
                 print(f"[rag.stream] recoverable stream failure, using fallback: {type(exc).__name__}: {exc}")
-                event_queue.put({"type": "done", "payload": fallback_factory()})
+                try:
+                    event_queue.put({"type": "done", "payload": fallback_factory()})
+                except Exception as fallback_exc:
+                    if not _is_recoverable_stream_error(fallback_exc):
+                        raise
+                    print(
+                        "[rag.stream] fallback also hit recoverable stream failure; "
+                        f"returning partial recovery payload: {type(fallback_exc).__name__}: {fallback_exc}"
+                    )
+                    event_queue.put({"type": "done", "payload": _stream_interrupted_done_payload(request, stream_context)})
         except Exception as exc:
             event_queue.put({"type": "error", "message": str(exc)})
         finally:
