@@ -27,6 +27,17 @@ def compute_raw_hash(file_bytes: Optional[bytes], content: str) -> Optional[str]
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def compute_file_hash(path: str | Path) -> Optional[str]:
+    file_path = Path(path)
+    if not file_path.exists() or not file_path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
+
+
 def compute_text_hash(cleaned_text: str) -> str:
     normalized = _WHITESPACE.sub(" ", cleaned_text or "").strip()
     return "sha256:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()

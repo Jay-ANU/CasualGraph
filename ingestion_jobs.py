@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -34,6 +35,8 @@ def start_ingestion_job(
     content: str,
     filename: Optional[str],
     file_bytes: Optional[bytes],
+    file_path: Optional[str] = None,
+    raw_hash: Optional[str] = None,
     document_group: str = "user_upload",
     source_type: str = "",
     uploader: Optional[Dict[str, Any]] = None,
@@ -76,7 +79,11 @@ def start_ingestion_job(
     except Exception as exc:
         print(f"[ingestion] Upload audit create failed for {job_id}: {type(exc).__name__}: {exc}")
 
-    raw_hash = document_registry.compute_raw_hash(file_bytes, content)
+    raw_hash = raw_hash or (
+        document_registry.compute_file_hash(file_path)
+        if file_path
+        else document_registry.compute_raw_hash(file_bytes, content)
+    )
     if raw_hash:
         existing = document_registry.lookup(
             raw_hash=raw_hash,
@@ -98,23 +105,30 @@ def start_ingestion_job(
                 record_upload_completed(job_id, duplicate_result)
             except Exception as audit_exc:
                 print(f"[ingestion] Upload audit complete failed for {job_id}: {type(audit_exc).__name__}: {audit_exc}")
+            _cleanup_spooled_file(file_path)
             with _LOCK:
                 return dict(_JOBS[job_id])
 
-    _EXECUTOR.submit(
-        _run_job,
-        job_id,
-        title=title,
-        domain=domain,
-        source=source,
-        content=content,
-        filename=filename,
-        file_bytes=file_bytes,
-        document_group=document_group,
-        source_type=source_type,
-        owner_user_id=owner_user_id,
-        visibility_scope=visibility_scope,
-    )
+    try:
+        _EXECUTOR.submit(
+            _run_job,
+            job_id,
+            title=title,
+            domain=domain,
+            source=source,
+            content=content,
+            filename=filename,
+            file_bytes=file_bytes,
+            file_path=file_path,
+            raw_hash=raw_hash,
+            document_group=document_group,
+            source_type=source_type,
+            owner_user_id=owner_user_id,
+            visibility_scope=visibility_scope,
+        )
+    except Exception:
+        _cleanup_spooled_file(file_path)
+        raise
     return dict(job)
 
 
@@ -154,6 +168,8 @@ def _run_job(
     content: str,
     filename: Optional[str],
     file_bytes: Optional[bytes],
+    file_path: Optional[str],
+    raw_hash: Optional[str],
     document_group: str,
     source_type: str,
     owner_user_id: str,
@@ -172,6 +188,8 @@ def _run_job(
             content=content,
             filename=filename,
             file_bytes=file_bytes,
+            file_path=file_path,
+            raw_hash=raw_hash,
             document_group=document_group,
             source_type=source_type,
             owner_user_id=owner_user_id,
@@ -220,6 +238,17 @@ def _run_job(
             record_upload_failed(job_id, str(exc))
         except Exception as audit_exc:
             print(f"[ingestion] Upload audit failure record failed for {job_id}: {type(audit_exc).__name__}: {audit_exc}")
+    finally:
+        _cleanup_spooled_file(file_path)
+
+
+def _cleanup_spooled_file(file_path: Optional[str]) -> None:
+    if not file_path:
+        return
+    try:
+        Path(file_path).unlink(missing_ok=True)
+    except Exception as exc:
+        print(f"[ingestion] Failed to remove spooled upload {file_path}: {type(exc).__name__}: {exc}")
 
 
 def _update_job(

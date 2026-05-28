@@ -926,6 +926,40 @@ from rag.retriever import retrieve_context
 from scripts.run_pdf_pipeline import run_pdf_pipeline
 
 
+_UPLOAD_SPOOL_DIR = DATA_DIR / "upload_spool"
+_UPLOAD_SPOOL_CHUNK_BYTES = 1024 * 1024
+
+
+async def _spool_upload_file(file: UploadFile) -> Tuple[str, str, int]:
+    _UPLOAD_SPOOL_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = re.sub(r"[^A-Za-z0-9.]", "", Path(file.filename or "").suffix.lower())[:24]
+    path = _UPLOAD_SPOOL_DIR / f"{uuid.uuid4().hex}{suffix}"
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with path.open("wb") as handle:
+            while True:
+                chunk = await file.read(_UPLOAD_SPOOL_CHUNK_BYTES)
+                if not chunk:
+                    break
+                size += len(chunk)
+                digest.update(chunk)
+                handle.write(chunk)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return str(path), "sha256:" + digest.hexdigest(), size
+
+
+def _remove_spooled_upload(file_path: Optional[str]) -> None:
+    if not file_path:
+        return
+    try:
+        Path(file_path).unlink(missing_ok=True)
+    except Exception as exc:
+        print(f"[documents] Failed to remove spooled upload {file_path}: {type(exc).__name__}: {exc}")
+
+
 app = FastAPI(title="ESG QLoRA Extraction API", version="1.0.0")
 
 _APP_ROOT = Path(__file__).resolve().parent
@@ -6299,25 +6333,34 @@ async def upload_document(
     file: Optional[UploadFile] = File(default=None),
     current_user: dict = Depends(get_current_user),
 ):
+    file_path: Optional[str] = None
     try:
-        file_bytes = await file.read() if file is not None else None
+        raw_hash: Optional[str] = None
+        if file is not None:
+            file_path, raw_hash, _ = await _spool_upload_file(file)
         is_admin = _is_admin_user(current_user)
         document_group = "global_kb" if is_admin else "user_private"
         visibility_scope = "global" if is_admin else "private"
-        result = ingest_uploaded_document(
-            title=title or (file.filename if file else "Uploaded document"),
-            domain=domain,
-            source=source,
-            source_type=source_type,
-            content=content,
-            filename=file.filename if file else None,
-            file_bytes=file_bytes,
-            document_group=document_group,
-            owner_user_id=str(current_user.get("id") or ""),
-            visibility_scope=visibility_scope,
-        )
+        try:
+            result = ingest_uploaded_document(
+                title=title or (file.filename if file else "Uploaded document"),
+                domain=domain,
+                source=source,
+                source_type=source_type,
+                content=content,
+                filename=file.filename if file else None,
+                file_bytes=None,
+                file_path=file_path,
+                raw_hash=raw_hash,
+                document_group=document_group,
+                owner_user_id=str(current_user.get("id") or ""),
+                visibility_scope=visibility_scope,
+            )
+        finally:
+            _remove_spooled_upload(file_path)
         return JSONResponse(content=result)
     except Exception as exc:
+        _remove_spooled_upload(file_path)
         return JSONResponse(
             status_code=400,
             content={"error": "document_upload_failed", "message": str(exc)},
@@ -6334,26 +6377,36 @@ async def upload_document_async(
     file: Optional[UploadFile] = File(default=None),
     current_user: dict = Depends(get_current_user),
 ):
+    file_path: Optional[str] = None
     try:
-        file_bytes = await file.read() if file is not None else None
+        raw_hash: Optional[str] = None
+        if file is not None:
+            file_path, raw_hash, _ = await _spool_upload_file(file)
         is_admin = _is_admin_user(current_user)
         document_group = "global_kb" if is_admin else "user_private"
         visibility_scope = "global" if is_admin else "private"
-        job = start_ingestion_job(
-            title=title or (file.filename if file else "Uploaded document"),
-            domain=domain,
-            source=source,
-            source_type=source_type,
-            content=content,
-            filename=file.filename if file else None,
-            file_bytes=file_bytes,
-            document_group=document_group,
-            uploader=current_user,
-            owner_user_id=str(current_user.get("id") or ""),
-            visibility_scope=visibility_scope,
-        )
+        try:
+            job = start_ingestion_job(
+                title=title or (file.filename if file else "Uploaded document"),
+                domain=domain,
+                source=source,
+                source_type=source_type,
+                content=content,
+                filename=file.filename if file else None,
+                file_bytes=None,
+                file_path=file_path,
+                raw_hash=raw_hash,
+                document_group=document_group,
+                uploader=current_user,
+                owner_user_id=str(current_user.get("id") or ""),
+                visibility_scope=visibility_scope,
+            )
+        except Exception:
+            _remove_spooled_upload(file_path)
+            raise
         return JSONResponse(content=job)
     except Exception as exc:
+        _remove_spooled_upload(file_path)
         return JSONResponse(
             status_code=400,
             content={"error": "document_upload_failed", "message": str(exc)},

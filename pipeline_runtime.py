@@ -60,6 +60,8 @@ def ingest_uploaded_document(
     visibility_scope: str = "global",
     filename: str | None = None,
     file_bytes: bytes | None = None,
+    file_path: str | None = None,
+    raw_hash: str | None = None,
     progress_callback: Optional[Callable[[str, str, int], None]] = None,
 ) -> Dict:
     """Parse uploaded content, append it to the corpus, and return frontend-friendly data."""
@@ -70,7 +72,11 @@ def ingest_uploaded_document(
     if scope_value not in {"global", "private"}:
         scope_value = "global"
 
-    raw_hash = document_registry.compute_raw_hash(file_bytes, content)
+    raw_hash = raw_hash or (
+        document_registry.compute_file_hash(file_path)
+        if file_path
+        else document_registry.compute_raw_hash(file_bytes, content)
+    )
     if raw_hash:
         existing = document_registry.lookup(
             raw_hash=raw_hash,
@@ -81,7 +87,12 @@ def ingest_uploaded_document(
         if existing:
             return _build_duplicate_response(existing, progress_callback=progress_callback)
 
-    text, detected_source = _resolve_text_input(content=content, filename=filename, file_bytes=file_bytes)
+    text, detected_source = _resolve_text_input(
+        content=content,
+        filename=filename,
+        file_bytes=file_bytes,
+        file_path=file_path,
+    )
     _report_progress(progress_callback, "cleaning", "Cleaning extracted text", 15)
     cleaned = clean_text(text)
     text_hash = document_registry.compute_text_hash(cleaned)
@@ -605,33 +616,58 @@ def rebuild_document_graph(document: Dict[str, Any]) -> Dict:
     }
 
 
-def _resolve_text_input(content: str = "", filename: str | None = None, file_bytes: bytes | None = None) -> tuple[str, str]:
+def _resolve_text_input(
+    content: str = "",
+    filename: str | None = None,
+    file_bytes: bytes | None = None,
+    file_path: str | None = None,
+) -> tuple[str, str]:
     if content and content.strip():
         return content.strip(), "manual_input"
 
-    if not filename or file_bytes is None:
+    path = Path(file_path) if file_path else None
+    if not filename or (file_bytes is None and path is None):
         raise ValueError("Either non-empty content or an uploaded file is required.")
 
     suffix = Path(filename).suffix.lower()
     if suffix == ".pdf":
-        reader = PdfReader(io.BytesIO(file_bytes))
-        text = "\n\n".join((page.extract_text() or "").strip() for page in reader.pages if (page.extract_text() or "").strip())
+        if path is not None:
+            with path.open("rb") as handle:
+                reader = PdfReader(handle)
+                parts = []
+                for page in reader.pages:
+                    page_text = (page.extract_text() or "").strip()
+                    if page_text:
+                        parts.append(page_text)
+        else:
+            reader = PdfReader(io.BytesIO(file_bytes or b""))
+            parts = []
+            for page in reader.pages:
+                page_text = (page.extract_text() or "").strip()
+                if page_text:
+                    parts.append(page_text)
+        text = "\n\n".join(parts)
         if not text.strip():
             raise ValueError("No extractable text found in the uploaded PDF.")
         return text.strip(), filename
 
     if suffix in {".txt", ".md", ".markdown"}:
-        return file_bytes.decode("utf-8", errors="ignore").strip(), filename
+        if path is not None:
+            return path.read_text(encoding="utf-8", errors="ignore").strip(), filename
+        return (file_bytes or b"").decode("utf-8", errors="ignore").strip(), filename
 
     if suffix in {".docx", ".doc"}:
-        doc = DocxDocument(io.BytesIO(file_bytes))
+        doc = DocxDocument(str(path)) if path is not None else DocxDocument(io.BytesIO(file_bytes or b""))
         text = "\n".join(paragraph.text for paragraph in doc.paragraphs if paragraph.text.strip())
         if not text.strip():
             raise ValueError("No extractable text found in the uploaded Word document.")
         return text.strip(), filename
 
     if suffix == ".rtf":
-        raw = file_bytes.decode("utf-8", errors="ignore")
+        if path is not None:
+            raw = path.read_text(encoding="utf-8", errors="ignore")
+        else:
+            raw = (file_bytes or b"").decode("utf-8", errors="ignore")
         text = re.sub(r"\\[a-z]+\d*\s?", "", raw)
         text = re.sub(r"\{[^}]*\}", "", text)
         text = re.sub(r"\s+", " ", text).strip()
