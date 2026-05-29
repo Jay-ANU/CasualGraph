@@ -11,10 +11,13 @@ import {
   FileSearch,
   Github,
   MessageSquare,
+  PlayCircle,
   ScreenShare,
   Search,
 } from 'lucide-react';
 import { githubRepositoryUrl } from '../config/downloads';
+
+const tutorialVideoUrl = 'https://youtu.be/62L-VOsRu8U';
 
 const scrollFeatures = [
   {
@@ -382,6 +385,25 @@ const Home: React.FC = () => {
               <Download className="h-4 w-4" />
             </Link>
           </div>
+
+          <a
+            href={tutorialVideoUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="moon-panel moon-interactive-surface group flex items-center justify-between gap-4 rounded-[28px] px-5 py-4 transition-colors hover:border-white/[0.18] lg:col-span-2"
+            onMouseMove={updateSurfaceSpotlight}
+          >
+            <span className="flex min-w-0 items-center gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/[0.12] bg-white/[0.06] text-white/[0.78]">
+                <PlayCircle className="h-5 w-5" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[15px] font-semibold text-white">Tutorial video</span>
+                <span className="block truncate text-[12px] moon-muted">YouTube</span>
+              </span>
+            </span>
+            <ArrowRight className="h-4 w-4 shrink-0 text-white/[0.64] transition-transform group-hover:translate-x-0.5" />
+          </a>
         </div>
       </section>
     </div>
