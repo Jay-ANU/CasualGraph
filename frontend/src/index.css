@@ -254,13 +254,11 @@
   }
 
   .moon-scroll-story {
-    scroll-snap-type: y proximity;
+    scroll-snap-type: none;
   }
 
   .moon-story-panel {
     min-height: calc(100vh - 81px);
-    scroll-snap-align: start;
-    content-visibility: auto;
     contain: layout paint style;
     contain-intrinsic-size: 760px;
   }
