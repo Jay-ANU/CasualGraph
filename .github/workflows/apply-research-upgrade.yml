@@ -1,0 +1,60 @@
+name: Apply reviewed Research Desk changes
+on:
+  push:
+    branches: [feat/deepseek-v4-pro-workspace]
+    paths: ['.upgrade-transfer/**']
+permissions:
+  contents: read
+jobs:
+  apply-reviewed-source:
+    if: github.repository == 'Jay-ANU/CasualGraph' && github.ref == 'refs/heads/feat/deepseek-v4-pro-workspace'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/deepseek-v4-pro-workspace
+      - name: Verify source hashes and materialize reviewed edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import ast, base64, hashlib, json, lzma
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          encoded = ''.join((root / f'.upgrade-transfer/part{i}.b64').read_text().strip() for i in range(4))
+          raw = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(raw).hexdigest() == '0a5f31977587ed29996c084452ee7c32cefd563720511c9b67dc9afb35b0ff4f'
+          changes = json.loads(raw)
+          outputs = []
+          for change in changes:
+              path = root / change['path']
+              assert path.resolve().is_relative_to(root) and not path.is_symlink()
+              assert not change['path'].startswith('.github/workflows/')
+              if change['old'] is None:
+                  assert not path.exists(), f'Unexpected existing file: {path}'
+                  old = b''
+              else:
+                  old = path.read_bytes()
+                  assert hashlib.sha256(old).hexdigest() == change['old'], f'Baseline changed: {path}'
+              lines = old.decode('utf-8').splitlines(keepends=True)
+              for start, end, text in reversed(change['edits']):
+                  lines[start:end] = [text]
+              output = ''.join(lines).encode('utf-8')
+              assert hashlib.sha256(output).hexdigest() == change['new'], f'Output mismatch: {path}'
+              if path.suffix == '.py':
+                  ast.parse(output, filename=str(path))
+              outputs.append((path, output))
+          for path, output in outputs:
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(output)
+          print(f'Applied and hash-verified {len(outputs)} reviewed source files.')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'feat: refresh research workspace and migrate chat to DeepSeek V4 Pro'
+          git push origin HEAD:refs/heads/feat/deepseek-v4-pro-workspace
