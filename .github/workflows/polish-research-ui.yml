@@ -1,0 +1,46 @@
+name: Apply final interface fixes
+on:
+  push:
+    branches: [feat/deepseek-v4-pro-workspace]
+    paths: ['.github/workflows/polish-research-ui.yml']
+permissions:
+  contents: read
+jobs:
+  apply:
+    if: github.repository == 'Jay-ANU/CasualGraph' && github.ref == 'refs/heads/feat/deepseek-v4-pro-workspace'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/deepseek-v4-pro-workspace
+      - name: Remove misleading library fixtures and improve text contrast
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path('frontend/src/pages/Agent.tsx')
+          assert hashlib.sha256(p.read_bytes()).hexdigest() == '3dd5bb8fb702201709ea3fffe5064092ffd716b9438ea304ca43dc9d0cd18448'
+          text = p.read_text()
+          start = text.index('const getSampleDocuments = (): Document[] => [')
+          end = text.index('const SAMPLE_DOCUMENTS = getSampleDocuments();', start) + len('const SAMPLE_DOCUMENTS = getSampleDocuments();')
+          text = text[:start] + '// An empty or unreachable private library must not be replaced with demo data.\nconst SAMPLE_DOCUMENTS: Document[] = [];' + text[end:]
+          text = text.replace("// Tier selector: 'flash' (OpenAI gpt-5.4-mini, fast) vs 'deep' (Anthropic\n  // Claude, layered retrieval + graph context). URL accepts ?tier=deep; legacy", "// Fast disables thinking; Deep enables reasoning with layered retrieval and\n  // graph context on the configured provider. URL accepts ?tier=deep; legacy")
+          assert hashlib.sha256(text.encode()).hexdigest() == '897b88dbc769b696b212a0e9943bd3643b4598bd8cd7a8a4d4a4b3ac9a109587'
+          p.write_text(text)
+          p = Path('frontend/src/pages/Home.tsx')
+          p.write_text(p.read_text().replace('<main className="research-home">', '<div className="research-home">').replace('</main>', '</div>'))
+          p = Path('frontend/src/styles/research.css')
+          text = p.read_text()
+          for old, new in {'#84907c':'#677460', '#8a9582':'#677460', '#7e8e72':'#627653', '#868e80':'#677460', '#848b7f':'#677460', '#9aab93':'#647a58'}.items():
+              text = text.replace(old, new)
+          p.write_text(text)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/src/pages/Agent.tsx frontend/src/pages/Home.tsx frontend/src/styles/research.css
+          git diff --cached --check
+          git commit -m 'fix: keep empty libraries truthful and improve research text contrast'
+          git push origin HEAD:refs/heads/feat/deepseek-v4-pro-workspace

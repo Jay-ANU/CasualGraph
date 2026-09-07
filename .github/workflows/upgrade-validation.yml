@@ -72,3 +72,18 @@ jobs:
           name: frontend-build
           path: frontend/build
           retention-days: 3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install browser test runtime
+        run: |
+          pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium
+      - name: Browser smoke checks (mock APIs, no model credit)
+        run: python ../scripts/research_ui_smoke.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-verification
+          path: ui-artifacts
+          retention-days: 7
