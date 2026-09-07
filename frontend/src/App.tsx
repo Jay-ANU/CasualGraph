@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import ResearchWorkspace from './components/ResearchWorkspace';
 import Home from './pages/Home';
 import CausalInference from './pages/CausalInference';
 import Agent from './pages/Agent';
@@ -10,18 +11,21 @@ import Login from './pages/Login';
 import Admin from './pages/Admin';
 import DesktopDownload from './pages/DesktopDownload';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import './styles/research.css';
+
+const AuthLoading = () => <div className="research-auth-loading" role="status">Loading your workspace…</div>;
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
   const location = useLocation();
-  if (loading) return null;
+  if (loading) return <AuthLoading />;
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace state={{ from: location }} />;
 };
 
 const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, user, loading } = useAuth();
   const location = useLocation();
-  if (loading) return null;
+  if (loading) return <AuthLoading />;
   if (!isAuthenticated) return <Navigate to="/login" replace state={{ from: location }} />;
   return (user?.role || '').toLowerCase() === 'admin' ? <>{children}</> : <Navigate to="/agent" replace />;
 };
@@ -41,7 +45,7 @@ function App() {
               <Route path="/causal-inference" element={<CausalInference />} />
               <Route path="/desktop" element={<DesktopDownload />} />
               <Route path="/download" element={<DesktopDownload />} />
-              <Route path="/agent" element={<ProtectedRoute><Agent /></ProtectedRoute>} />
+              <Route path="/agent" element={<ProtectedRoute><ResearchWorkspace><Agent /></ResearchWorkspace></ProtectedRoute>} />
               <Route path="/admin" element={<AdminRoute><Admin /></AdminRoute>} />
               <Route path="/about" element={<About />} />
             </Routes>

@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
+from configs.deepseek_config import load_deepseek_config
+
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -140,12 +142,20 @@ def neo4j_configured() -> bool:
     return bool(NEO4J_URI and NEO4J_USER and NEO4J_PASSWORD)
 
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4").strip()
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").strip()
+# One provider for both answer tiers and auxiliary text-generation tasks.
+# OPENAI_/ANTHROPIC_ exports are SDK compatibility names, not billing providers.
+_DEEPSEEK = load_deepseek_config(os.environ)
+DEEPSEEK_API_KEY = _DEEPSEEK.api_key
+DEEPSEEK_BASE_URL = _DEEPSEEK.base_url
+DEEPSEEK_MODEL = _DEEPSEEK.model
+DEEPSEEK_TIMEOUT = float(os.getenv("DEEPSEEK_TIMEOUT", "90"))
+DEEPSEEK_MAX_RETRIES = max(0, min(3, int(os.getenv("DEEPSEEK_MAX_RETRIES", "1"))))
+OPENAI_API_KEY = DEEPSEEK_API_KEY
+OPENAI_MODEL = DEEPSEEK_MODEL
+OPENAI_BASE_URL = DEEPSEEK_BASE_URL
 OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
-OPENAI_MAX_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS", "700"))
-OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "60"))
+OPENAI_MAX_TOKENS = max(1, min(32768, int(os.getenv("DEEPSEEK_MAX_TOKENS", "2048"))))
+OPENAI_TIMEOUT = DEEPSEEK_TIMEOUT
 RAG_ANSWER_MODE = os.getenv("RAG_ANSWER_MODE", "auto").strip().lower()
 RAG_ALLOW_SPECULATION = os.getenv("RAG_ALLOW_SPECULATION", "False").lower() == "true"
 RAG_USE_GRAPH_CONTEXT = os.getenv("RAG_USE_GRAPH_CONTEXT", "True").lower() == "true"
@@ -155,7 +165,7 @@ RAG_GRAPH_CONTEXT_MAX_TRIPLES = int(os.getenv("RAG_GRAPH_CONTEXT_MAX_TRIPLES", "
 RAG_GRAPH_CONTEXT_MIN_SOURCES = max(0, int(os.getenv("RAG_GRAPH_CONTEXT_MIN_SOURCES", "0")))
 RAG_MIN_SOURCE_RELEVANCE = max(0.0, min(1.0, float(os.getenv("RAG_MIN_SOURCE_RELEVANCE", "0.35"))))
 RAG_PREDICTION_ENABLED = os.getenv("RAG_PREDICTION_ENABLED", "True").lower() == "true"
-RAG_PREDICTION_MODEL = os.getenv("RAG_PREDICTION_MODEL", OPENAI_MODEL).strip()
+RAG_PREDICTION_MODEL = DEEPSEEK_MODEL
 RAG_PREDICTION_MAX_TOKENS = int(os.getenv("RAG_PREDICTION_MAX_TOKENS", "1500"))
 RAG_PREDICTION_TEMPERATURE = float(os.getenv("RAG_PREDICTION_TEMPERATURE", "0.2"))
 RAG_MULTI_QUERY_ENABLED = os.getenv("RAG_MULTI_QUERY_ENABLED", "false").lower() == "true"
@@ -173,7 +183,7 @@ RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3").strip()
 RERANKER_TOP_K_BEFORE = max(1, int(os.getenv("RERANKER_TOP_K_BEFORE", "20")))
 RERANKER_TOP_K_AFTER = max(1, int(os.getenv("RERANKER_TOP_K_AFTER", "5")))
 HYDE_ENABLED = os.getenv("HYDE_ENABLED", "false").lower() == "true"
-HYDE_MODEL = os.getenv("HYDE_MODEL", "gpt-5.4-mini").strip()
+HYDE_MODEL = DEEPSEEK_MODEL
 HYDE_MAX_TOKENS = max(32, int(os.getenv("HYDE_MAX_TOKENS", "200")))
 HYDE_MIN_CHARS = max(1, int(os.getenv("HYDE_MIN_CHARS", "50")))
 RAG_DECOMPOSE_ENABLED = os.getenv("RAG_DECOMPOSE_ENABLED", "false").lower() == "true"
@@ -213,55 +223,41 @@ ESG_METRICS_MIN_CONFIDENCE = max(0.0, min(1.0, float(os.getenv("ESG_METRICS_MIN_
 
 
 def openai_configured() -> bool:
-    """Return whether the root pipeline has an OpenAI API key configured."""
+    """Compatibility check for DeepSeek through the OpenAI SDK."""
     return bool(OPENAI_API_KEY)
 
 
-# -----------------------------------------------------------------------------
-# Agent reasoning-tier settings (Flash / Deep).
-#
-# Flash = cheap+fast tier on OpenAI (today's "ask" path). Default model name
-# `gpt-5.4-mini` is intentionally env-overridable so we can swap to whichever
-# small OpenAI model is current.
-#
-# Deep = stronger tier on Anthropic Claude with deeper retrieval (layered +
-# graph context + decomposition). Default `claude-opus-4-7` is the latest 4.x
-# Opus; override to claude-sonnet for cost.
-# -----------------------------------------------------------------------------
-RAG_FLASH_MODEL = os.getenv("RAG_FLASH_MODEL", "gpt-5.4-mini").strip()
-
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
-ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "").strip()
-RAG_DEEP_MODEL = os.getenv("RAG_DEEP_MODEL", "claude-opus-4-7").strip()
-RAG_DEEP_MAX_TOKENS = int(os.getenv("RAG_DEEP_MAX_TOKENS", "2000"))
+# Flash / Deep are retrieval and reasoning modes; both use DeepSeek V4 Pro
+# by default. Keep the existing public tier names and SSE contract unchanged.
+RAG_FLASH_MODEL = DEEPSEEK_MODEL
+ANTHROPIC_API_KEY = DEEPSEEK_API_KEY
+ANTHROPIC_BASE_URL = _DEEPSEEK.anthropic_base_url
+RAG_DEEP_MODEL = DEEPSEEK_MODEL
+RAG_DEEP_MAX_TOKENS = max(1024, min(32768, int(os.getenv("RAG_DEEP_MAX_TOKENS", "8192"))))
 RAG_DEEP_TEMPERATURE = float(os.getenv("RAG_DEEP_TEMPERATURE", "0.2"))
-RAG_DEEP_TIMEOUT = float(os.getenv("RAG_DEEP_TIMEOUT", "90"))
+RAG_DEEP_TIMEOUT = float(os.getenv("RAG_DEEP_TIMEOUT", "120"))
 
 
 def anthropic_configured() -> bool:
-    """Return whether the Deep-tier Anthropic backend is configured."""
+    """Compatibility check for DeepSeek through the Anthropic SDK."""
     return bool(ANTHROPIC_API_KEY)
 
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
-DEEPSEEK_TIMEOUT = float(os.getenv("DEEPSEEK_TIMEOUT", "60"))
-DEEPSEEK_EXTRACTION_MODEL = os.getenv("DEEPSEEK_EXTRACTION_MODEL", DEEPSEEK_MODEL).strip()
+DEEPSEEK_EXTRACTION_MODEL = DEEPSEEK_MODEL
 DEEPSEEK_EXTRACTION_MAX_TOKENS = int(os.getenv("DEEPSEEK_EXTRACTION_MAX_TOKENS", "8000"))
 DEEPSEEK_CACHE_ENABLED = os.getenv("DEEPSEEK_CACHE_ENABLED", "true").lower() == "true"
 DEEPSEEK_CACHE_TTL_SECONDS = max(1, int(os.getenv("DEEPSEEK_CACHE_TTL_SECONDS", "1800")))
 DEEPSEEK_FAILURE_CACHE_TTL_SECONDS = max(1, int(os.getenv("DEEPSEEK_FAILURE_CACHE_TTL_SECONDS", "60")))
 DEEPSEEK_CIRCUIT_FAILURE_THRESHOLD = max(1, int(os.getenv("DEEPSEEK_CIRCUIT_FAILURE_THRESHOLD", "3")))
 DEEPSEEK_CIRCUIT_BREAK_SECONDS = max(1, int(os.getenv("DEEPSEEK_CIRCUIT_BREAK_SECONDS", "60")))
-RAG_ANSWER_INTENT_ROUTER_MODEL = os.getenv("RAG_ANSWER_INTENT_ROUTER_MODEL", DEEPSEEK_MODEL).strip()
+RAG_ANSWER_INTENT_ROUTER_MODEL = DEEPSEEK_MODEL
 RAG_ANSWER_INTENT_ROUTER_TIMEOUT = float(os.getenv("RAG_ANSWER_INTENT_ROUTER_TIMEOUT", "2"))
 RAG_ANSWER_INTENT_ROUTER_MAX_TOKENS = int(os.getenv("RAG_ANSWER_INTENT_ROUTER_MAX_TOKENS", "240"))
 RAG_HYBRID_AGENT_ROUTER_LLM_ENABLED = os.getenv("RAG_HYBRID_AGENT_ROUTER_LLM_ENABLED", "true").lower() == "true"
-RAG_HYBRID_AGENT_ROUTER_MODEL = os.getenv("RAG_HYBRID_AGENT_ROUTER_MODEL", DEEPSEEK_MODEL).strip()
+RAG_HYBRID_AGENT_ROUTER_MODEL = DEEPSEEK_MODEL
 RAG_HYBRID_AGENT_ROUTER_TIMEOUT = float(os.getenv("RAG_HYBRID_AGENT_ROUTER_TIMEOUT", "3"))
 RAG_HYBRID_AGENT_ROUTER_MAX_TOKENS = int(os.getenv("RAG_HYBRID_AGENT_ROUTER_MAX_TOKENS", "260"))
-RAG_ROUTER_MODEL = os.getenv("RAG_ROUTER_MODEL", DEEPSEEK_MODEL).strip()
+RAG_ROUTER_MODEL = DEEPSEEK_MODEL
 RAG_ROUTER_TIMEOUT = float(os.getenv("RAG_ROUTER_TIMEOUT", "2"))
 RAG_ROUTER_MAX_TOKENS = int(os.getenv("RAG_ROUTER_MAX_TOKENS", "160"))
 ESG_EXTRACTION_BACKEND = os.getenv("ESG_EXTRACTION_BACKEND", "remote").strip().lower()
