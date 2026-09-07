@@ -15,7 +15,7 @@ const Navbar: React.FC = () => {
   const location = useLocation();
   const { isAuthenticated, logout, user } = useAuth();
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
-  const isMoonRoute = ['/causal-inference', '/desktop', '/download', '/about'].includes(location.pathname);
+  const isMoonRoute = ['/', '/home', '/causal-inference', '/desktop', '/download', '/about'].includes(location.pathname);
 
   const navigation = [
     { name: 'Home', href: '/' },
@@ -37,7 +37,8 @@ const Navbar: React.FC = () => {
 
   return (
     <nav
-      className={`sticky top-0 z-50 border-b backdrop-blur-xl ${
+      data-tone={isMoonRoute ? 'dark' : 'light'}
+      className={`cg-polished-nav sticky top-0 z-50 border-b backdrop-blur-xl ${
         isMoonRoute ? 'border-white/10 bg-[rgba(3,3,3,0.92)]' : 'bg-canvas'
       }`}
       style={isMoonRoute ? undefined : { borderColor: 'var(--cg-hairline-soft)' }}

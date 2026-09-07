@@ -7,6 +7,7 @@ export default function WorkbenchWelcome({ reportCount, starters, onUpload, onLi
   const icons = [Search, GitBranch, ShieldCheck];
   return (
     <div className="research-welcome">
+      <div className="research-welcome-mark" aria-hidden="true"><img src="/brand/logo-mark.svg" alt="" /></div>
       <div className="research-eyebrow"><span /> YOUR RESEARCH WORKSPACE</div>
       <h2>Better questions.<br /><em>Traceable answers.</em></h2>
       <p className="research-welcome-lead">Explore sustainability reports, connect the evidence, and see what supports every conclusion.</p>
