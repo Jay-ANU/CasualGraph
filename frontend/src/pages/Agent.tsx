@@ -461,35 +461,8 @@ const documentNeedsGraphRepair = (document: Document | null) => {
   return hasAnonymousNode || hasAnonymousRelationship;
 };
 
-const getSampleDocuments = (): Document[] => [
-  {
-    id: 'sample_esg_report',
-    title: 'NVIDIA FY2025 Sustainability Report',
-    domain: 'general',
-    source: 'Sample ESG Index',
-    graph: {
-      nodes: [
-        { id: 'nvidia', label: 'NVIDIA', domain: 'general', type: 'Company', confidence: 0.98 },
-        { id: 'scope_2_market_based_emissions', label: 'scope 2 market-based emissions', domain: 'environmental', type: 'ESG Metric', confidence: 0.84 },
-        { id: 'renewable_electricity', label: 'renewable electricity', domain: 'environmental', type: 'ESG Metric', confidence: 0.84 },
-        { id: 'climate_risk_oversight', label: 'climate risk oversight', domain: 'governance', type: 'Policy', confidence: 0.8 }
-      ],
-      edges: [
-        { source: 'nvidia', target: 'scope_2_market_based_emissions', relationship_type: 'HAS_METRIC', confidence: 0.82, evidence: 'NVIDIA reported a 14% reduction in scope 2 market-based emissions.', domain: 'environmental' },
-        { source: 'nvidia', target: 'renewable_electricity', relationship_type: 'HAS_TARGET', confidence: 0.82, evidence: 'The company set a target to reach 100% renewable electricity for selected sites.', domain: 'environmental' },
-        { source: 'climate_risk_oversight', target: 'nvidia', relationship_type: 'IMPACTS', confidence: 0.68, evidence: 'The board governance policy requires quarterly oversight of climate risk and AI safety topics.', domain: 'governance' }
-      ],
-      metadata: { node_count: 4, edge_count: 3, is_directed: true, is_acyclic: true }
-    },
-    relationships: [
-      { cause: 'NVIDIA', effect: 'scope 2 market-based emissions', confidence: 0.82, evidence: 'NVIDIA reported a 14% reduction in scope 2 market-based emissions.', domain: 'general', relationship_type: 'HAS_METRIC' },
-      { cause: 'NVIDIA', effect: 'renewable electricity', confidence: 0.82, evidence: 'The company set a target to reach 100% renewable electricity for selected sites.', domain: 'general', relationship_type: 'HAS_TARGET' },
-      { cause: 'climate risk oversight', effect: 'NVIDIA', confidence: 0.68, evidence: 'The board governance policy requires quarterly oversight of climate risk and AI safety topics.', domain: 'general', relationship_type: 'IMPACTS' }
-    ]
-  }
-];
-
-const SAMPLE_DOCUMENTS = getSampleDocuments();
+// An empty or unreachable private library must not be replaced with demo data.
+const SAMPLE_DOCUMENTS: Document[] = [];
 
 const readApiErrorMessage = async (response: Response): Promise<string> => {
   const fallback = `RAG service returned ${response.status}${response.statusText ? ` ${response.statusText}` : ''}.`;
@@ -1075,8 +1048,8 @@ const Agent: React.FC = () => {
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(true);
   const [agentDrawerTab, setAgentDrawerTab] = useState<AgentDrawerTab>('process');
   const [agentDrawerSourcesOverride, setAgentDrawerSourcesOverride] = useState<RagSource[] | null>(null);
-  // Tier selector: 'flash' (OpenAI gpt-5.4-mini, fast) vs 'deep' (Anthropic
-  // Claude, layered retrieval + graph context). URL accepts ?tier=deep; legacy
+  // Fast disables thinking; Deep enables reasoning with layered retrieval and
+  // graph context on the configured provider. URL accepts ?tier=deep; legacy
   // ?mode=predict is honored as Deep so old bookmarks still work.
   const [tier, setTier] = useState<RagReasoningMode>(() => {
     if (typeof window === 'undefined') return 'flash';

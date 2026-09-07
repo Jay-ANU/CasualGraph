@@ -13,7 +13,7 @@ export default function Home() {
   const navigate = useNavigate();
   const openQuestion = (prompt: string) => navigate(`/agent?prompt=${encodeURIComponent(prompt.trim())}`);
   return (
-    <main className="research-home">
+    <div className="research-home">
       <section className="research-hero">
         <div className="research-hero-copy">
           <div className="research-eyebrow"><span /> EVIDENCE-FIRST ESG RESEARCH</div>
@@ -43,6 +43,6 @@ export default function Home() {
       </section>
       <section className="research-bottom-line"><div><span className="research-eyebrow">MADE FOR THE WORK, NOT JUST THE ANSWER</span><h2>Keep your research inspectable.</h2></div><Link to="/agent">Start a conversation <ArrowUpRight size={18} /></Link></section>
       <footer className="research-footer"><span>CausalGraph · An evidence-first research workspace</span><div><Link to="/desktop">Desktop companion</Link><Link to="/about">About the project</Link></div></footer>
-    </main>
+    </div>
   );
 }

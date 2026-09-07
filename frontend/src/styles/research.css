@@ -38,19 +38,19 @@
 .research-preview-answer { margin:0 26px 28px; padding:18px; border-left:2px solid #698a67; background:#fafbf8; }
 .research-preview-answer div { display:flex; align-items:center; gap:9px; color:#33573e; font-size:12px; }
 .research-preview-answer p { color:#677061; font-size:12px; line-height:1.9; margin:10px 0; }
-.research-preview-answer > span { font-size:9px; color:#868e80; }
+.research-preview-answer > span { font-size:9px; color:#677460; }
 .research-preview-footer { border-top:1px solid #e8ece5; display:flex; align-items:center; gap:7px; padding:15px 25px; font-size:9px; color:#788773; }
 .research-preview-footer span { margin-left:auto; letter-spacing:.1em; }
 .research-principles { display:grid; grid-template-columns:repeat(3,1fr); max-width:1224px; margin:auto; border-top:1px solid #dfe5da; border-bottom:1px solid #dfe5da; }
 .research-principles > div { position:relative; padding:35px 35px 37px; color:#587357; }
 .research-principles > div + div { border-left:1px solid #dfe5da; }
-.research-step-number { position:absolute; right:34px; top:35px; color:#9aab93; font:12px monospace; }
+.research-step-number { position:absolute; right:34px; top:35px; color:#647a58; font:12px monospace; }
 .research-principles h2 { font-size:17px; font-weight:500; color:#293f2d; margin:17px 0 10px; letter-spacing:-.02em; }
 .research-principles p { font-size:12px; line-height:1.9; max-width:300px; color:#78806f; }
 .research-bottom-line { max-width:1224px; margin:auto; padding:57px 34px; display:flex; align-items:center; justify-content:space-between; gap:24px; }
 .research-bottom-line h2 { font:26px/1.3 Georgia,serif; margin-top:13px; color:#314331; }
 .research-bottom-line a { font-size:12px; color:var(--research-green); padding-bottom:5px; border-bottom:1px solid #a7b5a0; }
-.research-footer { border-top:1px solid #e1e5dc; max-width:1224px; margin:auto; padding:23px 34px; display:flex; gap:14px; justify-content:space-between; font-size:10px; color:#848b7f; }
+.research-footer { border-top:1px solid #e1e5dc; max-width:1224px; margin:auto; padding:23px 34px; display:flex; gap:14px; justify-content:space-between; font-size:10px; color:#677460; }
 .research-footer div { display:flex; gap:20px; }
 .research-workspace { height:calc(100vh - 64px); height:calc(100dvh - 64px); background:#f8f9f5; }
 .research-sidebar { background:#f4f6f0; }
@@ -75,14 +75,14 @@
 .research-starter-top span { font-size:8px; letter-spacing:.09em; }
 .research-starter-top svg:last-child { margin-left:auto; color:#8e9e85; }
 .research-starters strong { display:block; font-size:13px; font-weight:600; margin:20px 0 8px; color:#324b33; }
-.research-starter-prompt { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:11px; line-height:1.8; color:#84907c; }
+.research-starter-prompt { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:11px; line-height:1.8; color:#677460; }
 .research-upload-entry { display:flex; width:100%; text-align:left; align-items:center; gap:14px; border:1px dashed #c9d5c1; border-radius:10px; padding:17px; background:#f2f5ed; color:#5c7d50; }
 .research-upload-entry:hover { border-color:#758e65; background:#edf2e6; }
 .research-upload-icon { display:grid; place-items:center; width:40px; height:40px; background:#e5ecde; border-radius:8px; flex-shrink:0; }
 .research-upload-entry strong { display:block; color:#45613b; font-size:12px; margin-bottom:5px; }
-.research-upload-entry > span > span { font-size:11px; color:#7e8e72; }
+.research-upload-entry > span > span { font-size:11px; color:#627653; }
 .research-upload-entry > svg:last-child { margin-left:auto; flex-shrink:0; }
-.research-evidence-note { display:flex; align-items:center; gap:6px; margin-top:20px; font-size:10px; color:#8a9582; }
+.research-evidence-note { display:flex; align-items:center; gap:6px; margin-top:20px; font-size:10px; color:#677460; }
 @media(min-width:1024px) { .research-workspace { height:calc(100vh - 72px); height:calc(100dvh - 72px); } }
 @media(min-width:1280px) { .research-workspace { height:calc(100vh - 80px); height:calc(100dvh - 80px); } }
 @media(max-width:1050px) { .research-hero { gap:35px; padding:65px 28px; } .research-hero h1 { font-size:46px; } .research-preview { transform:none; } .research-principles { margin:0 28px; } }
