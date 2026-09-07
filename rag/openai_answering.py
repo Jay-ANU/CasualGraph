@@ -20,8 +20,8 @@ from rag.openai_compat import chat_token_kwargs
 INSUFFICIENT_CONTEXT_ANSWER = "The provided reports do not contain enough information to answer this question."
 
 _TRUNCATION_NOTICE = (
-    "\n\n_[Response truncated at the OPENAI_MAX_TOKENS limit. "
-    "Ask a follow-up to continue, or raise OPENAI_MAX_TOKENS in your .env.]_"
+    "\n\n_[Response truncated at the CHAT_MAX_TOKENS limit. "
+    "Ask a follow-up to continue, or raise CHAT_MAX_TOKENS in your .env.]_"
 )
 
 
@@ -51,7 +51,7 @@ def _extract_answer(response, *, legacy_sdk: bool = False) -> Optional[str]:
         f"max_tokens_cap={OPENAI_MAX_TOKENS}"
     )
     if not content:
-        print(f"[answering] EMPTY content returned. finish_reason={finish_reason!r}, raw_choice={choice!r}")
+        print(f"[answering] EMPTY content returned. finish_reason={finish_reason!r}")
         return None
     if finish_reason == "length":
         print(f"[answering] Output truncated by max_tokens. Last 80 chars: {content[-80:]!r}")
@@ -241,18 +241,22 @@ def stream_openai_rag_answer(
         stream=True,
         **chat_token_kwargs(OPENAI_MODEL, OPENAI_MAX_TOKENS),
     )
-    for chunk in stream:
-        choices = getattr(chunk, "choices", None) or []
-        if not choices:
-            continue
-        choice = choices[0]
-        delta = getattr(getattr(choice, "delta", None), "content", None)
-        if delta:
-            text = str(delta)
-            parts.append(text)
-            yield text
-        if getattr(choice, "finish_reason", None) is not None:
-            finish_reason = choice.finish_reason
+    try:
+        for chunk in stream:
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = getattr(getattr(choice, "delta", None), "content", None)
+            if delta:
+                text = str(delta)
+                parts.append(text)
+                yield text
+            if getattr(choice, "finish_reason", None) is not None:
+                finish_reason = choice.finish_reason
+
+    finally:
+        stream.close()
 
     content = "".join(parts).strip()
     print(

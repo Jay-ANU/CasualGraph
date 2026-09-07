@@ -140,13 +140,43 @@ def neo4j_configured() -> bool:
     return bool(NEO4J_URI and NEO4J_USER and NEO4J_PASSWORD)
 
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4").strip()
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").strip()
-OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
-OPENAI_MAX_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS", "700"))
-OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "60"))
-RAG_ANSWER_MODE = os.getenv("RAG_ANSWER_MODE", "auto").strip().lower()
+# The provider is explicit: leftover OpenAI/Anthropic secrets must not silently
+# select a paid provider. OPENAI_* below are transport aliases for old callers,
+# not another provider selection mechanism. Embeddings keep their own client.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek").strip().lower()
+if LLM_PROVIDER not in {"deepseek", "openai"}:
+    raise ValueError("LLM_PROVIDER must be deepseek or openai")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip() or "https://api.deepseek.com"
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro").strip() or "deepseek-v4-pro"
+DEEPSEEK_TIMEOUT = float(os.getenv("DEEPSEEK_TIMEOUT", "60"))
+
+
+def chat_model_override(name: str, fallback: str) -> str:
+    """Ignore stale GPT/Claude model overrides when migrating to DeepSeek."""
+    value = os.getenv(name, "").strip()
+    if LLM_PROVIDER == "deepseek" and not value.lower().startswith("deepseek-"):
+        return fallback
+    return value or fallback
+
+
+OPENAI_API_KEY = DEEPSEEK_API_KEY if LLM_PROVIDER == "deepseek" else os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_BASE_URL = DEEPSEEK_BASE_URL if LLM_PROVIDER == "deepseek" else os.getenv("OPENAI_BASE_URL", "").strip()
+OPENAI_MODEL = DEEPSEEK_MODEL if LLM_PROVIDER == "deepseek" else os.getenv("OPENAI_MODEL", "gpt-4").strip()
+OPENAI_TEMPERATURE = float(os.getenv("CHAT_TEMPERATURE", os.getenv("OPENAI_TEMPERATURE", "0.1")))
+OPENAI_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", os.getenv("OPENAI_MAX_TOKENS", "2048")))
+OPENAI_TIMEOUT = DEEPSEEK_TIMEOUT if LLM_PROVIDER == "deepseek" else float(os.getenv("OPENAI_TIMEOUT", "60"))
+RAG_ANSWER_MODE = os.getenv("RAG_ANSWER_MODE", LLM_PROVIDER).strip().lower()
+# Older production .env files often contain RAG_ANSWER_MODE=openai.
+if LLM_PROVIDER == "deepseek" and RAG_ANSWER_MODE in {"auto", "openai"}:
+    RAG_ANSWER_MODE = "deepseek"
+
+# V4 Pro is text-only. Vision has an independent opt-in transport; no hidden
+# switch to another model and no sharing a key with an unrelated provider.
+VISION_API_KEY = os.getenv("VISION_API_KEY", "").strip()
+VISION_BASE_URL = os.getenv("VISION_BASE_URL", "").strip()
+VISION_MODEL = os.getenv("VISION_MODEL", "").strip()
+
 RAG_ALLOW_SPECULATION = os.getenv("RAG_ALLOW_SPECULATION", "False").lower() == "true"
 RAG_USE_GRAPH_CONTEXT = os.getenv("RAG_USE_GRAPH_CONTEXT", "True").lower() == "true"
 RAG_GRAPH_CONTEXT_HOPS = int(os.getenv("RAG_GRAPH_CONTEXT_HOPS", "2"))
@@ -155,7 +185,7 @@ RAG_GRAPH_CONTEXT_MAX_TRIPLES = int(os.getenv("RAG_GRAPH_CONTEXT_MAX_TRIPLES", "
 RAG_GRAPH_CONTEXT_MIN_SOURCES = max(0, int(os.getenv("RAG_GRAPH_CONTEXT_MIN_SOURCES", "0")))
 RAG_MIN_SOURCE_RELEVANCE = max(0.0, min(1.0, float(os.getenv("RAG_MIN_SOURCE_RELEVANCE", "0.35"))))
 RAG_PREDICTION_ENABLED = os.getenv("RAG_PREDICTION_ENABLED", "True").lower() == "true"
-RAG_PREDICTION_MODEL = os.getenv("RAG_PREDICTION_MODEL", OPENAI_MODEL).strip()
+RAG_PREDICTION_MODEL = chat_model_override("RAG_PREDICTION_MODEL", OPENAI_MODEL)
 RAG_PREDICTION_MAX_TOKENS = int(os.getenv("RAG_PREDICTION_MAX_TOKENS", "1500"))
 RAG_PREDICTION_TEMPERATURE = float(os.getenv("RAG_PREDICTION_TEMPERATURE", "0.2"))
 RAG_MULTI_QUERY_ENABLED = os.getenv("RAG_MULTI_QUERY_ENABLED", "false").lower() == "true"
@@ -173,7 +203,7 @@ RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3").strip()
 RERANKER_TOP_K_BEFORE = max(1, int(os.getenv("RERANKER_TOP_K_BEFORE", "20")))
 RERANKER_TOP_K_AFTER = max(1, int(os.getenv("RERANKER_TOP_K_AFTER", "5")))
 HYDE_ENABLED = os.getenv("HYDE_ENABLED", "false").lower() == "true"
-HYDE_MODEL = os.getenv("HYDE_MODEL", "gpt-5.4-mini").strip()
+HYDE_MODEL = chat_model_override("HYDE_MODEL", OPENAI_MODEL)
 HYDE_MAX_TOKENS = max(32, int(os.getenv("HYDE_MAX_TOKENS", "200")))
 HYDE_MIN_CHARS = max(1, int(os.getenv("HYDE_MIN_CHARS", "50")))
 RAG_DECOMPOSE_ENABLED = os.getenv("RAG_DECOMPOSE_ENABLED", "false").lower() == "true"
@@ -213,29 +243,25 @@ ESG_METRICS_MIN_CONFIDENCE = max(0.0, min(1.0, float(os.getenv("ESG_METRICS_MIN_
 
 
 def openai_configured() -> bool:
-    """Return whether the root pipeline has an OpenAI API key configured."""
+    """Return whether the selected chat transport has credentials."""
     return bool(OPENAI_API_KEY)
 
 
 # -----------------------------------------------------------------------------
-# Agent reasoning-tier settings (Flash / Deep).
-#
-# Flash = cheap+fast tier on OpenAI (today's "ask" path). Default model name
-# `gpt-5.4-mini` is intentionally env-overridable so we can swap to whichever
-# small OpenAI model is current.
-#
-# Deep = stronger tier on Anthropic Claude with deeper retrieval (layered +
-# graph context + decomposition). Default `claude-opus-4-7` is the latest 4.x
-# Opus; override to claude-sonnet for cost.
+# Fast / Deep share DeepSeek V4 Pro by default; Deep enables reasoning.
+# Legacy Anthropic code is retained only for explicit LLM_PROVIDER=openai rollback.
 # -----------------------------------------------------------------------------
-RAG_FLASH_MODEL = os.getenv("RAG_FLASH_MODEL", "gpt-5.4-mini").strip()
+RAG_FLASH_MODEL = chat_model_override("RAG_FLASH_MODEL", OPENAI_MODEL)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "").strip()
-RAG_DEEP_MODEL = os.getenv("RAG_DEEP_MODEL", "claude-opus-4-7").strip()
-RAG_DEEP_MAX_TOKENS = int(os.getenv("RAG_DEEP_MAX_TOKENS", "2000"))
+RAG_DEEP_MODEL = chat_model_override("RAG_DEEP_MODEL", DEEPSEEK_MODEL if LLM_PROVIDER == "deepseek" else "claude-opus-4-7")
+RAG_DEEP_MAX_TOKENS = int(os.getenv("RAG_DEEP_MAX_TOKENS", "16384"))
+RAG_DEEP_REASONING_EFFORT = os.getenv("RAG_DEEP_REASONING_EFFORT", "high").strip().lower()
+if RAG_DEEP_REASONING_EFFORT not in {"low", "high", "max"}:
+    raise ValueError("RAG_DEEP_REASONING_EFFORT must be low, high, or max")
 RAG_DEEP_TEMPERATURE = float(os.getenv("RAG_DEEP_TEMPERATURE", "0.2"))
-RAG_DEEP_TIMEOUT = float(os.getenv("RAG_DEEP_TIMEOUT", "90"))
+RAG_DEEP_TIMEOUT = float(os.getenv("RAG_DEEP_TIMEOUT", "120"))
 
 
 def anthropic_configured() -> bool:
@@ -243,10 +269,6 @@ def anthropic_configured() -> bool:
     return bool(ANTHROPIC_API_KEY)
 
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
-DEEPSEEK_TIMEOUT = float(os.getenv("DEEPSEEK_TIMEOUT", "60"))
 DEEPSEEK_EXTRACTION_MODEL = os.getenv("DEEPSEEK_EXTRACTION_MODEL", DEEPSEEK_MODEL).strip()
 DEEPSEEK_EXTRACTION_MAX_TOKENS = int(os.getenv("DEEPSEEK_EXTRACTION_MAX_TOKENS", "8000"))
 DEEPSEEK_CACHE_ENABLED = os.getenv("DEEPSEEK_CACHE_ENABLED", "true").lower() == "true"

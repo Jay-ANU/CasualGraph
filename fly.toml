@@ -5,6 +5,13 @@ primary_region = "syd"
 
 [env]
   PORT = "8000"
+  LLM_PROVIDER = "deepseek"
+  RAG_ANSWER_MODE = "deepseek"
+  DEEPSEEK_MODEL = "deepseek-v4-pro"
+  DEEPSEEK_EXTRACTION_MODEL = "deepseek-v4-pro"
+  RAG_DEEP_MODEL = "deepseek-v4-pro"
+  RAG_DEEP_MAX_TOKENS = "16384"
+  RAG_DEEP_TIMEOUT = "120"
   DATA_DIR = "/data"
   AUTH_DB_PATH = "/data/auth.db"
   EXTRACTION_MAX_WORKERS = "4"

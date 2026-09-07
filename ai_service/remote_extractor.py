@@ -112,6 +112,7 @@ def extract_esg_with_deepseek(text: str) -> Optional[dict]:
                 timeout=DEEPSEEK_TIMEOUT,
             )
             response = client.chat.completions.create(
+                extra_body={"thinking": {"type": "disabled"}},
                 model=DEEPSEEK_EXTRACTION_MODEL,
                 temperature=0,
                 max_tokens=DEEPSEEK_EXTRACTION_MAX_TOKENS,

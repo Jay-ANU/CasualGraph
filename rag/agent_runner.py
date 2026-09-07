@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from configs.settings import LLM_PROVIDER
+from rag.deep_answering import deep_backend_name
+
 import json
 import queue
 import re
@@ -537,11 +540,11 @@ def _synthesize_answer(
     normalized_answer_intent = _normalize_answer_intent(answer_intent)
     graph_text = str(graph_sources.get("text") or "").strip() if isinstance(graph_sources, dict) else ""
 
-    if reasoning_mode == "deep" and _claude_answering_available():
+    if reasoning_mode == "deep" and _deep_answering_available():
         try:
-            from rag.claude_answering import generate_claude_deep_rag_answer
+            from rag.deep_answering import generate_deep_rag_answer
 
-            answer = generate_claude_deep_rag_answer(
+            answer = generate_deep_rag_answer(
                 question=question,
                 sources=sources,
                 history_block=history_block,
@@ -551,7 +554,7 @@ def _synthesize_answer(
                 answer_intent=normalized_answer_intent,
             )
             if answer:
-                backend = "claude_deep+graph" if graph_text else "claude_deep"
+                backend = f"{deep_backend_name()}+graph" if graph_text else deep_backend_name()
                 return _apply_hybrid_synthesis_fallback(
                     answer=answer,
                     backend=backend,
@@ -562,7 +565,7 @@ def _synthesize_answer(
                     evidence_summaries=evidence_summaries,
                 )
         except Exception as exc:
-            print(f"[agent_runner] Claude synthesis failed: {type(exc).__name__}: {exc}")
+            print(f"[agent_runner] Deep synthesis failed: {type(exc).__name__}: {exc}")
 
     if _openai_answering_available():
         try:
@@ -577,7 +580,7 @@ def _synthesize_answer(
                 answer_intent=normalized_answer_intent,
             )
             if answer:
-                backend = "openai+graph" if graph_text else "openai"
+                backend = f"{LLM_PROVIDER}+graph" if graph_text else LLM_PROVIDER
                 return _apply_hybrid_synthesis_fallback(
                     answer=answer,
                     backend=backend,
@@ -1205,11 +1208,11 @@ def _truncate_words(text: str, limit: int) -> str:
     return " ".join(words[:limit]).rstrip() + "..."
 
 
-def _claude_answering_available() -> bool:
+def _deep_answering_available() -> bool:
     try:
-        from rag.claude_answering import claude_answering_available
+        from rag.deep_answering import deep_answering_available
 
-        return bool(claude_answering_available())
+        return bool(deep_answering_available())
     except Exception:
         return False
 

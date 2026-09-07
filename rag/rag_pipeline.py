@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from configs.settings import LLM_PROVIDER
+from rag.deep_answering import deep_backend_name
+
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -25,10 +28,10 @@ from rag.answer_intent import classify_answer_intent
 from rag.chitchat import generate_chitchat_reply, stream_chitchat_reply
 from rag.graph_context import build_graph_context, graph_context_enabled
 from rag.multi_query import generate_query_variants
-from rag.claude_answering import (
-    claude_answering_available,
-    generate_claude_deep_rag_answer,
-    stream_claude_deep_rag_answer,
+from rag.deep_answering import (
+    deep_answering_available,
+    generate_deep_rag_answer,
+    stream_deep_rag_answer,
 )
 from rag.openai_answering import generate_openai_rag_answer, openai_answering_available, stream_openai_rag_answer
 from rag.query_rewriter import format_history, rewrite_query
@@ -53,7 +56,7 @@ _AGENT_HYBRID_SYNTHESIS_PATTERN = re.compile(
 def _resolve_tier(reasoning_mode: Optional[str]) -> str:
     """Normalize the user-facing model-tier selector to 'flash' or 'deep'.
 
-    Flash = OpenAI quick path (current default). Deep = Anthropic Claude with
+    Fast = non-thinking chat. Deep = extended reasoning with
     layered retrieval + graph context. Unknown values fall back to Flash.
     """
     normalized = str(reasoning_mode or "flash").strip().lower()
@@ -1013,16 +1016,17 @@ def answer_question(
 
     tier = prepared.get("tier") or "flash"
 
-    if tier == "deep":
-        # Try Claude Deep first. If unconfigured / errored / empty, transparently
-        # fall through to the Flash (OpenAI) path below — the user still gets an
-        # answer, just from the Flash provider, and the backend label records it.
+    if (tier == "deep" and RAG_ANSWER_MODE in {"auto", "openai", "deepseek"}
+            and (_has_grounding_context(prepared) or prepared["allow_speculation"] or answer_intent_mode != "evidence")):
+        # Try Deep first. If unconfigured / errored / empty, transparently
+        # fall through to the Fast path on the same selected provider — the user gets an
+        # answer, with thinking disabled, and the backend label records it.
         generate_started = time.perf_counter()
         deep_answer = None
-        if claude_answering_available():
+        if deep_answering_available():
             try:
                 layered = prepared.get("layered_context") or {}
-                deep_answer = generate_claude_deep_rag_answer(
+                deep_answer = generate_deep_rag_answer(
                     question=query,
                     sources=prepared["sources"],
                     history_block=prepared["history_block"],
@@ -1032,12 +1036,12 @@ def answer_question(
                     answer_intent=answer_intent_mode,
                 )
             except Exception as exc:
-                print(f"[rag] Claude Deep answering failed: {type(exc).__name__}: {exc}")
+                print(f"[rag] Deep answering failed: {type(exc).__name__}: {exc}")
                 traceback.print_exc()
                 deep_answer = None
         if deep_answer:
             timings["generate"] = round((time.perf_counter() - generate_started) * 1000, 2)
-            backend = "claude_deep+graph" if prepared["graph_context_text"] else "claude_deep"
+            backend = f"{deep_backend_name()}+graph" if prepared["graph_context_text"] else deep_backend_name()
             return _finalize_response(
                 payload=_build_ask_payload(prepared, answer=deep_answer, backend=backend),
                 timings=timings,
@@ -1045,8 +1049,8 @@ def answer_question(
                 mode=resolved_mode,
                 strategy=prepared["strategy"],
             )
-        # Claude unavailable — record nothing yet; fall through to Flash logic.
-        print("[rag] Deep tier requested but Claude unavailable — falling back to Flash.")
+        # Deep unavailable — fall through to the same provider without thinking.
+        print("[rag] Deep tier requested but selected model unavailable — falling back to Flash.")
 
     if not _has_grounding_context(prepared) and not prepared["allow_speculation"] and answer_intent_mode == "evidence":
         timings["generate"] = 0.0
@@ -1092,7 +1096,7 @@ def answer_question(
         answer = _fallback_answer_from_sources(query, prepared["sources"])
         backend = "extractive_only"
 
-    if answer is None and answer_backend_mode in {"auto", "openai"} and openai_answering_available():
+    if answer is None and answer_backend_mode in {"auto", "openai", "deepseek"} and openai_answering_available():
         try:
             answer = generate_openai_rag_answer(
                 question=query,
@@ -1103,7 +1107,7 @@ def answer_question(
                 answer_intent=answer_intent_mode,
             )
             if answer:
-                backend = "openai" if _has_grounding_context(prepared) else "openai_speculative"
+                backend = LLM_PROVIDER if _has_grounding_context(prepared) else f"{LLM_PROVIDER}_speculative"
                 if prepared["graph_context_text"]:
                     backend = f"{backend}+graph"
         except Exception as exc:
@@ -1375,15 +1379,15 @@ def stream_answer_question(
             emitted_parts.append(answer)
             yield {"type": "token", "text": answer}
 
-    # Deep tier: try Claude streaming first. If it yields nothing (unconfigured,
+    # Deep tier: try the selected provider with reasoning first. If it yields nothing (unconfigured,
     # SDK missing, or stream errored), fall through to the Flash path so the
     # user still gets an answer. Emit a meta event so the FE can surface a
     # 'fell back to Flash' notice.
-    if answer is None and tier == "deep" and claude_answering_available():
+    if answer is None and tier == "deep" and answer_backend_mode in {"auto", "openai", "deepseek"} and deep_answering_available():
         deep_parts: List[str] = []
         try:
             layered = prepared.get("layered_context") or {}
-            for chunk in stream_claude_deep_rag_answer(
+            for chunk in stream_deep_rag_answer(
                 question=query,
                 sources=prepared["sources"],
                 history_block=prepared["history_block"],
@@ -1399,23 +1403,27 @@ def stream_answer_question(
                 emitted_parts.append(text)
                 yield {"type": "token", "text": text}
         except Exception as exc:
-            print(f"[rag] Claude Deep streaming failed: {type(exc).__name__}: {exc}")
+            print(f"[rag] Deep streaming failed: {type(exc).__name__}: {exc}")
             traceback.print_exc()
-            deep_parts = []
+            if deep_parts:
+                from rag.deep_answering import INTERRUPTION_NOTICE
+                deep_parts.append(INTERRUPTION_NOTICE)
+                emitted_parts.append(INTERRUPTION_NOTICE)
+                yield {"type": "token", "text": INTERRUPTION_NOTICE}
         streamed = "".join(deep_parts).strip()
         if streamed:
             answer = streamed
-            backend = "claude_deep+graph" if prepared["graph_context_text"] else "claude_deep"
+            backend = f"{deep_backend_name()}+graph" if prepared["graph_context_text"] else deep_backend_name()
         else:
             # Reset emitted_parts so the Flash stream re-emits cleanly without
             # duplicate Deep prefix tokens to the client.
             emitted_parts = []
-            yield {"type": "meta", "payload": {"fallback_to_flash": True, "reason": "claude_unavailable_or_empty"}}
-    elif answer is None and tier == "deep" and not claude_answering_available():
-        # Deep requested but Anthropic never configured — tell the FE upfront.
-        yield {"type": "meta", "payload": {"fallback_to_flash": True, "reason": "anthropic_not_configured"}}
+            yield {"type": "meta", "payload": {"fallback_to_flash": True, "reason": "deep_unavailable_or_empty"}}
+    elif answer is None and tier == "deep" and not deep_answering_available():
+        # Deep requested but the selected provider is not configured — tell the FE upfront.
+        yield {"type": "meta", "payload": {"fallback_to_flash": True, "reason": "deep_not_configured"}}
 
-    if answer is None and answer_backend_mode in {"auto", "openai"} and openai_answering_available():
+    if answer is None and answer_backend_mode in {"auto", "openai", "deepseek"} and openai_answering_available():
         try:
             for chunk in stream_openai_rag_answer(
                 question=query,
@@ -1433,13 +1441,19 @@ def stream_answer_question(
             streamed = "".join(emitted_parts).strip()
             if streamed:
                 answer = streamed
-                backend = "openai" if _has_grounding_context(prepared) else "openai_speculative"
+                backend = LLM_PROVIDER if _has_grounding_context(prepared) else f"{LLM_PROVIDER}_speculative"
                 if prepared["graph_context_text"]:
                     backend = f"{backend}+graph"
         except Exception as exc:
-            print(f"[rag] OpenAI streaming failed: {type(exc).__name__}: {exc}")
-            traceback.print_exc()
-            answer = None
+            print(f"[rag] Chat streaming failed: {type(exc).__name__}")
+            if emitted_parts:
+                from rag.deep_answering import INTERRUPTION_NOTICE
+                emitted_parts.append(INTERRUPTION_NOTICE)
+                yield {"type": "token", "text": INTERRUPTION_NOTICE}
+                answer = "".join(emitted_parts).strip()
+                backend = f"{LLM_PROVIDER}_interrupted"
+            else:
+                answer = None
 
     try:
         if answer is None and answer_backend_mode in {"auto", "local_qlora"}:

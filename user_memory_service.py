@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
+from configs.settings import OPENAI_MODEL, chat_model_override
 from rag.openai_client import get_openai_client
 from rag.openai_compat import chat_token_kwargs
 from user_memory_vector_store import (
@@ -430,7 +431,7 @@ def _extract_with_openai(user_message: str, assistant_message: str, *, source: s
     client = get_openai_client()
     if client is None:
         return []
-    model = os.getenv("USER_MEMORY_EXTRACT_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini")).strip() or "gpt-4o-mini"
+    model = chat_model_override("USER_MEMORY_EXTRACT_MODEL", OPENAI_MODEL)
     prompt = {
         "user_message": _trim(user_message, 1800),
         "assistant_message": _trim(assistant_message, 1800),
