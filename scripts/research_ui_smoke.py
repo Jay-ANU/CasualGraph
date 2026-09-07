@@ -28,7 +28,7 @@ MODEL = {'provider': 'deepseek', 'model': 'deepseek-v4-pro', 'configured': True,
 SESSION = {'id': 'smoke-session', 'title': 'Research question', 'selected_document_id': '', 'mode': 'ask', 'created_at': '2026-09-07T10:00:00Z', 'updated_at': '2026-09-07T10:00:00Z', 'message_count': 0}
 SOURCE = {'chunk_id': 'report-1-p12', 'document_id': 'report-1', 'document_title': 'UI smoke test report', 'source': 'UI smoke test report', 'text': 'Synthetic browser fixture: this paragraph exists solely for testing citations.', 'score': 0.91, 'relevance_score': 0.91, 'page': 12}
 ANSWER = 'This is a **browser test response**, not a live model answer. The citation opens the test evidence [report-1-p12].'
-state = {'model': 'configured', 'documents': []}
+state = {'model': 'configured', 'documents': [], 'messages': []}
 requests = []
 results = []
 errors = []
@@ -54,9 +54,15 @@ def api(route):
     elif path == '/documents':
         data = {'documents': state['documents']}
     elif path == '/chat/sessions':
+        if req.method == 'POST':
+            state['messages'] = []
         data = {'sessions': []} if req.method == 'GET' else {'session': SESSION}
     elif path.startswith('/chat/sessions/'):
-        data = {'session': SESSION, 'messages': []}
+        # The real API persists messages before the UI reloads the selected session.
+        # Returning an empty list here would erase the test answer after a successful SSE.
+        if req.method == 'POST' and path.endswith('/messages'):
+            state['messages'].append(json.loads(req.post_data or '{}'))
+        data = {'session': {**SESSION, 'message_count': len(state['messages'])}, 'messages': state['messages']}
     elif path == '/rag/ask/stream':
         frames = [
             {'type': 'meta', 'payload': {'mode': 'ask', 'stream_stage': 'context_ready', 'sources': [SOURCE]}},
@@ -77,11 +83,8 @@ def check(label, ok, detail=None):
     results.append(entry)
     print(json.dumps(entry), flush=True)
 
-def overflow(page):
-    return page.evaluate('({scroll:document.documentElement.scrollWidth,viewport:innerWidth})')
-
 def no_overflow(page, label):
-    dims = overflow(page)
+    dims = page.evaluate('({scroll:document.documentElement.scrollWidth,viewport:innerWidth})')
     check(label, dims['scroll'] <= dims['viewport'], dims)
 
 try:
@@ -128,6 +131,7 @@ try:
         check('Streamed answer rendered', page.get_by_text('browser test response', exact=False).count() > 0)
         sent = [r for r in requests if r['path'] == '/rag/ask/stream']
         check('Deep mode included in request', bool(sent) and json.loads(sent[-1]['body']).get('reasoning_mode') == 'deep')
+        check('Final answer persisted', any(m.get('role') == 'assistant' and m.get('content') == ANSWER for m in state['messages']))
         page.screenshot(path=str(OUT / 'workspace-answer.png'), full_page=True)
         for mode in ['missing', 'error']:
             state['model'] = mode
@@ -148,6 +152,8 @@ try:
                 page.screenshot(path=str(OUT / 'home-mobile.png'), full_page=True)
                 page.get_by_role('button', name='Open menu', exact=True).click()
                 check('Mobile menu opens', page.get_by_role('link', name='Research', exact=True).is_visible())
+            state['messages'] = []
+            page.evaluate('localStorage.removeItem("causalgraph_agent_current_session_id_v1")')
             page.goto('http://127.0.0.1:4173/agent', wait_until='networkidle')
             no_overflow(page, f'Workspace {width}px no horizontal overflow')
             if width == 390:
@@ -157,12 +163,8 @@ try:
         browser.close()
 except Exception as exc:
     check('Browser run completed', False, str(exc))
-    try:
-        page.screenshot(path=str(OUT / 'failure.png'), full_page=True)
-    except Exception:
-        pass
 finally:
-    (OUT / 'browser-results.json').write_text(json.dumps({'backend': 'mock fixtures only', 'results': results, 'requests': requests}, indent=2))
+    (OUT / 'browser-results.json').write_text(json.dumps({'backend': 'mock fixtures only', 'results': results, 'requests': requests, 'javascript_errors': errors}, indent=2))
     server.shutdown()
 
 if any(not result['passed'] for result in results):
