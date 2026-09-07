@@ -175,9 +175,19 @@ def test_answer_intent_contracts_are_retained(intent):
         assert "General analysis" in user
 
 
+def _sdk_http_module(sdk):
+    """Match the SDK's transport instead of assuming httpx across major versions."""
+    import importlib
+    for base in sdk.DefaultHttpxClient.__mro__:
+        module = base.__module__.partition(".")[0]
+        if module in {"httpx", "httpx2"}:
+            return importlib.import_module(module)
+    raise AssertionError("Unsupported SDK HTTP transport; update the mock adapter explicitly.")
+
+
 def test_openai_wire_contract_with_mock_http():
     openai = pytest.importorskip("openai")
-    httpx = pytest.importorskip("httpx")
+    httpx = _sdk_http_module(openai)
     def handler(request):
         assert request.url.host == "api.deepseek.com"
         assert request.headers["authorization"] == "Bearer test-only"
@@ -192,7 +202,7 @@ def test_openai_wire_contract_with_mock_http():
 
 def test_anthropic_wire_contract_with_mock_http():
     anthropic = pytest.importorskip("anthropic")
-    httpx = pytest.importorskip("httpx")
+    httpx = _sdk_http_module(anthropic)
     def handler(request):
         assert request.url.host == "api.deepseek.com"
         assert request.url.path == "/anthropic/v1/messages"
