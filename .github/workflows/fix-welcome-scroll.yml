@@ -1,0 +1,47 @@
+name: Apply welcome scroll fix
+on:
+  push:
+    branches: [feat/deepseek-v4-pro-workspace]
+    paths: ['.github/workflows/fix-welcome-scroll.yml']
+permissions:
+  contents: read
+jobs:
+  apply:
+    if: github.repository == 'Jay-ANU/CasualGraph' && github.ref == 'refs/heads/feat/deepseek-v4-pro-workspace'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/deepseek-v4-pro-workspace
+      - name: Keep empty conversations at the top
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path('frontend/src/pages/Agent.tsx')
+          assert hashlib.sha256(p.read_bytes()).hexdigest() == '897b88dbc769b696b212a0e9943bd3643b4598bd8cd7a8a4d4a4b3ac9a109587'
+          text = p.read_text()
+          old = "    if (activeTab !== 'chat' || !shouldAutoFollowConversationRef.current) return;\n    const frameId = window.requestAnimationFrame(() => scrollToBottom('auto'));"
+          new = "    if (activeTab !== 'chat') return;\n    if (conversation.length === 0) {\n      const frameId = window.requestAnimationFrame(() => {\n        conversationScrollRef.current?.scrollTo({ top: 0 });\n        shouldAutoFollowConversationRef.current = true;\n      });\n      return () => window.cancelAnimationFrame(frameId);\n    }\n    if (!shouldAutoFollowConversationRef.current) return;\n    const frameId = window.requestAnimationFrame(() => scrollToBottom('auto'));"
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, new))
+          p = Path('scripts/research_ui_smoke.py')
+          text = p.read_text()
+          old = "            no_overflow(page, f'Workspace {width}px no horizontal overflow')"
+          new = old + "\n            heading = page.locator('.research-welcome h2').bounding_box()\n            check(f'Empty workspace {width}px starts at the top', bool(heading) and 64 <= heading['y'] < height - 100)"
+          assert text.count(old) == 1
+          text = text.replace(old, new)
+          old = "        page.get_by_role('button', name='Send', exact=True).click()"
+          new = "        with page.expect_response(lambda response: response.request.method == 'POST' and response.url.endswith('/messages') and json.loads(response.request.post_data or '{}').get('role') == 'assistant'):\n            page.get_by_role('button', name='Send', exact=True).click()"
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, new))
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/src/pages/Agent.tsx scripts/research_ui_smoke.py
+          git diff --cached --check
+          git commit -m 'fix: keep new research conversations at the top on small screens'
+          git push origin HEAD:refs/heads/feat/deepseek-v4-pro-workspace
