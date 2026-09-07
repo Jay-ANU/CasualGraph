@@ -69,6 +69,72 @@ jobs:
           new = "    if (!target) return;\n    const frame = window.requestAnimationFrame(() => {\n      target.scrollIntoView({ block: 'nearest', behavior: 'auto' });\n      target.focus({ preventScroll: true });\n    });\n    return () => window.cancelAnimationFrame(frame);"
           assert text.count(old) == 1
           p.write_text(text.replace(old, new))
+          # Keep the renderer outside the parent: inline component definitions
+          # remount citation buttons and disconnect the return-focus element.
+          p = root / 'frontend/src/components/research/ResearchAnswer.tsx'
+          p.write_text('''import React, { createContext, useContext } from 'react';
+          import ReactMarkdown from 'react-markdown';
+          import type { Components, ExtraProps } from 'react-markdown';
+          import remarkMath from 'remark-math';
+          import rehypeKatex from 'rehype-katex';
+          import type { RagSource } from '../../types/api';
+          import { normalizeStreamingMarkdown, formatSourceDocumentTitle } from '../../pages/agent/ragUi';
+          import { remarkSourceLinks } from './citations';
+
+          interface Props { content: string; sources: RagSource[]; onCitation: (source: RagSource) => void }
+          const CitationContext = createContext<Pick<Props, 'sources' | 'onCitation'> | null>(null);
+
+          // Stable component identity keeps citation buttons mounted when a drawer opens
+          // or closes. Defining this renderer inside ResearchAnswer would discard focus.
+          function SourceLink({ href, children, node, ...props }: React.ComponentProps<'a'> & ExtraProps) {
+            const context = useContext(CitationContext);
+            const match = /^#cg-source-(\\d+)$/.exec(href || '');
+            const source = match ? context?.sources[Number(match[1])] : undefined;
+            return source && context ? <button type="button" className="research-citation" onClick={() => context.onCitation(source)}
+              aria-label={`View source ${Number(match![1]) + 1}: ${formatSourceDocumentTitle(source)}`} title={formatSourceDocumentTitle(source)}>{children}</button>
+              : <a {...props} href={href} rel="noreferrer">{children}</a>;
+          }
+          const markdownComponents: Components = { a: SourceLink };
+
+          /** Shared by the real conversation and the explicitly labeled product example. */
+          export default function ResearchAnswer({ content, sources, onCitation }: Props) {
+            return <CitationContext.Provider value={{ sources, onCitation }}>
+              <div className="cg-message-assistant research-answer prose max-w-none">
+                <ReactMarkdown
+                  remarkPlugins={[remarkMath, [remarkSourceLinks, { sources }]]}
+                  rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}
+                  components={markdownComponents}
+                >{normalizeStreamingMarkdown(content)}</ReactMarkdown>
+              </div>
+            </CitationContext.Provider>;
+          }
+          ''')
+          p = root / 'frontend/src/components/research/citations.ts'
+          text = p.read_text()
+          old = '  const numbers = new Map(sources.map((source, index) => [source.chunk_id, index]));'
+          new = '''  const numbers = new Map<string, number>();
+            const ambiguous = new Set<string>();
+            sources.forEach((source, index) => {
+              if (!source.chunk_id) return;
+              if (numbers.has(source.chunk_id)) ambiguous.add(source.chunk_id);
+              else numbers.set(source.chunk_id, index);
+            });
+            // Duplicate IDs cannot identify one passage reliably. Preserve the marker.
+            ambiguous.forEach(id => numbers.delete(id));'''
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, new))
+          p = root / 'frontend/src/components/research/citations.test.ts'
+          text = p.read_text()
+          old = "  it('leaves unsupported markers"
+          new = '''  it('does not silently attribute duplicate IDs to one of several sources', () => {
+              const tree = { type: 'root', children: [text('Evidence [chunk_2].')] };
+              const before = JSON.stringify(tree);
+              remarkSourceLinks({ sources: [sources[1], { ...sources[1], text: 'Another passage' }] })(tree);
+              expect(JSON.stringify(tree)).toBe(before);
+            });
+            it('leaves unsupported markers'''
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, new))
           PY
           git diff --check
       - name: Test and build the refined version
