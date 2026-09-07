@@ -1,0 +1,47 @@
+name: Upgrade validation
+
+on:
+  push:
+    branches: [feat/deepseek-v4-pro-workspace]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check Python syntax
+        run: python -m compileall -q app.py configs rag ai_service
+      - name: Package tracked source for reproducible validation
+        run: git archive --format=tar.gz HEAD -o /tmp/validation-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validation-source
+          path: /tmp/validation-source.tar.gz
+          retention-days: 3
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+        env:
+          CI: 'false'
+      - run: npm test -- --watchAll=false --passWithNoTests --runInBand
+        env:
+          CI: 'true'
