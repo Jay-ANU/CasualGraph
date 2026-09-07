@@ -11,7 +11,7 @@ export default function Home() {
     <section className="research-home-intro" aria-labelledby="home-heading">
       <div className="research-home-eyebrow">CausalGraph / ESG research</div>
       <div className="research-home-heading"><h1 id="home-heading" aria-label="Research the report. Keep the source in view.">Research the report.<br /><span>Keep the source in view.</span></h1>
-        <div><p>Work across sustainability disclosures.<br />Ask a question, compare the evidence,<br />and follow an answer back to its source.</p>
+        <div><p>Work across sustainability disclosures.{' '}<br />Ask a question, compare the evidence,{' '}<br />and follow an answer back to its source.</p>
           <Link to="/agent" className="research-home-cta">Open research desk <ArrowUpRight size={16} /></Link></div></div>
       <form className="research-home-question" onSubmit={event => { event.preventDefault(); if (question.trim()) navigate(`/agent?prompt=${encodeURIComponent(question.trim())}`); }}>
         <Search size={16} aria-hidden="true" /><input value={question} onChange={event => setQuestion(event.target.value)} maxLength={2000} aria-label="Ask a research question" placeholder="Ask about a company, target, or disclosure…" />
