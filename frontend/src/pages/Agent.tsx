@@ -1129,7 +1129,15 @@ const Agent: React.FC = () => {
     conversationEndRef.current?.scrollIntoView({ behavior, block: 'end' });
   }, []);
   useEffect(() => {
-    if (activeTab !== 'chat' || !shouldAutoFollowConversationRef.current) return;
+    if (activeTab !== 'chat') return;
+    if (conversation.length === 0) {
+      const frameId = window.requestAnimationFrame(() => {
+        conversationScrollRef.current?.scrollTo({ top: 0 });
+        shouldAutoFollowConversationRef.current = true;
+      });
+      return () => window.cancelAnimationFrame(frameId);
+    }
+    if (!shouldAutoFollowConversationRef.current) return;
     const frameId = window.requestAnimationFrame(() => scrollToBottom('auto'));
     return () => window.cancelAnimationFrame(frameId);
   }, [activeTab, conversation.length, scrollToBottom]);

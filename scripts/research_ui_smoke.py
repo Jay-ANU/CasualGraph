@@ -126,7 +126,8 @@ try:
         page.goto('http://127.0.0.1:4173/agent', wait_until='networkidle')
         page.get_by_role('button', name='Deep', exact=True).click()
         page.get_by_role('textbox', name='Research question', exact=True).fill('Explain this test citation')
-        page.get_by_role('button', name='Send', exact=True).click()
+        with page.expect_response(lambda response: response.request.method == 'POST' and response.url.endswith('/messages') and json.loads(response.request.post_data or '{}').get('role') == 'assistant'):
+            page.get_by_role('button', name='Send', exact=True).click()
         page.get_by_text('browser test response', exact=False).first.wait_for(timeout=10000)
         check('Streamed answer rendered', page.get_by_text('browser test response', exact=False).count() > 0)
         sent = [r for r in requests if r['path'] == '/rag/ask/stream']
@@ -156,6 +157,8 @@ try:
             page.evaluate('localStorage.removeItem("causalgraph_agent_current_session_id_v1")')
             page.goto('http://127.0.0.1:4173/agent', wait_until='networkidle')
             no_overflow(page, f'Workspace {width}px no horizontal overflow')
+            heading = page.locator('.research-welcome h2').bounding_box()
+            check(f'Empty workspace {width}px starts at the top', bool(heading) and 64 <= heading['y'] < height - 100)
             if width == 390:
                 page.screenshot(path=str(OUT / 'workspace-mobile.png'), full_page=True)
         check('No browser JavaScript errors', not errors, errors)
