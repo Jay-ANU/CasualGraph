@@ -95,7 +95,7 @@ try:
         page = context.new_page()
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
-        check('Home heading', page.get_by_role('heading', name='From disclosures to clearer decisions.').count() == 1)
+        check('Home heading', page.get_by_role('heading', name='Research the report. Keep the source in view.').count() == 1)
         check('Home action empty disabled', page.get_by_role('button', name='Start research', exact=True).is_disabled())
         no_overflow(page, 'Desktop homepage no horizontal overflow')
         page.screenshot(path=str(OUT / 'home-desktop.png'), full_page=True)
@@ -172,3 +172,8 @@ finally:
 
 if any(not result['passed'] for result in results):
     raise SystemExit('Browser verification failed; see ui-artifacts/browser-results.json')
+
+# Use a populated conversation to verify the visual changes beyond the empty state.
+import subprocess
+import sys
+subprocess.run([sys.executable, str(ROOT / "scripts/research_visual_review.py")], check=True)

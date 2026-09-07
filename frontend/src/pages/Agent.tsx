@@ -8,6 +8,8 @@ import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainC
 import { GraphVisualizer } from '../components';
 import ModelStatus from '../components/ModelStatus';
 import WorkbenchWelcome from '../components/WorkbenchWelcome';
+import ResearchAnswer from '../components/research/ResearchAnswer';
+import SourcePassages from '../components/research/SourcePassages';
 import { useAuth } from '../contexts/AuthContext';
 import type { GraphData, GraphEdge, GraphHighlightPath, GraphNode } from '../types/graph';
 import type { AgentTraceStep, FeedbackPayload, FeedbackRating, FeedbackReasonTag, RagReasoningMode, RagResponse, RagSource } from '../types/api';
@@ -23,10 +25,8 @@ import {
 import { formatAccountPlanLabel } from './agent/accountPlan';
 import {
   formatSourceDocumentTitle,
-  formatSourceChipLabel,
   getLoadingSteps,
   normalizeMathForMarkdown,
-  normalizeStreamingMarkdown,
   readSseEvents,
 } from './agent/ragUi';
 import {
@@ -865,7 +865,7 @@ const EvidenceRail: React.FC<{
 }> = ({ sources, onOpenFiles }) => {
   if (!sources.length) return null;
   return (
-    <div className="mt-5">
+    <div className="research-evidence-rail mt-5">
       <button
         type="button"
         onClick={onOpenFiles}
@@ -888,7 +888,29 @@ const AgentWorkspaceDrawer: React.FC<{
   sources: RagSource[];
   isLoading: boolean;
   currentLoadingStep: string;
-}> = ({ open, tab, onTabChange, onClose, steps, sources, isLoading, currentLoadingStep }) => {
+  activeSourceId?: string | null;
+}> = ({ open, tab, onTabChange, onClose, steps, sources, isLoading, currentLoadingStep, activeSourceId }) => {
+  const drawerRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const drawer = drawerRef.current;
+    const closeButton = drawer?.querySelector<HTMLButtonElement>('[aria-label="Close process drawer"]');
+    closeButton?.focus({ preventScroll: true });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeRef.current(); }
+      if (event.key !== 'Tab' || !window.matchMedia('(max-width: 1279px)').matches) return;
+      const items = Array.from(drawer?.querySelectorAll<HTMLElement>('button:not([disabled]), summary, [tabindex="0"]') || [])
+        .filter(item => item.getClientRects().length > 0);
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    drawer?.addEventListener('keydown', onKeyDown);
+    return () => { drawer?.removeEventListener('keydown', onKeyDown); if (previous?.isConnected) previous.focus({ preventScroll: true }); };
+  }, [open]);
   if (!open) return null;
   const currentStep = [...steps].reverse().find(step => getTraceStatus(step) === 'running') || [...steps].reverse()[0];
   const fileGroups = groupSourcesByDocument(sources);
@@ -902,17 +924,18 @@ const AgentWorkspaceDrawer: React.FC<{
       className="fixed inset-0 z-30 bg-black/20 xl:hidden"
       onClick={onClose}
     />
-    <aside className="fixed bottom-0 right-0 top-[72px] z-40 flex w-[min(92vw,430px)] min-h-0 shrink-0 flex-col border-l border-hairline bg-white shadow-2xl xl:static xl:z-auto xl:w-[44vw] xl:min-w-[420px] xl:max-w-[920px] xl:shadow-none">
+    <aside ref={drawerRef} aria-label="Research evidence and process" className="research-evidence-drawer fixed bottom-0 right-0 top-[72px] z-40 flex w-[min(92vw,430px)] min-h-0 shrink-0 flex-col border-l border-hairline bg-white shadow-2xl xl:static xl:z-auto xl:w-[44vw] xl:min-w-[420px] xl:max-w-[920px] xl:shadow-none">
       <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
         <div className="inline-flex rounded-lg bg-surface-soft p-1">
           {([
             ['process', 'Current Process'],
-            ['files', 'Files'],
+            ['files', 'Sources'],
           ] as const).map(([id, label]) => (
             <button
               key={id}
               type="button"
               onClick={() => onTabChange(id)}
+              aria-pressed={tab === id}
               className={`rounded-md px-3 py-1.5 text-[13px] font-medium transition ${
                 tab === id ? 'bg-white text-ink shadow-sm' : 'text-ink-stone hover:text-ink'
               }`}
@@ -980,41 +1003,7 @@ const AgentWorkspaceDrawer: React.FC<{
             )}
           </div>
         ) : (
-          <div className="space-y-3">
-            {sources.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-hairline bg-surface-soft px-4 py-10 text-center text-[13px] text-ink-stone">
-                No cited evidence yet.
-              </div>
-            ) : (
-              <>
-                {fileGroups.map(group => (
-                  <div key={group.key} className="rounded-xl border border-hairline bg-white">
-                    <div className="flex items-center gap-3 border-b border-hairline px-3 py-3">
-                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
-                        <FileText className="h-4 w-4" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[13px] font-semibold text-ink-charcoal">{group.title}</div>
-                        <div className="font-mono text-[11px] text-ink-stone">{group.sources.length} cited chunks</div>
-                      </div>
-                    </div>
-                    <div className="divide-y divide-hairline-soft">
-                      {group.sources.slice(0, 8).map((source, sourceIdx) => (
-                        <div key={`${group.key}-${source.chunk_id || sourceIdx}`} className="px-3 py-3">
-                          <div className="font-mono text-[11px] text-ink-stone">{formatSourceChipLabel(source)}</div>
-                          {source.text && (
-                            <p className="mt-1 line-clamp-3 text-[12px] leading-5 text-ink-steel">
-                              {source.text}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
+          <SourcePassages sources={sources} activeId={activeSourceId} />
         )}
       </div>
     </aside>
@@ -1048,6 +1037,7 @@ const Agent: React.FC = () => {
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(true);
   const [agentDrawerTab, setAgentDrawerTab] = useState<AgentDrawerTab>('process');
   const [agentDrawerSourcesOverride, setAgentDrawerSourcesOverride] = useState<RagSource[] | null>(null);
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
   // Fast disables thinking; Deep enables reasoning with layered retrieval and
   // graph context on the configured provider. URL accepts ?tier=deep; legacy
   // ?mode=predict is honored as Deep so old bookmarks still work.
@@ -3008,7 +2998,7 @@ ${isDuplicate
           </div>
         </aside>
 
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="research-main flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex gap-2 overflow-x-auto border-b border-hairline bg-surface-soft px-3 py-3 lg:hidden">
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -3041,8 +3031,8 @@ ${isDuplicate
 
         {activeTab === 'chat' && (
           <div className="flex min-h-0 flex-1 overflow-hidden">
-          <section className="flex min-h-0 flex-1 flex-col">
-            <header className="border-b border-hairline bg-white/95 px-4 py-3 sm:px-6">
+          <section className="research-chat-column flex min-h-0 min-w-0 flex-1 flex-col">
+            <header className="research-session-header border-b border-hairline bg-white/95 px-4 py-3 sm:px-6">
               {(() => {
                 const currentSession = chatSessions.find(s => s.id === currentSessionId);
                 const sessionTitle = currentSession?.title?.trim() || deriveSessionTitle(conversation) || 'Research desk';
@@ -3135,7 +3125,7 @@ ${isDuplicate
                           initial={{ opacity: 0, y: 8 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.35 }}
-                          className="group flex flex-col items-end"
+                          className="research-user-message group flex flex-col items-end"
                         >
                           <div className="max-w-[680px] rounded-xl bg-surface-soft px-4 py-3 text-[14px] leading-[1.55] text-ink-charcoal">
                             <div className="prose prose-sm max-w-none leading-[1.55] text-ink-charcoal prose-p:text-ink-charcoal [&>p]:mb-1 [&>p:last-child]:mb-0 [&>ul]:pl-4 [&>ol]:pl-4">
@@ -3171,9 +3161,7 @@ ${isDuplicate
                         className="group"
                       >
                         <div className="flex gap-3">
-                          <div className="cg-icon-well mt-0.5 h-8 w-8 shrink-0 bg-ink text-white">
-                            <Network className="h-4 w-4" />
-                          </div>
+                          <div className="research-answer-mark" aria-hidden="true"><img src="/brand/logo-mark.svg" alt="" /></div>
                           <div className="min-w-0 flex-1">
                             <div className="max-w-[820px]">
                               {isAgentAnswer && !hasAssistantContent && (
@@ -3188,11 +3176,13 @@ ${isDuplicate
                                 </div>
                               )}
                               {hasAssistantContent ? (
-                                <div className="cg-message-assistant prose prose-sm max-w-none text-[14px] leading-[1.78] text-ink-charcoal prose-headings:mb-2 prose-headings:mt-5 prose-headings:font-display prose-p:mb-3 prose-ul:pl-4 prose-ol:pl-4 prose-li:mb-1.5 prose-strong:text-ink [&>p:first-child]:mt-0 [&>p:last-child]:mb-0 [&>code]:font-mono [&>pre]:font-mono">
-                                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}>
-                                    {normalizeStreamingMarkdown(message.content)}
-                                  </ReactMarkdown>
-                                </div>
+                                <ResearchAnswer content={message.content} sources={message.data?.sources || []}
+                                  onCitation={source => {
+                                    setAgentDrawerSourcesOverride(message.data?.sources || []);
+                                    setActiveSourceId(source.chunk_id);
+                                    setAgentDrawerTab('files');
+                                    setAgentDrawerOpen(true);
+                                  }} />
                               ) : (
                                 <div className="mt-2 flex items-center gap-2 text-[14px] text-ink-steel">
                                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -3204,6 +3194,7 @@ ${isDuplicate
                                   sources={message.data?.sources || []}
                                   onOpenFiles={() => {
                                     setAgentDrawerSourcesOverride(message.data?.sources || []);
+                                    setActiveSourceId(null);
                                     setAgentDrawerOpen(true);
                                     setAgentDrawerTab('files');
                                   }}
@@ -3360,7 +3351,7 @@ ${isDuplicate
               </div>
             </div>
 
-            <div className="border-t border-hairline bg-surface-soft px-4 py-3 sm:px-6">
+            <div className="research-compose-region border-t border-hairline bg-surface-soft px-4 py-3 sm:px-6">
               <div className="mx-auto w-full max-w-5xl">
                 <form
                   onSubmit={handleSubmit}
@@ -3430,8 +3421,8 @@ ${isDuplicate
                     }}
                     placeholder={
                       tier === 'deep'
-                        ? 'Ask a deep analytical question: causal reasoning, scenarios, comparisons…'
-                        : 'Query emissions, targets, risks, governance, or supply-chain signals…'
+                        ? 'Ask a follow-up or investigate across your reports…'
+                        : 'Ask a question about your reports…'
                     }
                     rows={1}
                     className="block max-h-28 min-h-[30px] w-full resize-none border-0 bg-transparent px-1 py-1 text-[14px] leading-[1.5] text-ink outline-none placeholder:text-ink-stone"
@@ -3498,8 +3489,8 @@ ${isDuplicate
                   </div>
                 </form>
                 <div className="mt-1 px-1 text-right">
-                  <span className="cg-eyebrow text-ink-stone">
-                    Verify citations · Enter to send · Shift + Enter for a new line
+                  <span className="research-composer-hint text-ink-stone">
+                    Enter to send · Shift + Enter for a new line
                   </span>
                 </div>
               </div>
@@ -3513,6 +3504,7 @@ ${isDuplicate
               onClose={() => setAgentDrawerOpen(false)}
               steps={drawerTrace}
               sources={drawerSources}
+              activeSourceId={activeSourceId}
               isLoading={isLoading}
               currentLoadingStep={currentLoadingStep}
             />
@@ -4538,7 +4530,7 @@ ${isDuplicate
           )}
 
           </div>
-        </main>
+        </div>
 
 	    </div>
 	  </div>
