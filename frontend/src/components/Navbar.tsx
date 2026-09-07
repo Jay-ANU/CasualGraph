@@ -14,8 +14,9 @@ const Navbar: React.FC = () => {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const location = useLocation();
   const { isAuthenticated, logout, user } = useAuth();
+  const isWorkspace = location.pathname === '/agent';
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
-  const isMoonRoute = ['/causal-inference', '/desktop', '/download', '/about'].includes(location.pathname);
+  const isMoonRoute = ['/', '/home', '/causal-inference', '/desktop', '/download', '/about'].includes(location.pathname);
 
   const navigation = [
     { name: 'Home', href: '/' },
@@ -37,7 +38,9 @@ const Navbar: React.FC = () => {
 
   return (
     <nav
-      className={`sticky top-0 z-50 border-b backdrop-blur-xl ${
+      data-tone={isMoonRoute ? 'dark' : 'light'}
+      data-workspace={isWorkspace}
+      className={`cg-polished-nav sticky top-0 z-50 border-b backdrop-blur-xl ${
         isMoonRoute ? 'border-white/10 bg-[rgba(3,3,3,0.92)]' : 'bg-canvas'
       }`}
       style={isMoonRoute ? undefined : { borderColor: 'var(--cg-hairline-soft)' }}
@@ -85,9 +88,9 @@ const Navbar: React.FC = () => {
         <div className="hidden items-center gap-2 justify-self-end xl:flex">
           {isAuthenticated ? (
             <>
-              <Link to="/agent" className={isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'}>
+              {!isWorkspace && <Link to="/agent" className={isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'}>
                 Open Research Desk
-              </Link>
+              </Link>}
               <div className="relative">
                 <button
                   type="button"
@@ -153,6 +156,8 @@ const Navbar: React.FC = () => {
             isMoonRoute ? '!border-white/[0.15] !bg-white/5 !text-white hover:!border-white/40' : ''
           }`}
           aria-label={isOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={isOpen}
+          aria-controls="mobile-navigation"
         >
           {isOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
         </button>
@@ -161,6 +166,7 @@ const Navbar: React.FC = () => {
       {/* Mobile drawer */}
       {isOpen && (
         <motion.div
+          id="mobile-navigation"
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}

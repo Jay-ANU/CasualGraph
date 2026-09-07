@@ -1,48 +1,31 @@
 import React, { useState } from 'react';
-import { ArrowRight, ArrowUpRight, BookOpenCheck, FileText, GitBranch, Search, ShieldCheck } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Search } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-
-const questions = [
-  'Compare climate commitments across my reports',
-  'What evidence supports the emissions targets?',
-  'Find gaps in Scope 3 reporting',
-];
+import ResearchPreview from '../components/research/ResearchPreview';
+import { githubRepositoryUrl } from '../config/downloads';
 
 export default function Home() {
   const [question, setQuestion] = useState('');
   const navigate = useNavigate();
-  const openQuestion = (prompt: string) => navigate(`/agent?prompt=${encodeURIComponent(prompt.trim())}`);
-  return (
-    <div className="research-home">
-      <section className="research-hero">
-        <div className="research-hero-copy">
-          <div className="research-eyebrow"><span /> EVIDENCE-FIRST ESG RESEARCH</div>
-          <h1>From disclosures<br />to <em>clearer decisions.</em></h1>
-          <p className="research-hero-description">A research desk for the questions behind the report. Bring your documents, explore the connections, and follow every answer back to its evidence.</p>
-          <form className="research-hero-search" onSubmit={event => { event.preventDefault(); if (question.trim()) openQuestion(question); }}>
-            <Search size={20} aria-hidden="true" />
-            <input aria-label="Ask a research question" placeholder="What would you like to understand?" value={question} onChange={event => setQuestion(event.target.value)} maxLength={2000} />
-            <button type="submit" aria-label="Start research" disabled={!question.trim()}><ArrowRight size={20} /></button>
-          </form>
-          <div className="research-question-links">{questions.map(prompt => <button key={prompt} type="button" onClick={() => openQuestion(prompt)}>{prompt}<ArrowUpRight size={13} /></button>)}</div>
-          <div className="research-hero-actions"><Link to="/agent" className="research-primary">Open research desk <ArrowUpRight size={17} /></Link><Link to="/causal-inference">Explore the graph <ArrowRight size={16} /></Link></div>
-        </div>
-        <div className="research-preview" aria-label="Illustrative evidence workflow preview">
-          <div className="research-preview-header"><span><span className="research-mini-logo">C</span> RESEARCH NOTE</span><span>WORKFLOW PREVIEW</span></div>
-          <div className="research-preview-question"><span className="research-eyebrow">THE QUESTION</span><h2>What sits behind a<br />climate commitment?</h2></div>
-          <div className="research-preview-source"><FileText size={18} /><div><strong>Your sustainability report</strong><span>Retrieved passages · preserved citations</span></div><span className="research-source-tag">SOURCE</span></div>
-          <div className="research-preview-route"><span>Reported target</span><span>Supporting action</span><span>Evidence gap</span></div>
-          <div className="research-preview-answer"><div><BookOpenCheck size={18} /><strong>Make the distinction.</strong></div><p>A target describes an ambition. Check the baseline, timeframe, coverage, and disclosed actions before treating it as progress.</p><span>Illustrative guidance, not a finding from your reports.</span></div>
-          <div className="research-preview-footer"><ShieldCheck size={14} /> Evidence before confidence.<span>01 / 03</span></div>
-        </div>
-      </section>
-      <section className="research-principles" aria-label="Research workflow">
-        <div><span className="research-step-number">01</span><FileText size={21} /><h2>Bring the source.</h2><p>Keep reports together in your library. Choose the documents that belong in the question.</p></div>
-        <div><span className="research-step-number">02</span><GitBranch size={21} /><h2>Follow the connections.</h2><p>Move between focused questions and deeper research, with graph context and a visible retrieval process.</p></div>
-        <div><span className="research-step-number">03</span><BookOpenCheck size={21} /><h2>Check the conclusion.</h2><p>Inspect passages and citations. Distinguish disclosed facts from assumptions and general analysis.</p></div>
-      </section>
-      <section className="research-bottom-line"><div><span className="research-eyebrow">MADE FOR THE WORK, NOT JUST THE ANSWER</span><h2>Keep your research inspectable.</h2></div><Link to="/agent">Start a conversation <ArrowUpRight size={18} /></Link></section>
-      <footer className="research-footer"><span>CausalGraph · An evidence-first research workspace</span><div><Link to="/desktop">Desktop companion</Link><Link to="/about">About the project</Link></div></footer>
-    </div>
-  );
+  return <div className="research-home">
+    <section className="research-home-intro" aria-labelledby="home-heading">
+      <div className="research-home-eyebrow">CausalGraph / ESG research</div>
+      <div className="research-home-heading"><h1 id="home-heading" aria-label="Research the report. Keep the source in view.">Research the report.<br /><span>Keep the source in view.</span></h1>
+        <div><p>Work across sustainability disclosures.{' '}<br />Ask a question, compare the evidence,{' '}<br />and follow an answer back to its source.</p>
+          <Link to="/agent" className="research-home-cta">Open research desk <ArrowUpRight size={16} /></Link></div></div>
+      <form className="research-home-question" onSubmit={event => { event.preventDefault(); if (question.trim()) navigate(`/agent?prompt=${encodeURIComponent(question.trim())}`); }}>
+        <Search size={16} aria-hidden="true" /><input value={question} onChange={event => setQuestion(event.target.value)} maxLength={2000} aria-label="Ask a research question" placeholder="Ask about a company, target, or disclosure…" />
+        <button type="submit" aria-label="Start research" disabled={!question.trim()}><ArrowRight size={17} /></button>
+      </form>
+    </section>
+    <div className="research-home-product"><ResearchPreview /></div>
+    <section className="research-home-detail">
+      <h2>A report is only<br />the starting point.</h2>
+      <div><article><span>01</span><div><h3>Work across your sources</h3><p>Upload reports and select the documents for each question. Keep the scope explicit as your research develops.</p></div></article>
+        <article><span>02</span><div><h3>Read the evidence in context</h3><p>Open a citation beside the answer. Read the retrieved passage in full, without leaving the conversation.</p></div></article>
+        <article><span>03</span><div><h3>Follow the relationships</h3><p>Explore the entities and connections extracted from your reports. Treat a graph as a route to evidence, not proof of causation.</p><Link to="/causal-inference">Explore the graph <ArrowUpRight size={14} /></Link></div></article></div>
+    </section>
+    <footer className="research-home-footer"><Link className="research-home-brand" to="/"><img src="/brand/logo-mark.svg" alt="" />CausalGraph</Link>
+      <div><Link to="/desktop">Desktop</Link><a href="https://youtu.be/62L-VOsRu8U" target="_blank" rel="noreferrer">Watch walkthrough</a><a href={githubRepositoryUrl} target="_blank" rel="noreferrer">GitHub <ArrowUpRight size={12} /></a></div></footer>
+  </div>;
 }
