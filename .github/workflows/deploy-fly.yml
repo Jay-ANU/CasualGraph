@@ -1,0 +1,120 @@
+name: Deploy Fly backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-fly.yml'
+      - 'fly.toml'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'requirements.txt'
+      - '*.py'
+      - 'configs/**'
+      - 'rag/**'
+      - 'ai_service/**'
+      - 'backend/**'
+      - 'graph/**'
+      - 'document_processing/**'
+      - 'metric_extraction/**'
+      - 'mcp_tools/**'
+      - 'notifications/**'
+      - 'scripts/fly_start.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casualgraph-production-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'Jay-ANU/CasualGraph' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: production
+      url: https://casualgraph.fly.dev
+    steps:
+      - name: Check deployment authorization
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo '::error::FLY_API_TOKEN is not configured. Add an app-scoped Fly deploy token to the repository or production environment Actions secrets, then rerun this workflow. No backend changes were made.'
+            echo 'Backend deployment blocked: missing FLY_API_TOKEN. Production was not changed.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Validate backend before release
+        env:
+          LLM_PROVIDER: deepseek
+          ESG_MODEL_ALLOW_DOWNLOAD: 'false'
+          ESG_EMBEDDING_ALLOW_DOWNLOAD: 'false'
+        run: |
+          python -m pip install -r requirements.txt pytest pytest-asyncio httpx
+          python -m compileall -q app.py configs rag ai_service
+          python -m pytest -q tests
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Check existing model credential without reading its value
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          flyctl secrets list --app casualgraph > /tmp/casualgraph-secret-names.txt
+          if ! awk '{print $1}' /tmp/casualgraph-secret-names.txt | grep -qx DEEPSEEK_API_KEY; then
+            echo '::error::DEEPSEEK_API_KEY is missing from the Fly app. Set it in Fly secret storage and rerun. No release was made.'
+            echo 'Backend deployment blocked: configure DEEPSEEK_API_KEY on Fly.io. Production was not changed.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - name: Set the approved model profile and deploy main
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Replace stale model-name secrets, which otherwise override fly.toml.
+          # Existing API keys, storage, authentication and vector indexes are untouched.
+          flyctl secrets set --stage --app casualgraph \
+            LLM_PROVIDER=deepseek \
+            RAG_ANSWER_MODE=deepseek \
+            DEEPSEEK_MODEL=deepseek-v4-pro \
+            DEEPSEEK_EXTRACTION_MODEL=deepseek-v4-pro \
+            RAG_DEEP_MODEL=deepseek-v4-pro \
+            RAG_DEEP_MAX_TOKENS=16384 \
+            RAG_DEEP_TIMEOUT=120
+          flyctl deploy --remote-only --app casualgraph --config fly.toml
+          flyctl status --app casualgraph
+          echo "Backend release completed from commit $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify deployed model configuration
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          import urllib.request
+          last_error = None
+          for attempt in range(6):
+              try:
+                  with urllib.request.urlopen('https://casualgraph.fly.dev/models/status', timeout=20) as response:
+                      data = json.load(response)
+                  assert data.get('provider') == 'deepseek', 'Unexpected provider'
+                  assert data.get('configured') is True, 'Model credential is not configured'
+                  for tier in ('flash', 'deep'):
+                      assert data['modes'][tier]['model'] == 'deepseek-v4-pro', f'Unexpected {tier} model'
+                      assert data['modes'][tier]['configured'] is True, f'{tier} is not configured'
+                  print('Backend responds; Fast and Deep are configured for DeepSeek V4 Pro. Live inference and quota are not verified by this check.')
+                  break
+              except Exception as exc:
+                  last_error = exc
+                  if attempt < 5:
+                      time.sleep(10)
+          else:
+              raise SystemExit(f'Post-deploy model configuration check failed: {type(last_error).__name__}: {last_error}')
+          PY
