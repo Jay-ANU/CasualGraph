@@ -1,5 +1,7 @@
 # CausalGraph AI
 
+> **Research Desk + DeepSeek V4 Pro upgrade:** the default backend no longer needs Claude or OpenAI credits. Fast answers explicitly disable thinking; Deep enables it. See [migration and verification](docs/deepseek-v4-upgrade.md) before deploying.
+
 [GitHub Repository](https://github.com/Jay-ANU/CasualGraph) | [Live App](https://casualgraphai.vercel.app) | [Download macOS Desktop Beta](https://github.com/Jay-ANU/CasualGraph/releases/latest/download/CausalGraph-Pet-0.1.0-mac-arm64.zip)
 
 CausalGraph AI is an open-source ESG intelligence application for turning long-form corporate reports into searchable evidence, graph context, and cited agent answers.
@@ -101,8 +103,9 @@ For a useful local RAG setup, configure at least one real embedding backend and 
 ```bash
 EMBEDDING_BACKEND=deepinfra
 DEEPINFRA_API_KEY=your_deepinfra_key
-OPENAI_API_KEY=your_openai_key
-OPENAI_MODEL=gpt-4
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_deepseek_key
+DEEPSEEK_MODEL=deepseek-v4-pro
 VECTOR_STORE_PROVIDER=local
 ```
 
@@ -195,24 +198,27 @@ Never commit `.env`, API keys, database files, report uploads, local vector stor
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | empty | Enables OpenAI-backed answer generation. |
-| `OPENAI_MODEL` | `gpt-4` | Model used by the normal RAG answer path unless overridden. |
+| `LLM_PROVIDER` | `deepseek` | Explicit chat provider. Legacy `openai` must be selected deliberately. |
+| `CHAT_MAX_TOKENS` | `2048` | Normal answer output budget. |
+| `OPENAI_API_KEY` | empty | Legacy only when `LLM_PROVIDER=openai`. |
+| `OPENAI_MODEL` | `gpt-4` | Legacy env only. Internal OPENAI_* variables alias the selected compatible transport. |
 | `OPENAI_BASE_URL` | empty | Optional OpenAI-compatible base URL. |
 | `OPENAI_TEMPERATURE` | `0.1` | Default answer temperature. |
-| `OPENAI_MAX_TOKENS` | `700` | Max answer tokens for normal RAG. |
+| `OPENAI_MAX_TOKENS` | `2048` | Legacy alias, overridden by `CHAT_MAX_TOKENS`. |
 | `OPENAI_TIMEOUT` | `60` | Provider timeout in seconds. |
-| `RAG_FLASH_MODEL` | `gpt-5.4-mini` | Fast agent model for CausalGraph-Flash. |
-| `ANTHROPIC_API_KEY` | empty | Enables CausalGraph-Deep. Without it, Deep falls back to Flash behavior. |
+| `RAG_FLASH_MODEL` | selected model | Compatibility setting; normal generation uses the selected provider model. |
+| `ANTHROPIC_API_KEY` | empty | Legacy Deep only with explicit `LLM_PROVIDER=openai`; never required by default. |
 | `ANTHROPIC_BASE_URL` | empty | Optional Anthropic-compatible base URL. |
-| `RAG_DEEP_MODEL` | `claude-opus-4-7` | Deep reasoning model. Override for cost or availability. |
-| `RAG_DEEP_MAX_TOKENS` | `2000` | Max tokens for deep answers. |
-| `RAG_DEEP_TEMPERATURE` | `0.2` | Deep answer temperature. |
-| `RAG_DEEP_TIMEOUT` | `90` | Deep provider timeout in seconds. |
+| `RAG_DEEP_MODEL` | `deepseek-v4-pro` | Deep reasoning model; stale GPT/Claude overrides are ignored with DeepSeek selected. |
+| `RAG_DEEP_MAX_TOKENS` | `16384` | Combined reasoning and answer budget. |
+| `RAG_DEEP_REASONING_EFFORT` | `high` | `low`, `high`, or `max`; DeepSeek thinking mode only. |
+| `RAG_DEEP_TEMPERATURE` | `0.2` | Legacy only; omitted for DeepSeek thinking. |
+| `RAG_DEEP_TIMEOUT` | `120` | Deep provider timeout in seconds. |
 | `ESG_EXTRACTION_BACKEND` | `remote` | Extraction backend policy. Use remote APIs for deployment; local adapters for offline experiments. |
-| `DEEPSEEK_API_KEY` | empty | Enables DeepSeek-backed ESG extraction fallback. |
+| `DEEPSEEK_API_KEY` | empty | Enables DeepSeek chat, Deep reasoning, routing and remote ESG extraction. |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek OpenAI-compatible endpoint. |
-| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | General DeepSeek model setting. |
-| `DEEPSEEK_EXTRACTION_MODEL` | `deepseek-v4-flash` | Model used for extraction calls. |
+| `DEEPSEEK_MODEL` | `deepseek-v4-pro` | General DeepSeek model setting. |
+| `DEEPSEEK_EXTRACTION_MODEL` | `deepseek-v4-pro` | Model used for extraction calls. |
 | `DEEPSEEK_EXTRACTION_MAX_TOKENS` | `8000` | Extraction output token cap. |
 | `ESG_BASE_MODEL_PATH` | `Qwen/Qwen2.5-7B-Instruct` | Local or Hugging Face base model path for QLoRA extraction. |
 | `ESG_ADAPTER_PATH` | auto-detected | Local QLoRA adapter directory. |
@@ -248,7 +254,7 @@ For `BAAI/bge-m3`, create a Pinecone dense index with:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `RAG_ANSWER_MODE` | `auto` | Answer mode policy. |
+| `RAG_ANSWER_MODE` | `deepseek` | Explicit remote policy; no accidental local 7B model load when a key is missing. |
 | `RAG_ALLOW_SPECULATION` | `false` | When false, the agent should refuse unsupported answers instead of inventing. |
 | `RAG_USE_GRAPH_CONTEXT` | `true` | Adds graph context when available. |
 | `RAG_GRAPH_CONTEXT_HOPS` | `2` | Graph expansion depth. |
@@ -471,7 +477,7 @@ flyctl secrets set CORS_ALLOW_ORIGINS=https://your-frontend.example.com
 flyctl secrets set DATA_DIR=/data
 flyctl secrets set AUTH_DB_PATH=/data/auth.db
 flyctl secrets set CAUSALGRAPH_DB_PATH=/data/causalgraph.db
-flyctl secrets set OPENAI_API_KEY=...
+flyctl secrets set DEEPSEEK_API_KEY=...
 flyctl secrets set DEEPINFRA_API_KEY=...
 flyctl secrets set REDIS_ENABLED=true
 flyctl secrets set REDIS_PASSWORD=...

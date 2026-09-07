@@ -182,11 +182,13 @@ Query:
     try:
         if hasattr(openai, "OpenAI"):
             client = openai.OpenAI(
+                max_retries=0,
                 api_key=DEEPSEEK_API_KEY,
                 base_url=DEEPSEEK_BASE_URL,
                 timeout=RAG_ROUTER_TIMEOUT,
             )
             response = client.chat.completions.create(
+                extra_body={"thinking": {"type": "disabled"}},
                 model=RAG_ROUTER_MODEL,
                 temperature=0,
                 messages=messages,

@@ -489,6 +489,6 @@ def test_runner_hybrid_synthesis_replaces_bare_insufficient_answer(monkeypatch):
         answer_intent="hybrid",
     )
 
-    assert result.backend == "openai+hybrid_fallback"
+    assert result.backend == "deepseek+hybrid_fallback"
     assert "not broad enough" in result.answer
     assert "Available evidence" in result.answer

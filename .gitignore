@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 .venv/
 venv/
 env/
@@ -7,7 +7,6 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .coverage
-tests/
 
 # Env secrets
 .env
@@ -67,6 +66,7 @@ data/word_edits/
 # Keep only the root README unless explicitly requested.
 *.md
 !/README.md
+!/docs/deepseek-v4-upgrade.md
 
 # Embedded text-to-kg reference: only the web viewer assets are needed at runtime.
 text-to-kg-esg/*

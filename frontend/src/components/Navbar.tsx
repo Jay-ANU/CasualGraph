@@ -15,10 +15,11 @@ const Navbar: React.FC = () => {
   const location = useLocation();
   const { isAuthenticated, logout, user } = useAuth();
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
-  const isMoonRoute = ['/', '/causal-inference', '/desktop', '/download', '/about'].includes(location.pathname);
+  const isMoonRoute = ['/causal-inference', '/desktop', '/download', '/about'].includes(location.pathname);
 
   const navigation = [
     { name: 'Home', href: '/' },
+    { name: 'Research', href: '/agent' },
     { name: 'Graph', href: '/causal-inference' },
     { name: 'Desktop', href: '/desktop' },
     { name: 'Company', href: '/about' },
@@ -50,7 +51,7 @@ const Navbar: React.FC = () => {
         </Link>
 
         {/* Center nav — plain text links (MiniMax-style) */}
-        <div className="hidden min-w-0 items-center justify-center md:flex">
+        <div className="hidden min-w-0 items-center justify-center xl:flex">
           <div className="flex items-center gap-1 xl:gap-2">
             {navigation.map((item) => {
               const active = isActive(item.href);
@@ -58,6 +59,7 @@ const Navbar: React.FC = () => {
                 <Link
                   key={item.name}
                   to={item.href}
+                  aria-current={active ? 'page' : undefined}
                   className={`relative px-4 py-2 text-body-sm font-medium transition xl:px-5 xl:text-body-md ${
                     active
                       ? isMoonRoute ? 'text-white' : 'text-ink'
@@ -80,7 +82,7 @@ const Navbar: React.FC = () => {
         </div>
 
         {/* Right CTAs */}
-        <div className="hidden items-center gap-2 justify-self-end md:flex">
+        <div className="hidden items-center gap-2 justify-self-end xl:flex">
           {isAuthenticated ? (
             <>
               <Link to="/agent" className={isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'}>
@@ -90,7 +92,7 @@ const Navbar: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsUserMenuOpen((prev) => !prev)}
-                  className={`${isMoonRoute ? 'moon-nav-secondary' : 'cg-btn-tertiary'} max-w-[220px] px-3`}
+                  className={`${isMoonRoute ? 'moon-nav-secondary' : 'cg-btn-tertiary'} max-w-[150px] px-3`}
                   aria-expanded={isUserMenuOpen}
                   aria-haspopup="menu"
                 >
@@ -147,7 +149,7 @@ const Navbar: React.FC = () => {
         {/* Mobile menu trigger */}
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className={`cg-btn-icon justify-self-end md:hidden ${
+          className={`cg-btn-icon justify-self-end xl:hidden ${
             isMoonRoute ? '!border-white/[0.15] !bg-white/5 !text-white hover:!border-white/40' : ''
           }`}
           aria-label={isOpen ? 'Close menu' : 'Open menu'}
@@ -162,7 +164,7 @@ const Navbar: React.FC = () => {
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}
-          className={`border-t px-4 pb-4 pt-3 md:hidden ${
+          className={`border-t px-4 pb-4 pt-3 xl:hidden ${
             isMoonRoute ? 'border-white/10 bg-[#030303]' : 'bg-canvas'
           }`}
           style={isMoonRoute ? undefined : { borderColor: 'var(--cg-hairline-soft)' }}

@@ -43,6 +43,8 @@ from pydantic import BaseModel, Field
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
+from configs.settings import OPENAI_MODEL as CHAT_MODEL, VISION_MODEL, chat_model_override
+
 # ── Auth config ──────────────────────────────────────────────────────────────
 _DEFAULT_JWT_SECRET = "esg-demo-secret-change-in-prod"
 _APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).strip().lower()
@@ -215,16 +217,10 @@ _RAG_FLASH_POINT_COST = max(1, int(os.getenv("RAG_FLASH_POINT_COST", "1")))
 _RAG_DEEP_POINT_COST = max(1, int(os.getenv("RAG_DEEP_POINT_COST", "5")))
 _RAG_MIN_SECONDS_BETWEEN_REQUESTS = max(0, int(os.getenv("RAG_MIN_SECONDS_BETWEEN_REQUESTS", "20")))
 _RAG_ANONYMOUS_ENABLED = _env_flag("RAG_ANONYMOUS_ENABLED", "false")
-_DESKTOP_SCREENSHOT_SUMMARY_MODEL = os.getenv(
-    "DESKTOP_SCREENSHOT_SUMMARY_MODEL",
-    os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-).strip() or "gpt-4o-mini"
+_DESKTOP_SCREENSHOT_SUMMARY_MODEL = VISION_MODEL
 _DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS = max(128, int(os.getenv("DESKTOP_SCREENSHOT_SUMMARY_MAX_TOKENS", "700")))
 _DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES = max(256_000, int(os.getenv("DESKTOP_SCREENSHOT_MAX_IMAGE_BYTES", "6000000")))
-_DESKTOP_WORD_EDIT_MODEL = os.getenv(
-    "DESKTOP_WORD_EDIT_MODEL",
-    os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-).strip() or "gpt-4o-mini"
+_DESKTOP_WORD_EDIT_MODEL = chat_model_override("DESKTOP_WORD_EDIT_MODEL", CHAT_MODEL)
 _DESKTOP_WORD_EDIT_MAX_BYTES = max(512_000, int(os.getenv("DESKTOP_WORD_EDIT_MAX_BYTES", "12000000")))
 _DESKTOP_WORD_EDIT_MAX_PARAGRAPHS = max(4, int(os.getenv("DESKTOP_WORD_EDIT_MAX_PARAGRAPHS", "28")))
 _DESKTOP_WORD_EDIT_MAX_CHARS = max(2_000, int(os.getenv("DESKTOP_WORD_EDIT_MAX_CHARS", "14000")))
@@ -917,7 +913,7 @@ from pipeline_runtime import (
 )
 from rag.bm25_index import warm_bm25_index
 from rag.embeddings import embedding_backend_is_real, get_embedding_backend, get_embedding_model
-from rag.openai_client import get_openai_client
+from rag.openai_client import get_openai_client, get_vision_client
 from rag.openai_compat import chat_token_kwargs
 from rag.rag_pipeline import answer_question, stream_answer_question
 from rag.answer_intent import classify_answer_intent
@@ -962,6 +958,13 @@ def _remove_spooled_upload(file_path: Optional[str]) -> None:
 
 app = FastAPI(title="ESG QLoRA Extraction API", version="1.0.0")
 
+@app.get("/models/status")
+def model_status():
+    """Configuration-only check. No API call, credentials, or quota consumption."""
+    from rag.model_status import get_model_status
+    return get_model_status()
+
+
 _APP_ROOT = Path(__file__).resolve().parent
 _KG_VIEW_TEMPLATE = _APP_ROOT / "kg_view" / "templates" / "index.html"
 _KG_VIEW_STATIC = _APP_ROOT / "kg_view" / "static"
@@ -969,10 +972,7 @@ _TEXT_KG_WEB_ROOT = _APP_ROOT / "text-to-kg-esg" / "web"
 _TEXT_KG_VIEW_TEMPLATE = _TEXT_KG_WEB_ROOT / "templates" / "index.html"
 _TEXT_KG_VIEW_STATIC = _TEXT_KG_WEB_ROOT / "static"
 _KG_VIEW_LLM_CLUSTER_LABELS = _env_flag("KG_VIEW_LLM_CLUSTER_LABELS", "true")
-_KG_VIEW_CLUSTER_LABEL_MODEL = os.getenv(
-    "KG_VIEW_CLUSTER_LABEL_MODEL",
-    os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-).strip() or "gpt-4o-mini"
+_KG_VIEW_CLUSTER_LABEL_MODEL = chat_model_override("KG_VIEW_CLUSTER_LABEL_MODEL", CHAT_MODEL)
 _KG_VIEW_CLUSTER_LABEL_CACHE: Dict[str, Dict[str, str]] = {}
 _KG_VIEW_CACHE_ENABLED = _env_flag("KG_VIEW_CACHE_ENABLED", "true")
 _KG_VIEW_CACHE_VERSION = os.getenv("KG_VIEW_CACHE_VERSION", f"{_PUBLIC_GRAPH_CACHE_VERSION}-kgv4").strip() or f"{_PUBLIC_GRAPH_CACHE_VERSION}-kgv4"
@@ -2218,11 +2218,13 @@ def _resolve_document_ids_with_deepseek(
     try:
         if hasattr(openai, "OpenAI"):
             client = openai.OpenAI(
+                max_retries=0,
                 api_key=DEEPSEEK_API_KEY,
                 base_url=DEEPSEEK_BASE_URL,
                 timeout=min(float(RAG_ANSWER_INTENT_ROUTER_TIMEOUT), 8.0),
             )
             response = client.chat.completions.create(
+                extra_body={"thinking": {"type": "disabled"}},
                 model=RAG_ANSWER_INTENT_ROUTER_MODEL,
                 temperature=0,
                 messages=messages,
@@ -2503,11 +2505,13 @@ def _route_request_with_deepseek(question: str, entries: List[Dict[str, Any]]) -
     try:
         if hasattr(openai, "OpenAI"):
             client = openai.OpenAI(
+                max_retries=0,
                 api_key=DEEPSEEK_API_KEY,
                 base_url=DEEPSEEK_BASE_URL,
                 timeout=min(float(RAG_ANSWER_INTENT_ROUTER_TIMEOUT), 8.0),
             )
             response = client.chat.completions.create(
+                extra_body={"thinking": {"type": "disabled"}},
                 model=RAG_ANSWER_INTENT_ROUTER_MODEL,
                 temperature=0,
                 messages=messages,
@@ -6068,13 +6072,13 @@ async def desktop_screenshot_summarize(
 ):
     image_data_url = _validate_desktop_image_data_url(request.image_data_url)
     prompt = str(request.prompt or "").strip() or "Summarize this screen."
-    client = get_openai_client()
+    client = get_vision_client()
     if client is None:
         return JSONResponse(
             status_code=503,
             content={
-                "error": "openai_unavailable",
-                "message": "Screenshot summary requires OPENAI_API_KEY to be configured.",
+                "error": "vision_unavailable",
+                "message": "DeepSeek V4 Pro is text-only. Configure VISION_API_KEY, VISION_BASE_URL and an image-capable VISION_MODEL for screenshots.",
             },
         )
 

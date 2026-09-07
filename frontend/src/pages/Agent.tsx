@@ -6,6 +6,8 @@ import { motion } from 'framer-motion';
 import { useSearchParams } from 'react-router-dom';
 import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainCircuit, Network, FolderOpen, FileUp, FileText, Plus, Paperclip, CheckCircle2, AlertCircle, Circle, ArrowUp, ThumbsUp, ThumbsDown, GitBranch, Eye, ShieldCheck, X } from 'lucide-react';
 import { GraphVisualizer } from '../components';
+import ModelStatus from '../components/ModelStatus';
+import WorkbenchWelcome from '../components/WorkbenchWelcome';
 import { useAuth } from '../contexts/AuthContext';
 import type { GraphData, GraphEdge, GraphHighlightPath, GraphNode } from '../types/graph';
 import type { AgentTraceStep, FeedbackPayload, FeedbackRating, FeedbackReasonTag, RagReasoningMode, RagResponse, RagSource } from '../types/api';
@@ -459,35 +461,8 @@ const documentNeedsGraphRepair = (document: Document | null) => {
   return hasAnonymousNode || hasAnonymousRelationship;
 };
 
-const getSampleDocuments = (): Document[] => [
-  {
-    id: 'sample_esg_report',
-    title: 'NVIDIA FY2025 Sustainability Report',
-    domain: 'general',
-    source: 'Sample ESG Index',
-    graph: {
-      nodes: [
-        { id: 'nvidia', label: 'NVIDIA', domain: 'general', type: 'Company', confidence: 0.98 },
-        { id: 'scope_2_market_based_emissions', label: 'scope 2 market-based emissions', domain: 'environmental', type: 'ESG Metric', confidence: 0.84 },
-        { id: 'renewable_electricity', label: 'renewable electricity', domain: 'environmental', type: 'ESG Metric', confidence: 0.84 },
-        { id: 'climate_risk_oversight', label: 'climate risk oversight', domain: 'governance', type: 'Policy', confidence: 0.8 }
-      ],
-      edges: [
-        { source: 'nvidia', target: 'scope_2_market_based_emissions', relationship_type: 'HAS_METRIC', confidence: 0.82, evidence: 'NVIDIA reported a 14% reduction in scope 2 market-based emissions.', domain: 'environmental' },
-        { source: 'nvidia', target: 'renewable_electricity', relationship_type: 'HAS_TARGET', confidence: 0.82, evidence: 'The company set a target to reach 100% renewable electricity for selected sites.', domain: 'environmental' },
-        { source: 'climate_risk_oversight', target: 'nvidia', relationship_type: 'IMPACTS', confidence: 0.68, evidence: 'The board governance policy requires quarterly oversight of climate risk and AI safety topics.', domain: 'governance' }
-      ],
-      metadata: { node_count: 4, edge_count: 3, is_directed: true, is_acyclic: true }
-    },
-    relationships: [
-      { cause: 'NVIDIA', effect: 'scope 2 market-based emissions', confidence: 0.82, evidence: 'NVIDIA reported a 14% reduction in scope 2 market-based emissions.', domain: 'general', relationship_type: 'HAS_METRIC' },
-      { cause: 'NVIDIA', effect: 'renewable electricity', confidence: 0.82, evidence: 'The company set a target to reach 100% renewable electricity for selected sites.', domain: 'general', relationship_type: 'HAS_TARGET' },
-      { cause: 'climate risk oversight', effect: 'NVIDIA', confidence: 0.68, evidence: 'The board governance policy requires quarterly oversight of climate risk and AI safety topics.', domain: 'general', relationship_type: 'IMPACTS' }
-    ]
-  }
-];
-
-const SAMPLE_DOCUMENTS = getSampleDocuments();
+// An empty or unreachable private library must not be replaced with demo data.
+const SAMPLE_DOCUMENTS: Document[] = [];
 
 const readApiErrorMessage = async (response: Response): Promise<string> => {
   const fallback = `RAG service returned ${response.status}${response.statusText ? ` ${response.statusText}` : ''}.`;
@@ -1073,8 +1048,8 @@ const Agent: React.FC = () => {
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(true);
   const [agentDrawerTab, setAgentDrawerTab] = useState<AgentDrawerTab>('process');
   const [agentDrawerSourcesOverride, setAgentDrawerSourcesOverride] = useState<RagSource[] | null>(null);
-  // Tier selector: 'flash' (OpenAI gpt-5.4-mini, fast) vs 'deep' (Anthropic
-  // Claude, layered retrieval + graph context). URL accepts ?tier=deep; legacy
+  // Fast disables thinking; Deep enables reasoning with layered retrieval and
+  // graph context on the configured provider. URL accepts ?tier=deep; legacy
   // ?mode=predict is honored as Deep so old bookmarks still work.
   const [tier, setTier] = useState<RagReasoningMode>(() => {
     if (typeof window === 'undefined') return 'flash';
@@ -1154,7 +1129,15 @@ const Agent: React.FC = () => {
     conversationEndRef.current?.scrollIntoView({ behavior, block: 'end' });
   }, []);
   useEffect(() => {
-    if (activeTab !== 'chat' || !shouldAutoFollowConversationRef.current) return;
+    if (activeTab !== 'chat') return;
+    if (conversation.length === 0) {
+      const frameId = window.requestAnimationFrame(() => {
+        conversationScrollRef.current?.scrollTo({ top: 0 });
+        shouldAutoFollowConversationRef.current = true;
+      });
+      return () => window.cancelAnimationFrame(frameId);
+    }
+    if (!shouldAutoFollowConversationRef.current) return;
     const frameId = window.requestAnimationFrame(() => scrollToBottom('auto'));
     return () => window.cancelAnimationFrame(frameId);
   }, [activeTab, conversation.length, scrollToBottom]);
@@ -2803,7 +2786,7 @@ ${isDuplicate
     drawerSources.length > 0
   );
   return (
-    <div className="cg-workspace h-[calc(100vh-72px)] overflow-hidden text-ink">
+    <div className="cg-workspace research-workspace overflow-hidden text-ink">
       <input
         ref={quickUploadInputRef}
         type="file"
@@ -2900,7 +2883,7 @@ ${isDuplicate
         </div>
       )}
       <div className="flex h-full w-full overflow-hidden border-t border-hairline bg-transparent">
-        <aside className="hidden h-full w-[184px] shrink-0 border-r border-hairline bg-white lg:flex lg:flex-col">
+        <aside className="research-sidebar hidden h-full w-[224px] shrink-0 border-r border-hairline bg-white lg:flex lg:flex-col">
           <div className="space-y-1 px-2 py-3">
             <button
               onClick={handleNewSession}
@@ -3062,7 +3045,7 @@ ${isDuplicate
             <header className="border-b border-hairline bg-white/95 px-4 py-3 sm:px-6">
               {(() => {
                 const currentSession = chatSessions.find(s => s.id === currentSessionId);
-                const sessionTitle = currentSession?.title?.trim() || deriveSessionTitle(conversation) || 'New conversation';
+                const sessionTitle = currentSession?.title?.trim() || deriveSessionTitle(conversation) || 'Research desk';
                 return (
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -3111,12 +3094,13 @@ ${isDuplicate
                   </div>
                 );
               })()}
+              <ModelStatus apiBase={esgApiBase} tier={tier} />
             </header>
 
             <div
               ref={conversationScrollRef}
               onScroll={updateAutoFollowConversation}
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white px-4 py-5 sm:px-6"
+              className="research-conversation min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6"
             >
               <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col">
                 {displayedConversation.length === 0 && (
@@ -3126,44 +3110,17 @@ ${isDuplicate
                     transition={{ duration: 0.45 }}
                     className="flex flex-1 items-center justify-center"
                   >
-                    <div className="w-full max-w-3xl px-4 py-10 text-center sm:px-8">
-                      <h1 className="font-display text-[32px] font-semibold leading-[1.12] tracking-normal text-ink sm:text-[44px]">
-                        CausalGraph Agent
-                      </h1>
-                      <div className="mt-7 flex flex-wrap justify-center gap-2">
-                        <button
-                          type="button"
-                          onClick={handleUploadEntry}
-                          className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-ink-charcoal"
-                        >
-                          <FileUp className="h-4 w-4" />
-                          Upload
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('documents')}
-                          className="inline-flex items-center gap-2 rounded-full border border-hairline bg-white px-4 py-2 text-[13px] font-semibold text-ink-charcoal shadow-sm transition hover:border-ink hover:text-ink"
-                        >
-                          <FolderOpen className="h-4 w-4" />
-                          Assets
-                        </button>
-                      </div>
-                      <div className="mt-5 flex flex-wrap justify-center gap-2">
-                        {agentStarterCards.map((card) => (
-                          <button
-                            key={card.title}
-                            type="button"
-                            onClick={() => {
-                              setTier(card.tier);
-                              setInputText(card.prompt);
-                            }}
-                            className="rounded-full border border-hairline bg-white px-4 py-2 text-[13px] font-semibold text-ink-charcoal shadow-sm transition hover:border-ink hover:bg-surface-soft hover:text-ink"
-                          >
-                            {card.title}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <WorkbenchWelcome
+                      reportCount={totalDocuments}
+                      starters={agentStarterCards}
+                      onUpload={handleUploadEntry}
+                      onLibrary={() => setActiveTab('documents')}
+                      onPrompt={(starter) => {
+                        setTier(starter.tier);
+                        setInputText(starter.prompt);
+                        document.getElementById('research-question')?.focus();
+                      }}
+                    />
                   </motion.div>
                 )}
 
@@ -3451,6 +3408,8 @@ ${isDuplicate
                     )}
                   </div>
                   <textarea
+                    id="research-question"
+                    aria-label="Research question"
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
                     onKeyDown={(e) => {
@@ -3506,7 +3465,7 @@ ${isDuplicate
                               ? 'bg-ink text-white shadow-sm'
                               : 'text-ink-steel hover:bg-surface-soft hover:text-ink'
                           }`}
-                          title="Fast grounded answers"
+                          title="Fast: non-thinking answers from the configured model"
                         >
                           <Zap className="h-3.5 w-3.5" />
                           <span>Fast</span>
@@ -3520,7 +3479,7 @@ ${isDuplicate
                               ? 'bg-ink text-white shadow-sm'
                               : 'text-ink-steel hover:bg-surface-soft hover:text-ink'
                           }`}
-                          title="Deeper analysis and graph reasoning"
+                          title="Deep: extended reasoning, retrieval and graph context"
                         >
                           <BrainCircuit className="h-3.5 w-3.5" />
                           <span>Deep</span>
@@ -3540,7 +3499,7 @@ ${isDuplicate
                 </form>
                 <div className="mt-1 px-1 text-right">
                   <span className="cg-eyebrow text-ink-stone">
-                    Enter to send
+                    Verify citations · Enter to send · Shift + Enter for a new line
                   </span>
                 </div>
               </div>

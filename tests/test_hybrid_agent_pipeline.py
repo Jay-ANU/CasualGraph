@@ -398,7 +398,7 @@ def test_hybrid_insufficient_model_answer_gets_analysis_fallback(monkeypatch):
         answer_intent={"mode": "hybrid", "confidence": 0.9},
     )
 
-    assert result["backend"] == "openai+hybrid_fallback"
+    assert result["backend"] == "deepseek+hybrid_fallback"
     assert "General analysis" in result["answer"]
     assert "reliable ESG score" in result["answer"]
 
@@ -449,6 +449,37 @@ def test_stream_hybrid_insufficient_done_payload_gets_analysis_fallback(monkeypa
     )
     done = [event for event in events if event.get("type") == "done"][-1]
 
-    assert done["payload"]["backend"] == "openai+hybrid_fallback"
+    assert done["payload"]["backend"] == "deepseek+hybrid_fallback"
     assert "General analysis" in done["payload"]["answer"]
     assert "reliable ESG score" in done["payload"]["answer"]
+
+
+def test_deep_interruption_preserves_emitted_prefix_without_fast_splice(monkeypatch):
+    from rag.deep_answering import INTERRUPTION_NOTICE
+
+    prepared = _prepared_context()
+    prepared['answer_intent'] = {'mode': 'evidence', 'confidence': 1.0}
+    prepared['allow_speculation'] = False
+    prepared['sources'] = [{'chunk_id': 'chunk_1', 'text': 'Disclosed target.', 'document_title': 'Report'}]
+    monkeypatch.setattr(pipeline, '_prepare_answer_context', lambda **kw: prepared)
+    monkeypatch.setattr(pipeline, 'decide_hybrid_path', lambda **kw: pipeline.HybridRouteDecision(
+        path='rag', reason='direct', confidence=1.0, budget=pipeline.AgentBudget(max_steps=0, deadline_seconds=12)))
+    monkeypatch.setattr(pipeline, 'RAG_ANSWER_MODE', 'deepseek')
+    monkeypatch.setattr(pipeline, 'deep_answering_available', lambda: True)
+
+    def interrupted(**kwargs):
+        yield 'Supported prefix [chunk_1].'
+        raise TimeoutError('mock interruption')
+
+    def forbidden(**kwargs):
+        raise AssertionError('Already emitted text must not be replaced with a Fast answer')
+
+    monkeypatch.setattr(pipeline, 'stream_deep_rag_answer', interrupted)
+    monkeypatch.setattr(pipeline, 'stream_openai_rag_answer', forbidden)
+    events = list(pipeline.stream_answer_question('What is the target?', reasoning_mode='deep',
+        answer_intent={'mode': 'evidence', 'confidence': 1.0}))
+    text = ''.join(event['text'] for event in events if event['type'] == 'token')
+    assert text == 'Supported prefix [chunk_1].' + INTERRUPTION_NOTICE
+    done = next(event['payload'] for event in events if event['type'] == 'done')
+    assert done['answer'] == text
+    assert done['backend'] == 'deepseek_deep'

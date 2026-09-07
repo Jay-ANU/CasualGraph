@@ -1,0 +1,89 @@
+name: Upgrade validation
+
+on:
+  push:
+    branches: [feat/deepseek-v4-pro-workspace]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upgrade-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LLM_PROVIDER: deepseek
+      ESG_MODEL_ALLOW_DOWNLOAD: 'false'
+      ESG_EMBEDDING_ALLOW_DOWNLOAD: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt pytest pytest-asyncio httpx
+      - name: Check Python syntax
+        run: python -m compileall -q app.py configs rag ai_service user_memory_service.py
+      - name: Backend regression tests (mocked providers, no API credit)
+        run: python -m pytest -q tests --junitxml=backend-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-results
+          path: backend-results.xml
+          retention-days: 7
+      - name: Package exact source revision for reproducibility
+        if: always()
+        run: git archive --format=tar.gz HEAD -o /tmp/validation-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-source
+          path: /tmp/validation-source.tar.gz
+          retention-days: 3
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test -- --watchAll=false --passWithNoTests --runInBand
+        env:
+          CI: 'true'
+      - run: npm run build
+        env:
+          CI: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/build
+          retention-days: 3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install browser test runtime
+        run: |
+          pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium
+      - name: Browser smoke checks (mock APIs, no model credit)
+        run: python ../scripts/research_ui_smoke.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-verification
+          path: ui-artifacts
+          retention-days: 7
