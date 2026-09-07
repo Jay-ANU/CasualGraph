@@ -114,7 +114,8 @@ def test_deep_sync_preserves_source_blocks_and_uses_pro(deep_client):
     assert answer == "Supported [chunk_0]."
     kwargs = client.messages.create.call_args.kwargs
     assert kwargs["model"] == "deepseek-v4-pro"
-    assert kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert "temperature" not in kwargs
+    assert kwargs["extra_body"] == {"thinking": {"type": "enabled"}, "temperature": deep.RAG_DEEP_TEMPERATURE}
     payload = kwargs["messages"][0]["content"]
     for expected in ["[chunk_0]", "[prior_0]", "[reg_0]", "[G_0]", "History"]:
         assert expected in payload
@@ -210,6 +211,7 @@ def test_anthropic_wire_contract_with_mock_http():
         body = json.loads(request.content)
         assert body["model"] == "deepseek-v4-pro"
         assert body["thinking"] == {"type": "enabled"}
+        assert body["temperature"] == 0.2
         return httpx.Response(200, json={"id": "test-message", "type": "message", "role": "assistant", "model": body["model"], "content": [{"type": "text", "text": "Evidence [chunk_0]"}], "stop_reason": "end_turn", "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1}})
     from rag.claude_answering import _messages_kwargs
     with anthropic.Anthropic(api_key="test-only", base_url="https://api.deepseek.com/anthropic", http_client=httpx.Client(transport=httpx.MockTransport(handler))) as client:

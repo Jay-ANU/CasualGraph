@@ -115,12 +115,15 @@ def _messages_kwargs(payload: Dict[str, object]) -> Dict[str, object]:
     return {
         "model": RAG_DEEP_MODEL,
         "max_tokens": RAG_DEEP_MAX_TOKENS,
-        "temperature": RAG_DEEP_TEMPERATURE,
         "system": payload["system"],
         "messages": payload["messages"],
         # extra_body also works with the repository's minimum Anthropic SDK.
-        # DeepSeek ignores Anthropic budget_tokens; max_tokens bounds the output.
-        "extra_body": {"thinking": {"type": "enabled"}},
+        # Newer SDKs remove temperature from their typed Messages arguments.
+        # DeepSeek still accepts it on the wire, so keep provider fields here.
+        "extra_body": {
+            "thinking": {"type": "enabled"},
+            "temperature": RAG_DEEP_TEMPERATURE,
+        },
     }
 
 
