@@ -1,66 +1,35 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowDown, Check, X } from 'lucide-react';
-import NetworkField from './NetworkField';
-import Celebration from './Celebration';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDown, X } from 'lucide-react';
 import {
   OfferCopy,
   OfferDecision,
+  OfferLanguage,
   PublicOffer,
+  clockOf,
   copyFor,
   countdownTo,
-  easeOutExpo,
   employmentLabel,
   formatAmount,
   formatLongDate,
+  formatShortDate,
   formatTimestamp,
   greetingName,
+  offerReference,
   periodLabel,
-  twoDigits,
+  referenceBars,
+  referenceSeed,
+  replyWindowLeft,
 } from './offerContent';
 import './offerPage.css';
 
 const prefersReducedMotion = () =>
   Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-const useTypewriter = (text: string, enabled: boolean) => {
-  const [length, setLength] = useState(enabled ? 0 : text.length);
-  useEffect(() => {
-    if (!enabled) {
-      setLength(text.length);
-      return undefined;
-    }
-    setLength(0);
-    let index = 0;
-    const timer = window.setInterval(() => {
-      index += 1;
-      setLength(index);
-      if (index >= text.length) window.clearInterval(timer);
-    }, 55);
-    return () => window.clearInterval(timer);
-  }, [text, enabled]);
-  return text.slice(0, length);
-};
+// The card only follows a pointer that can hover; on touch screens it simply lies flat.
+const hasFinePointer = () =>
+  Boolean(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
 
-const useCountUp = (target: number, active: boolean, animate: boolean) => {
-  const [value, setValue] = useState(animate ? 0 : target);
-  useEffect(() => {
-    if (!active) return undefined;
-    if (!animate) {
-      setValue(target);
-      return undefined;
-    }
-    let frame = 0;
-    const started = performance.now();
-    const tick = (now: number) => {
-      const progress = Math.min(1, (now - started) / 1800);
-      setValue(target * easeOutExpo(progress));
-      if (progress < 1) frame = window.requestAnimationFrame(tick);
-    };
-    frame = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(frame);
-  }, [target, active, animate]);
-  return value;
-};
+const langAttr = (language?: string) => (language === 'zh' ? 'zh-CN' : 'en');
 
 const useNow = (intervalMs: number) => {
   const [now, setNow] = useState(() => new Date());
@@ -71,116 +40,159 @@ const useNow = (intervalMs: number) => {
   return now;
 };
 
-// Adds `is-visible` to `.ox-reveal` elements as they scroll into view.
-const useReveal = (root: React.RefObject<HTMLElement>, key: unknown) => {
+/** True once the element has been scrolled into view (and stays true). */
+const useInView = (ref: React.RefObject<HTMLElement>, threshold = 0.4) => {
+  const [inView, setInView] = useState(false);
   useEffect(() => {
-    const container = root.current;
-    if (!container) return undefined;
-    const elements = Array.prototype.slice.call(container.querySelectorAll('.ox-reveal')) as HTMLElement[];
-    if (!('IntersectionObserver' in window) || prefersReducedMotion()) {
-      elements.forEach((element) => element.classList.add('is-visible'));
+    const element = ref.current;
+    if (!element || !('IntersectionObserver' in window)) {
+      setInView(true);
       return undefined;
     }
     const observer = new IntersectionObserver(
-      (entries) =>
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-visible');
-            observer.unobserve(entry.target);
-          }
-        }),
-      { threshold: 0, rootMargin: '0px 0px -8% 0px' }
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setInView(true);
+          observer.disconnect();
+        }
+      },
+      { threshold }
     );
-    elements.forEach((element) => observer.observe(element));
+    observer.observe(element);
     return () => observer.disconnect();
-  }, [root, key]);
+  }, [ref, threshold]);
+  return inView;
 };
 
-export const OfferMark: React.FC<{ size?: number; spin?: boolean }> = ({ size = 30, spin = false }) => (
-  <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true" className="ox-mark">
-    <defs>
-      <linearGradient id="ox-mark-gradient" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stopColor="#22d3ee" />
-        <stop offset="0.5" stopColor="#6366f1" />
-        <stop offset="1" stopColor="#a855f7" />
-      </linearGradient>
-    </defs>
-    <rect x="0.5" y="0.5" width="39" height="39" rx="11" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.16)" />
-    <g
-      className={spin ? 'ox-mark-orbits' : undefined}
-      transform="translate(8 8)"
-      fill="none"
-      stroke="url(#ox-mark-gradient)"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="3" />
-      <ellipse cx="12" cy="12" rx="10" ry="4" />
-      <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)" />
-      <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)" />
-    </g>
-  </svg>
+/** Splits the letter into paragraphs on blank lines; single line breaks are kept. */
+const paragraphsOf = (text: string) =>
+  text
+    .replace(/\r\n?/g, '\n')
+    .split(/\n[ \t]*\n/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+const BrandMark: React.FC<{ size?: number }> = ({ size = 22 }) => (
+  <img src="/brand/logo-mark.svg" alt="" aria-hidden="true" width={size} height={size} className="of-mark" />
 );
 
-/** Background layers shared by every state of the offer page. */
-export const OfferShell: React.FC<{ children: React.ReactNode; className?: string; lang?: string }> = ({
-  children,
-  className = '',
-  lang,
-}) => {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    rootRef.current?.style.setProperty('--ox-mx', `${event.clientX}px`);
-    rootRef.current?.style.setProperty('--ox-my', `${event.clientY}px`);
-  };
+/** The credential's machine-readable strip: bar widths (in whole pixels) derived from the offer token. */
+const CodeStrip: React.FC<{ seed: string }> = ({ seed }) => {
+  const bars = useMemo(() => referenceBars(seed), [seed]);
+  const total = bars.reduce((sum, [bar, gap]) => sum + bar + gap, 0);
+  let x = 0;
   return (
-    <div ref={rootRef} className={`ox ${className}`} lang={lang} onPointerMove={onPointerMove}>
-      <div className="ox-aurora" aria-hidden="true" />
-      <NetworkField className="ox-field" />
-      <div className="ox-floor" aria-hidden="true" />
-      <div className="ox-spotlight" aria-hidden="true" />
-      {children}
-    </div>
+    <svg className="of-code" width={total} height="22" aria-hidden="true" shapeRendering="crispEdges">
+      {bars.map(([bar, gap], index) => {
+        const rect = <rect key={index} x={x} y="0" width={bar} height="22" />;
+        x += bar + gap;
+        return rect;
+      })}
+    </svg>
   );
 };
 
-const OfferHeader: React.FC<{ copy: OfferCopy; organisation: string }> = ({ copy, organisation }) => (
-  <header className="ox-top">
-    <span className="ox-brand">
-      <OfferMark spin />
-      <span>{organisation}</span>
+// Circumference of the seal's text ring (radius 36 in the 96-unit viewBox).
+const SEAL_RING = (2 * Math.PI * 36).toFixed(1);
+
+/** The organisation's seal, printed on the credential (on the main part, or on the stub on phones). */
+const Seal: React.FC<{ organisation: string; place: 'main' | 'stub' }> = ({ organisation, place }) => {
+  const name = organisation.toUpperCase();
+  const ring = `${name} · `.repeat(name.length > 22 ? 1 : 2);
+  const pathId = `of-seal-path-${place}`;
+  return (
+    <svg className={`of-seal of-seal--${place}`} viewBox="0 0 96 96" aria-hidden="true">
+      <defs>
+        <path id={pathId} d="M48 48 m-36 0 a36 36 0 1 1 72 0 a36 36 0 1 1 -72 0" />
+      </defs>
+      <circle cx="48" cy="48" r="45" fill="none" stroke="currentColor" strokeWidth="2.4" />
+      <circle cx="48" cy="48" r="28" fill="none" stroke="currentColor" strokeWidth="1" />
+      <text className="of-seal-text" fontSize="7" fill="currentColor" textLength={SEAL_RING} lengthAdjust="spacing">
+        <textPath href={`#${pathId}`} startOffset="0" textLength={SEAL_RING} lengthAdjust="spacing">
+          {ring}
+        </textPath>
+      </text>
+      <g transform="translate(48 48)" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+        <circle r="3.6" />
+        <ellipse rx="14" ry="5.4" />
+        <ellipse rx="14" ry="5.4" transform="rotate(60)" />
+        <ellipse rx="14" ry="5.4" transform="rotate(120)" />
+      </g>
+    </svg>
+  );
+};
+
+/** An office date stamp; `pressed` plays the stamping motion once. */
+const Stamp: React.FC<{ label: string; date: string; tone: 'accent' | 'ink'; pressed: boolean }> = ({
+  label,
+  date,
+  tone,
+  pressed,
+}) => (
+  <span className={`of-stamp of-stamp--${tone}${pressed ? ' is-pressed' : ''}`} aria-hidden="true">
+    <span className="of-stamp-label">{label}</span>
+    {date && <span className="of-stamp-date">{date}</span>}
+  </span>
+);
+
+const ROLL = '01234567890123456789'.split('');
+
+/** Digits roll into place like a mechanical counter; the amount is read out in full by screen readers. */
+const Odometer: React.FC<{ value: string; run: boolean; animate: boolean }> = ({ value, run, animate }) => {
+  if (!animate) return <span className="of-odo">{value}</span>;
+  let digitIndex = 0;
+  return (
+    <span className="of-odo" aria-hidden="true">
+      {value.split('').map((character, index) => {
+        if (!/\d/.test(character)) {
+          return (
+            <span key={index} className="of-odo-sep">
+              {character}
+            </span>
+          );
+        }
+        const order = digitIndex;
+        digitIndex += 1;
+        const target = run ? 10 + Number(character) : 0;
+        return (
+          <span key={index} className="of-odo-digit">
+            <span
+              className="of-odo-roll"
+              style={{
+                transform: `translateY(${-target}em)`,
+                transitionDuration: `${1.5 + order * 0.14}s`,
+              }}
+            >
+              {ROLL.map((digit, position) => (
+                <span key={position}>{digit}</span>
+              ))}
+            </span>
+          </span>
+        );
+      })}
     </span>
-    <span className="ox-badge">
-      <span className="ox-badge-dot" />
-      {copy.confidential}
-    </span>
-  </header>
+  );
+};
+
+/** Background and language wrapper shared by every state of the offer page. */
+const OfferShell: React.FC<{ children: React.ReactNode; className?: string; language?: string }> = ({
+  children,
+  className = '',
+  language,
+}) => (
+  <div className={`of ${className}`.trim()} lang={langAttr(language)}>
+    {children}
+  </div>
 );
 
 export const OfferLoading: React.FC<{ language?: string }> = ({ language }) => {
   const copy = copyFor(language);
   return (
-    <OfferShell>
-      <main className="ox-center">
-        <div className="ox-terminal" role="status">
-          <div className="ox-terminal-bar">
-            <span />
-            <span />
-            <span />
-            <em>offer://secure</em>
-          </div>
-          {copy.loading.map((line, index) => (
-            <p key={line} className="ox-terminal-line" style={{ animationDelay: `${index * 0.45}s` }}>
-              <span className="ox-terminal-prompt">&gt;</span> {line}
-              <span className="ox-terminal-ok">✓</span>
-            </p>
-          ))}
-          <div className="ox-terminal-progress">
-            <span />
-          </div>
-        </div>
-      </main>
+    <OfferShell language={language} className="of--centre">
+      <div className="of-loading" role="status">
+        <span className="of-loading-line" aria-hidden="true" />
+        <p>{copy.loading}</p>
+      </div>
     </OfferShell>
   );
 };
@@ -192,21 +204,113 @@ export const OfferNotice: React.FC<{
   actionLabel?: string;
   onAction?: () => void;
 }> = ({ title, body, language, actionLabel, onAction }) => (
-  <OfferShell lang={language === 'zh' ? 'zh-CN' : 'en'}>
-    <main className="ox-center">
-      <div className="ox-card ox-notice">
-        <OfferMark size={44} spin />
-        <h1>{title}</h1>
-        <p>{body}</p>
-        {actionLabel && onAction && (
-          <button type="button" onClick={onAction} className="ox-btn ox-btn-ghost">
-            {actionLabel}
-          </button>
-        )}
-      </div>
+  <OfferShell language={language} className="of--centre">
+    <main className="of-notice">
+      <BrandMark size={28} />
+      <h1>{title}</h1>
+      <p>{body}</p>
+      {actionLabel && onAction && (
+        <button type="button" onClick={onAction} className="of-btn of-btn--secondary">
+          {actionLabel}
+        </button>
+      )}
     </main>
   </OfferShell>
 );
+
+interface CredentialProps {
+  offer: PublicOffer;
+  copy: OfferCopy;
+  language: OfferLanguage;
+  reference: string;
+  seed: string;
+}
+
+/** The offer as a card-stock credential: it tilts a few degrees towards the pointer, lit softly. */
+const Credential: React.FC<CredentialProps> = ({ offer, copy, language, reference, seed }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const tilts = useMemo(() => hasFinePointer() && !prefersReducedMotion(), []);
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const element = ref.current;
+    if (!element || !tilts) return;
+    const box = element.getBoundingClientRect();
+    const px = Math.min(0.5, Math.max(-0.5, (event.clientX - box.left) / box.width - 0.5));
+    const py = Math.min(0.5, Math.max(-0.5, (event.clientY - box.top) / box.height - 0.5));
+    element.style.setProperty('--of-ry', `${(px * 5).toFixed(2)}deg`);
+    element.style.setProperty('--of-rx', `${(-py * 4).toFixed(2)}deg`);
+    element.style.setProperty('--of-lx', `${((px + 0.5) * 100).toFixed(1)}%`);
+    element.style.setProperty('--of-ly', `${((py + 0.5) * 100).toFixed(1)}%`);
+    element.style.setProperty('--of-sx', `${(-px * 16).toFixed(1)}px`);
+    element.style.setProperty('--of-sy', `${(16 - py * 10).toFixed(1)}px`);
+    element.classList.add('is-live');
+  };
+
+  const onPointerLeave = () => {
+    const element = ref.current;
+    if (!element) return;
+    ['--of-ry', '--of-rx', '--of-lx', '--of-ly', '--of-sx', '--of-sy'].forEach((name) => element.style.removeProperty(name));
+    element.classList.remove('is-live');
+  };
+
+  const meta = [offer.team, offer.location, employmentLabel(offer.employment_type, language)].filter(Boolean) as string[];
+  const issued = formatTimestamp(offer.sent_at, language, 'short');
+  const stub: Array<[string, string]> = [
+    [copy.card.issued, issued],
+    [copy.card.start, formatShortDate(offer.start_date, language)],
+    [copy.card.replyBy, formatShortDate(offer.respond_by, language)],
+  ];
+
+  return (
+    <div className="of-card-stage">
+      <div ref={ref} className="of-card" onPointerMove={onPointerMove} onPointerLeave={onPointerLeave}>
+        <div className="of-card-main">
+          <div className="of-card-head">
+            <span className="of-card-brand">
+              <BrandMark />
+              {offer.organisation}
+            </span>
+            <span className="of-card-kind">{copy.kicker}</span>
+          </div>
+          {offer.candidate_name && (
+            <p className="of-card-holder">
+              <span>{copy.card.holder}</span> {offer.candidate_name}
+            </p>
+          )}
+          {offer.position && <p className="of-card-position">{offer.position}</p>}
+          {meta.length > 0 && (
+            <ul className="of-card-meta">
+              {meta.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          )}
+          <Seal organisation={offer.organisation} place="main" />
+        </div>
+        <div className="of-card-stub">
+          <Seal organisation={offer.organisation} place="stub" />
+          <dl className="of-stub-list">
+            <div className="of-stub-item">
+              <dt>{copy.card.reference}</dt>
+              <dd className="of-data">{reference}</dd>
+            </div>
+            <div className="of-stub-code">
+              <CodeStrip seed={seed} />
+            </div>
+            {stub
+              .filter(([, value]) => value)
+              .map(([label, value]) => (
+                <div key={label} className="of-stub-item">
+                  <dt>{label}</dt>
+                  <dd className="of-data">{value}</dd>
+                </div>
+              ))}
+          </dl>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface OfferExperienceProps {
   offer: PublicOffer;
@@ -217,66 +321,90 @@ interface OfferExperienceProps {
 }
 
 const OfferExperience: React.FC<OfferExperienceProps> = ({ offer, preview = false, onRespond, onClosePreview }) => {
-  const language = offer.language === 'zh' ? 'zh' : 'en';
+  const language: OfferLanguage = offer.language === 'zh' ? 'zh' : 'en';
   const copy = copyFor(language);
-  const reduceMotion = prefersReducedMotion();
-  const contentRef = useRef<HTMLDivElement>(null);
+  const animate = useMemo(() => !prefersReducedMotion(), []);
   const salaryRef = useRef<HTMLDivElement>(null);
+  const replyRef = useRef<HTMLElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
-  const [salaryVisible, setSalaryVisible] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const [dialog, setDialog] = useState<OfferDecision | null>(null);
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [burst, setBurst] = useState(0);
+  const [justDecided, setJustDecided] = useState(false);
+  const salaryInView = useInView(salaryRef);
   const now = useNow(1000);
 
+  const seed = useMemo(() => referenceSeed(offer, window.location.pathname), [offer]);
+  const reference = useMemo(() => offerReference(seed), [seed]);
   const firstName = greetingName(offer.candidate_name);
-  const greeting = useTypewriter(copy.greeting(firstName), !reduceMotion);
-  const typing = greeting.length < copy.greeting(firstName).length;
   const salary = offer.salary || null;
-  const amount = useCountUp(salary ? salary.amount : 0, salaryVisible, !reduceMotion);
-  // While counting, show the same precision as the final amount so the number doesn't jitter.
-  const salaryDigits = salary && Math.round(salary.amount) !== salary.amount ? 2 : 0;
-  const countdown = offer.status === 'open' ? countdownTo(offer.respond_by, now) : null;
   const isOpen = offer.status === 'open';
-  const employment = employmentLabel(offer.employment_type, language);
+  const countdown = isOpen ? countdownTo(offer.respond_by, now) : null;
+  const windowLeft = isOpen ? replyWindowLeft(offer.sent_at, offer.respond_by, now) : null;
   const benefits = offer.benefits || [];
-  useReveal(contentRef, offer.status);
+  const paragraphs = offer.letter ? paragraphsOf(offer.letter) : [];
+  const issued = formatTimestamp(offer.sent_at, language);
+  const respondBy = formatLongDate(offer.respond_by, language);
+  const respondedOn = formatTimestamp(offer.responded_at, language);
+  const respondedShort = formatTimestamp(offer.responded_at, language, 'short');
 
-  useEffect(() => {
-    const element = salaryRef.current;
-    if (!element || !('IntersectionObserver' in window)) {
-      setSalaryVisible(true);
-      return undefined;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setSalaryVisible(true);
-          observer.disconnect();
-        }
-      },
-      { threshold: 0.35 }
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
+  const facts: Array<[string, string]> = [
+    [copy.team, offer.team || ''],
+    [copy.location, offer.location || ''],
+    [copy.employment, employmentLabel(offer.employment_type, language)],
+    [copy.reportsTo, offer.reports_to || ''],
+    [copy.startDate, formatLongDate(offer.start_date, language)],
+    [copy.replyByLabel, respondBy],
+  ].filter(([, value]) => value) as Array<[string, string]>;
+
+  const openDialog = (decision: OfferDecision) => {
+    openerRef.current = document.activeElement as HTMLElement | null;
+    setError('');
+    setDialog(decision);
+  };
 
   const closeDialog = useCallback(() => {
     if (submitting) return;
     setDialog(null);
     setError('');
+    const opener = openerRef.current;
+    if (opener && document.contains(opener)) opener.focus();
   }, [submitting]);
 
   useEffect(() => {
     if (!dialog) return undefined;
     noteRef.current?.focus();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeDialog();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeDialog();
+        return;
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return;
+      const focusable = Array.prototype.slice.call(
+        dialogRef.current.querySelectorAll('button:not([disabled]), textarea, [href]')
+      ) as HTMLElement[];
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [dialog, closeDialog]);
 
   const submit = async () => {
@@ -285,11 +413,10 @@ const OfferExperience: React.FC<OfferExperienceProps> = ({ offer, preview = fals
     setError('');
     try {
       await onRespond(dialog, note.trim());
-      const decision = dialog;
       setDialog(null);
       setNote('');
-      if (decision === 'accept') setBurst(Date.now());
-      window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+      setJustDecided(true);
+      openerRef.current = null;
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : copy.respondFailed);
     } finally {
@@ -297,268 +424,243 @@ const OfferExperience: React.FC<OfferExperienceProps> = ({ offer, preview = fals
     }
   };
 
-  const facts: Array<[string, string]> = [
-    [copy.startDate, formatLongDate(offer.start_date, language)],
-    [copy.replyBy, formatLongDate(offer.respond_by, language)],
-    [copy.team, offer.team || ''],
-    [copy.location, offer.location || ''],
-    [copy.employment, employment],
-    [copy.reportsTo, offer.reports_to || ''],
-  ];
-  const visibleFacts = facts.filter(([, value]) => value);
-  const chips = [offer.team, offer.location, employment].filter(Boolean) as string[];
-
-  const decisionButtons = (
-    <div className="ox-actions">
-      <button
-        type="button"
-        className="ox-btn ox-btn-primary"
-        onClick={() => setDialog('accept')}
-        disabled={preview}
-        title={preview ? copy.previewBanner : undefined}
-      >
-        <Check className="ox-btn-icon" aria-hidden="true" />
-        {copy.accept}
-      </button>
-      <button
-        type="button"
-        className="ox-btn ox-btn-ghost"
-        onClick={() => setDialog('decline')}
-        disabled={preview}
-        title={preview ? copy.previewBanner : undefined}
-      >
-        {copy.decline}
-      </button>
-    </div>
-  );
+  const scrollToReply = () => {
+    replyRef.current?.scrollIntoView({ behavior: animate ? 'smooth' : 'auto', block: 'start' });
+  };
 
   return (
-    <OfferShell className={preview ? 'ox--preview' : ''} lang={language === 'zh' ? 'zh-CN' : 'en'}>
+    <OfferShell language={language} className={preview ? 'of--preview' : ''}>
       {preview && (
-        <div className="ox-preview-bar" role="note">
+        <div className="of-preview" role="note">
           <span>{copy.previewBanner}</span>
           {onClosePreview && (
-            <button type="button" onClick={onClosePreview} className="ox-preview-close" aria-label={copy.closePreview}>
+            <button type="button" onClick={onClosePreview} className="of-preview-close" aria-label={copy.closePreview}>
               <X aria-hidden="true" />
             </button>
           )}
         </div>
       )}
-      <OfferHeader copy={copy} organisation={offer.organisation} />
 
-      <div ref={contentRef}>
-        <section className="ox-hero">
-          <div className="ox-hero-text">
-            <p className="ox-kicker">
-              <span className="ox-kicker-line" />
-              {copy.kicker}
-            </p>
-            <h1 className="ox-greeting" aria-label={copy.greeting(firstName)}>
-              <span aria-hidden="true">{greeting}</span>
-              <span className={`ox-caret${typing ? '' : ' ox-caret--idle'}`} aria-hidden="true" />
-            </h1>
-            <p className="ox-intro">{copy.intro(offer.organisation)}</p>
-            <p className="ox-role">{offer.position}</p>
-            {chips.length > 0 && (
-              <ul className="ox-chips">
-                {chips.map((chip) => (
-                  <li key={chip} className="ox-chip">
-                    <span className="ox-chip-dot" />
-                    {chip}
-                  </li>
-                ))}
-              </ul>
-            )}
+      <header className="of-top">
+        <span className="of-brand">
+          <BrandMark />
+          <span>{offer.organisation}</span>
+        </span>
+        <span className="of-top-note">{copy.confidential}</span>
+      </header>
 
-            {offer.status === 'accepted' && (
-              <div className="ox-status ox-status--accepted" role="status">
-                <span className="ox-status-icon">
-                  <Check aria-hidden="true" />
-                </span>
-                <div>
-                  <p className="ox-status-title">{copy.acceptedTitle(firstName)}</p>
-                  <p>{copy.acceptedBody}</p>
-                  {offer.responded_at && <p className="ox-status-meta">{copy.acceptedOn(formatTimestamp(offer.responded_at, language))}</p>}
-                </div>
-              </div>
-            )}
-            {offer.status === 'declined' && (
-              <div className="ox-status ox-status--declined" role="status">
-                <div>
-                  <p className="ox-status-title">{copy.declinedTitle}</p>
-                  <p>{copy.declinedBody}</p>
-                  {offer.responded_at && <p className="ox-status-meta">{copy.declinedOn(formatTimestamp(offer.responded_at, language))}</p>}
-                </div>
-              </div>
-            )}
-
-            {isOpen && (
-              <>
-                {decisionButtons}
-                {countdown && (
-                  <div className="ox-countdown" aria-live="off">
-                    {countdown.passed ? (
-                      <span className="ox-countdown-label">{copy.replyDatePassed}</span>
-                    ) : (
-                      <>
-                        <span className="ox-countdown-label">{copy.replyWithin}</span>
-                        {(
-                          [
-                            [countdown.days, copy.units.days],
-                            [countdown.hours, copy.units.hours],
-                            [countdown.minutes, copy.units.minutes],
-                            [countdown.seconds, copy.units.seconds],
-                          ] as Array<[number, string]>
-                        ).map(([value, unit]) => (
-                          <span key={unit} className="ox-countdown-cell">
-                            <strong>{twoDigits(value)}</strong>
-                            <small>{unit}</small>
-                          </span>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="ox-hud" aria-hidden="true">
-            <div className="ox-hud-ring ox-hud-ring--glow" />
-            <div className="ox-hud-ring ox-hud-ring--dash" />
-            <div className="ox-hud-ring ox-hud-ring--ticks" />
-            <div className="ox-hud-orbit" />
-            <div className="ox-hud-orbit ox-hud-orbit--slow" />
-            <div className="ox-hud-core">
-              <OfferMark size={64} spin />
-              <span>{copy.kicker}</span>
-            </div>
-          </div>
-
-          <a href="#ox-details" className="ox-scroll">
-            {copy.scroll}
-            <ArrowDown aria-hidden="true" />
-          </a>
+      <main className="of-main">
+        <section className="of-lead">
+          <p className="of-lead-meta">
+            <span>{copy.kicker}</span>
+            {issued && <span>{copy.issued(issued)}</span>}
+          </p>
+          <h1 className="of-title">{copy.greeting(firstName)}</h1>
+          <p className="of-intro">
+            {copy.intro(offer.organisation, offer.position)}
+            {isOpen && respondBy && `${copy.sentenceGap}${copy.replyRequest(respondBy)}`}
+          </p>
+          {isOpen && (
+            <button type="button" className="of-jump" onClick={scrollToReply}>
+              {copy.jump}
+              <ArrowDown aria-hidden="true" />
+            </button>
+          )}
         </section>
 
-        <section id="ox-details" className="ox-section">
-          <div className="ox-grid">
-            {salary && (
-              <div ref={salaryRef} className="ox-card ox-card--salary ox-reveal">
-                <p className="ox-label">{copy.compensation}</p>
-                <p className="ox-sublabel">{copy.baseSalary}</p>
-                <p className="ox-amount">
-                  <span className="ox-currency">{salary.currency}</span>
-                  <span className="ox-amount-value">{formatAmount(amount, language, salaryDigits)}</span>
-                </p>
-                <p className="ox-period">{periodLabel(salary.period, language)}</p>
-                <div className={`ox-bar${salaryVisible ? ' is-full' : ''}`}>
-                  <span />
-                </div>
-                {offer.extra_compensation && (
-                  <p className="ox-extra">
-                    <span>{copy.alsoIncluded}</span>
-                    {offer.extra_compensation}
+        <Credential offer={offer} copy={copy} language={language} reference={reference} seed={seed} />
+
+        {(salary || offer.extra_compensation) && (
+          <section className="of-section" aria-labelledby="of-h-compensation">
+            <h2 id="of-h-compensation" className="of-h2">
+              {copy.compensation}
+            </h2>
+            <div ref={salaryRef} className="of-salary">
+              {salary && (
+                <>
+                  <p className="of-salary-label">{copy.baseSalary}</p>
+                  <p className="of-amount">
+                    <span className="of-visually-hidden">
+                      {salary.currency} {formatAmount(salary.amount, language)} {periodLabel(salary.period, language)}
+                    </span>
+                    <span className="of-amount-row" aria-hidden="true">
+                      <span className="of-currency">{salary.currency}</span>
+                      <Odometer value={formatAmount(salary.amount, language)} run={salaryInView} animate={animate} />
+                      <span className="of-period">{periodLabel(salary.period, language)}</span>
+                    </span>
                   </p>
-                )}
-                <div className="ox-wave" aria-hidden="true">
-                  <svg viewBox="0 0 1200 70" preserveAspectRatio="none">
-                    <path d="M0 35 Q75 5 150 35 T300 35 T450 35 T600 35 T750 35 T900 35 T1050 35 T1200 35" />
-                    <path d="M0 42 Q150 14 300 42 T600 42 T900 42 T1200 42" />
-                  </svg>
+                </>
+              )}
+              {offer.extra_compensation && (
+                <p className={salary ? 'of-extra' : 'of-extra of-extra--alone'}>
+                  {salary && <span>{copy.alsoIncluded}</span>}
+                  {offer.extra_compensation}
+                </p>
+              )}
+            </div>
+          </section>
+        )}
+
+        {facts.length > 0 && (
+          <section className="of-section" aria-labelledby="of-h-role">
+            <h2 id="of-h-role" className="of-h2">
+              {copy.role}
+            </h2>
+            <dl className="of-facts">
+              {facts.map(([label, value]) => (
+                <div key={label} className="of-fact">
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
                 </div>
-              </div>
-            )}
-            {visibleFacts.length > 0 && (
-              <div className={`ox-card ox-card--facts ox-reveal${salary ? '' : ' ox-card--wide'}`}>
-                <p className="ox-label">{copy.role}</p>
-                <dl className="ox-facts">
-                  {visibleFacts.map(([label, value]) => (
-                    <div key={label} className="ox-fact">
-                      <dt>{label}</dt>
-                      <dd>{value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-            )}
-          </div>
-        </section>
+              ))}
+            </dl>
+          </section>
+        )}
 
         {benefits.length > 0 && (
-          <section className="ox-section">
-            <h2 className="ox-section-title ox-reveal">{copy.benefits}</h2>
-            <ul className="ox-benefits">
+          <section className="of-section" aria-labelledby="of-h-benefits">
+            <h2 id="of-h-benefits" className="of-h2">
+              {copy.benefits}
+            </h2>
+            <ul className="of-benefits">
               {benefits.map((benefit, index) => (
-                <li key={`${benefit}-${index}`} className="ox-benefit ox-reveal" style={{ transitionDelay: `${index * 70}ms` }}>
-                  <span className="ox-benefit-icon">
-                    <Check aria-hidden="true" />
-                  </span>
-                  {benefit}
-                </li>
+                <li key={`${benefit}-${index}`}>{benefit}</li>
               ))}
             </ul>
           </section>
         )}
 
-        {offer.letter && (
-          <section className="ox-section">
-            <h2 className="ox-section-title ox-reveal">{copy.note}</h2>
-            <div className="ox-card ox-letter ox-reveal">
-              <p className="ox-letter-body">{offer.letter}</p>
+        {paragraphs.length > 0 && (
+          <section className="of-section" aria-labelledby="of-h-note">
+            <h2 id="of-h-note" className="of-h2">
+              {copy.note(offer.sender_name)}
+            </h2>
+            <div className="of-letter">
+              {paragraphs.map((paragraph, index) => (
+                <p key={index}>{paragraph}</p>
+              ))}
             </div>
           </section>
         )}
 
-        {isOpen && (
-          <section className="ox-section ox-decide ox-reveal">
-            <h2>{copy.decideTitle}</h2>
-            <p>{copy.decideBody}</p>
-            {decisionButtons}
-          </section>
-        )}
+        <section ref={replyRef} id="of-reply" className="of-section of-section--reply" aria-labelledby="of-h-reply">
+          <div className="of-slip">
+            <h2 id="of-h-reply" className="of-h2">
+              {copy.replyTitle}
+            </h2>
 
-        <footer className="ox-footer">
-          <p>{copy.privateNote}</p>
-          <p>© {new Date().getFullYear()} {offer.organisation}</p>
-        </footer>
-      </div>
+            {isOpen && (
+              <>
+                {countdown && (
+                  <div className="of-window">
+                    <div className="of-window-row">
+                      <span>{countdown.passed ? copy.replyDatePassed : copy.replyBy(respondBy)}</span>
+                      {!countdown.passed && (
+                        <span className="of-data of-window-left">{copy.remaining(countdown.days, clockOf(countdown))}</span>
+                      )}
+                    </div>
+                    <div className="of-line" aria-hidden="true">
+                      <span style={{ width: `${(countdown.passed ? 0 : windowLeft === null ? 1 : windowLeft) * 100}%` }} />
+                    </div>
+                  </div>
+                )}
+                <p className="of-slip-body">{copy.decideBody}</p>
+                <div className="of-actions">
+                  <button
+                    type="button"
+                    className="of-btn of-btn--primary"
+                    onClick={() => openDialog('accept')}
+                    disabled={preview}
+                    title={preview ? copy.previewBanner : undefined}
+                  >
+                    {copy.accept}
+                  </button>
+                  <button
+                    type="button"
+                    className="of-btn of-btn--secondary"
+                    onClick={() => openDialog('decline')}
+                    disabled={preview}
+                    title={preview ? copy.previewBanner : undefined}
+                  >
+                    {copy.decline}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {offer.status === 'accepted' && (
+              <div className="of-decided" role="status">
+                <Stamp label={copy.stampAccepted} date={respondedShort} tone="accent" pressed={justDecided && animate} />
+                <div>
+                  <p className="of-decided-title">{copy.acceptedTitle(firstName)}</p>
+                  <p className="of-slip-body">{copy.acceptedBody}</p>
+                  {respondedOn && <p className="of-decided-meta">{copy.acceptedOn(respondedOn)}</p>}
+                </div>
+              </div>
+            )}
+
+            {offer.status === 'declined' && (
+              <div className="of-decided" role="status">
+                <Stamp label={copy.stampDeclined} date={respondedShort} tone="ink" pressed={justDecided && animate} />
+                <div>
+                  <p className="of-decided-title">{copy.declinedTitle}</p>
+                  <p className="of-slip-body">{copy.declinedBody}</p>
+                  {respondedOn && <p className="of-decided-meta">{copy.declinedOn(respondedOn)}</p>}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
+
+      <footer className="of-foot">
+        <p>{copy.privateNote}</p>
+        <p>
+          © {new Date().getFullYear()} {offer.organisation}
+        </p>
+      </footer>
 
       {dialog && (
-        <div className="ox-backdrop" role="presentation" onMouseDown={closeDialog}>
+        <div className="of-backdrop" role="presentation" onMouseDown={closeDialog}>
           <div
-            className="ox-card ox-dialog"
+            ref={dialogRef}
+            className="of-dialog"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="ox-dialog-title"
+            aria-labelledby="of-dialog-title"
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <h2 id="ox-dialog-title">{dialog === 'accept' ? copy.acceptTitle : copy.declineTitle}</h2>
-            <p>{dialog === 'accept' ? copy.acceptBody(offer.position) : copy.declineBody}</p>
-            <label htmlFor="ox-note" className="ox-field-label">
+            <h2 id="of-dialog-title">{dialog === 'accept' ? copy.acceptTitle : copy.declineTitle}</h2>
+            <p className="of-dialog-body">
+              {dialog === 'accept' ? copy.acceptBody(offer.position, offer.organisation) : copy.declineBody}
+            </p>
+            <label htmlFor="of-note" className="of-label">
               {copy.messageLabel}
             </label>
             <textarea
-              id="ox-note"
+              id="of-note"
               ref={noteRef}
               value={note}
               onChange={(event) => setNote(event.target.value)}
               maxLength={1000}
               rows={4}
-              className="ox-textarea"
+              className="of-textarea"
             />
+            <p className="of-counter of-data" aria-hidden="true">
+              {note.length} / 1000
+            </p>
             {error && (
-              <p role="alert" className="ox-error">
+              <p role="alert" className="of-error">
                 {error}
               </p>
             )}
-            <div className="ox-dialog-actions">
-              <button type="button" className="ox-btn ox-btn-ghost" onClick={closeDialog} disabled={submitting}>
+            <div className="of-dialog-actions">
+              <button type="button" className="of-btn of-btn--secondary" onClick={closeDialog} disabled={submitting}>
                 {copy.cancel}
               </button>
               <button
                 type="button"
-                className={`ox-btn ${dialog === 'accept' ? 'ox-btn-primary' : 'ox-btn-danger'}`}
+                className={`of-btn ${dialog === 'accept' ? 'of-btn--primary' : 'of-btn--danger'}`}
                 onClick={submit}
                 disabled={submitting}
               >
@@ -568,7 +670,6 @@ const OfferExperience: React.FC<OfferExperienceProps> = ({ offer, preview = fals
           </div>
         </div>
       )}
-      <Celebration burst={burst} />
     </OfferShell>
   );
 };

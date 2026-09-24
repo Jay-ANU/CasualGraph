@@ -55,7 +55,13 @@ MAX_LETTER_CHARS = 10_000
 MAX_NOTE_CHARS = 1_000
 MAX_SALARY = Decimal("10000000000")
 
-CURRENCIES = ("AUD", "USD", "CNY", "EUR", "GBP", "HKD", "SGD", "NZD", "CAD", "JPY")
+# Candidates can be anywhere; keep in sync with CURRENCIES in the offer page's offerContent.ts.
+CURRENCIES = (
+    "AUD", "USD", "EUR", "GBP", "CNY", "HKD", "SGD", "JPY", "CAD", "NZD",
+    "AED", "BRL", "CHF", "CZK", "DKK", "IDR", "ILS", "INR", "KRW", "MXN",
+    "MYR", "NOK", "PHP", "PLN", "SAR", "SEK", "THB", "TRY", "TWD", "VND",
+    "ZAR",
+)
 SALARY_PERIODS = ("year", "month", "week", "day", "hour")
 EMPLOYMENT_TYPES = ("full_time", "part_time", "internship", "contract", "casual")
 
@@ -90,9 +96,11 @@ _ZH_WEEKDAYS = ("一", "二", "三", "四", "五", "六", "日")
 
 _COPY: Dict[str, Dict[str, Any]] = {
     "en": {
-        "heading": "Offer letter",
-        "confidential": "Confidential",
+        "heading": "Offer of employment",
+        "confidential": "Private and confidential",
+        "preheader": "Your offer of employment from {organisation}.",
         "prepared_for": "Prepared for {name}",
+        "reference": "Reference",
         "position": "Position",
         "team": "Team",
         "employment_type": "Employment",
@@ -100,10 +108,13 @@ _COPY: Dict[str, Dict[str, Any]] = {
         "start_date": "Start date",
         "respond_by": "Please reply by",
         "cta": "View your offer",
-        "link_hint": "Button not working? Open this link:",
-        "text_link": "View your offer, including compensation and benefits:",
+        "link_hint": "If the button does not open, copy this link into your browser:",
+        "text_link": "Your offer page, with the full details including compensation and benefits:",
         "separator": ": ",
-        "footer": "Sent by {sender} on behalf of {organisation}. Reply to this email with any questions.",
+        "footer": (
+            "Sent by {sender} on behalf of {organisation}. Reply to this email with any questions. "
+            "The offer page is for you alone; please don’t forward the link."
+        ),
         "employment_types": {
             "full_time": "Full-time",
             "part_time": "Part-time",
@@ -115,8 +126,10 @@ _COPY: Dict[str, Dict[str, Any]] = {
     },
     "zh": {
         "heading": "录用通知",
-        "confidential": "机密",
+        "confidential": "私人机密",
+        "preheader": "来自 {organisation} 的录用通知。",
         "prepared_for": "致 {name}",
+        "reference": "编号",
         "position": "职位",
         "team": "团队",
         "employment_type": "用工类型",
@@ -124,10 +137,10 @@ _COPY: Dict[str, Dict[str, Any]] = {
         "start_date": "入职日期",
         "respond_by": "回复截止日期",
         "cta": "查看录用详情",
-        "link_hint": "按钮无法打开？请访问：",
+        "link_hint": "按钮无法打开？请将此链接复制到浏览器：",
         "text_link": "查看完整录用详情（含薪酬与福利）：",
         "separator": "：",
-        "footer": "本邮件由 {sender} 代表 {organisation} 发送。如有疑问，请直接回复本邮件。",
+        "footer": "本邮件由 {sender} 代表 {organisation} 发送。如有疑问，请直接回复本邮件。录用页面仅供您本人查看，请勿转发链接。",
         "employment_types": {
             "full_time": "全职",
             "part_time": "兼职",
@@ -139,14 +152,16 @@ _COPY: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# The email is set like the offer page: warm paper, graphite ink, hairlines, a serif for the
+# letter. Only fonts the reader already has are named; nothing is fetched from the network.
 _FONT_SANS = (
-    "-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,"
+    "'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,"
     "'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif"
 )
-_FONT_SERIF = "Georgia,'Times New Roman','Songti SC',serif"
-_FONT_MONO = "'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace"
+_FONT_SERIF = "'Newsreader','Iowan Old Style','Palatino Linotype',Georgia,'Times New Roman','Songti SC',serif"
+_FONT_MONO = "'IBM Plex Mono','SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace"
 _PARAGRAPH_STYLE = (
-    "margin:0 0 16px;font-size:15px;line-height:1.7;color:#1F2937;"
+    f"margin:0 0 16px;font-family:{_FONT_SERIF};font-size:17px;line-height:1.65;color:#3D3B36;"
     "word-wrap:break-word;overflow-wrap:break-word;"
 )
 _MISSING_STYLE = "background-color:#FAF1DC;color:#8A5A00;border-radius:4px;padding:1px 4px;"
@@ -471,95 +486,122 @@ def compose_email_bodies(
     ]
     details = [(label, value) for label, value in details if value]
     footer = copy["footer"].format(sender=sender_name or ORGANISATION_NAME, organisation=ORGANISATION_NAME)
+    preheader = copy["preheader"].format(organisation=ORGANISATION_NAME)
+
+    def reference_for(token: str) -> str:
+        """The same short reference the offer page derives from the token (FNV-1a, Crockford base 32)."""
+
+        def fnv1a(text: str) -> int:
+            value = 0x811C9DC5
+            for char in text:
+                value = ((value ^ ord(char)) * 0x01000193) & 0xFFFFFFFF
+            return value
+
+        alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+        first = fnv1a(token)
+        second = fnv1a(f"{token}\0{first}")
+        chars = "".join(alphabet[(first >> (i * 5)) & 31] for i in range(4))
+        chars += "".join(alphabet[(second >> (i * 5)) & 31] for i in range(4))
+        return f"{chars[:4]}-{chars[4:]}"
+
+    token = offer_url.rstrip("/").rsplit("/", 1)[-1]
+    reference = reference_for(token) if is_offer_token(token) else ""
 
     text_lines = [segments_to_text(letter_segments).strip(), "", copy["text_link"], offer_url, "", "----"]
     text_lines.append(f"{copy['position']}{copy['separator']}{position or '[position]'}")
     text_lines.extend(f"{label}{copy['separator']}{value}" for label, value in details)
+    if reference:
+        text_lines.append(f"{copy['reference']}{copy['separator']}{reference}")
     text_lines.extend(["", footer])
     text = "\n".join(text_lines) + "\n"
 
     position_html = html.escape(position) if position else _missing_html(PLACEHOLDER_LABELS["position"])
     prepared_for = copy["prepared_for"].format(name=candidate_name) if candidate_name else ""
+    prepared_html = f'<p style="margin:0 0 24px;font-size:14px;color:#5E5B54;">{html.escape(prepared_for)}</p>\n' if prepared_for else ""
+    kicker_html = html.escape(copy["heading"])
+    if reference:
+        kicker_html += (
+            f'&nbsp;&nbsp;·&nbsp;&nbsp;{html.escape(copy["reference"])} '
+            f'<span style="font-family:{_FONT_MONO};color:#5E5B54;">{reference}</span>'
+        )
     detail_rows = "".join(
         "<tr>"
-        f'<td style="padding:11px 16px 11px 0;border-top:1px solid #EEF0F5;font-size:13px;color:#6B7280;'
+        f'<td style="padding:10px 16px 10px 0;border-top:1px solid #E7E4DD;font-size:13px;color:#87837A;'
         f'white-space:nowrap;vertical-align:top;">{html.escape(label)}</td>'
-        f'<td style="padding:11px 0;border-top:1px solid #EEF0F5;font-size:14px;color:#111827;'
+        f'<td style="padding:10px 0;border-top:1px solid #E7E4DD;font-size:14px;color:#1A1915;'
         f'vertical-align:top;">{html.escape(value)}</td>'
         "</tr>"
         for label, value in details
     )
     details_html = (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="margin:0 0 26px;border-bottom:1px solid #EEF0F5;">{detail_rows}</table>'
+        f'style="margin:0 0 28px;border-bottom:1px solid #E7E4DD;">{detail_rows}</table>'
         if detail_rows
         else ""
     )
     safe_url = html.escape(offer_url, quote=True)
     hero_html = (
-        f'<tr><td style="padding:0;line-height:0;font-size:0;background-color:#060812;border-radius:16px 16px 0 0;">'
+        '<tr><td style="padding:0;line-height:0;font-size:0;background-color:#F5F3EF;border-radius:12px 12px 0 0;">'
         f'<img src="cid:{HERO_CID}" width="600" alt="" '
-        'style="display:block;width:100%;max-width:600px;height:auto;border:0;border-radius:16px 16px 0 0;"></td></tr>'
+        'style="display:block;width:100%;max-width:600px;height:auto;border:0;border-radius:12px 12px 0 0;"></td></tr>'
         if hero_image_bytes()
         else ""
     )
     html_body = f"""<!DOCTYPE html>
-<html lang="{'zh-CN' if language == 'zh' else 'en'}">
+<html lang="{'zh-CN' if language == 'zh' else 'en'}" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
 <title>{html.escape(subject)}</title>
+<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
 <style>
-@keyframes cg-cta-glow {{
-  0%, 100% {{ box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }}
-  50% {{ box-shadow: 0 0 26px 2px rgba(99, 102, 241, 0.45); }}
-}}
-.cg-cta {{ animation: cg-cta-glow 2.6s ease-in-out infinite; }}
-@media (prefers-reduced-motion: reduce) {{ .cg-cta {{ animation: none; }} }}
+body {{ margin: 0; padding: 0; }}
+@media (max-width: 620px) {{ .cg-pad {{ padding-left: 24px !important; padding-right: 24px !important; }} }}
 </style>
 </head>
-<body style="margin:0;padding:0;background-color:#070A12;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#070A12;">
+<body style="margin:0;padding:0;background-color:#EFEDE7;">
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{html.escape(preheader)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#EFEDE7;">
 <tr>
-<td align="center" style="padding:32px 12px 40px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;font-family:{_FONT_SANS};">
+<td align="center" style="padding:28px 12px 36px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;font-family:{_FONT_SANS};">
 <tr>
-<td style="padding:0 4px 16px;">
+<td style="padding:0 4px 14px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr>
-<td style="font-size:15px;font-weight:600;color:#F8FAFC;">{ORGANISATION_NAME}</td>
-<td align="right" style="font-family:{_FONT_MONO};font-size:11px;letter-spacing:2px;color:#67E8F9;text-transform:uppercase;">{html.escape(copy['confidential'])}</td>
+<td style="font-size:15px;font-weight:600;color:#1A1915;">{ORGANISATION_NAME}</td>
+<td align="right" style="font-size:12px;color:#87837A;">{html.escape(copy['confidential'])}</td>
 </tr>
 </table>
 </td>
 </tr>
 <tr>
-<td style="background-color:#FFFFFF;border-radius:16px;">
+<td style="border:1px solid #E7E4DD;border-radius:12px;background-color:#FFFFFF;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
 {hero_html}
 <tr>
-<td style="padding:30px 32px 10px;">
-<p style="margin:0 0 8px;font-family:{_FONT_MONO};font-size:12px;letter-spacing:2px;color:#0891B2;text-transform:uppercase;">{html.escape(copy['heading'])}</p>
-<h1 style="margin:0 0 6px;font-family:{_FONT_SERIF};font-size:28px;font-weight:400;line-height:1.2;color:#0B1020;">{position_html}</h1>
-<p style="margin:0 0 22px;font-size:13px;color:#6B7280;">{html.escape(prepared_for)}</p>
-{details_html}
+<td class="cg-pad" style="padding:30px 36px 10px;">
+<p style="margin:0 0 10px;font-size:13px;line-height:1.5;color:#87837A;">{kicker_html}</p>
+<h1 style="margin:0 0 {"6px" if prepared_for else "24px"};font-family:{_FONT_SERIF};font-size:30px;font-weight:400;line-height:1.2;letter-spacing:-0.2px;color:#1A1915;">{position_html}</h1>
+{prepared_html}{details_html}
 {_letter_html(letter_segments)}
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:10px 0 18px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:14px 0 18px;">
 <tr>
-<td class="cg-cta" align="center" bgcolor="#4F46E5" style="border-radius:10px;background-color:#4F46E5;background-image:linear-gradient(120deg,#06B6D4 0%,#6366F1 55%,#8B5CF6 100%);">
-<a href="{safe_url}" target="_blank" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;letter-spacing:0.2px;color:#FFFFFF;text-decoration:none;border-radius:10px;">{html.escape(copy['cta'])} &rarr;</a>
+<td align="center" bgcolor="#1A1915" style="border-radius:8px;background-color:#1A1915;">
+<a href="{safe_url}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:{_FONT_SANS};font-size:15px;font-weight:600;color:#FFFFFF;text-decoration:none;border-radius:8px;">{html.escape(copy['cta'])}</a>
 </td>
 </tr>
 </table>
-<p style="margin:0 0 22px;font-size:12px;line-height:1.6;color:#6B7280;">{html.escape(copy['link_hint'])} <a href="{safe_url}" target="_blank" style="color:#4F46E5;word-break:break-all;">{html.escape(offer_url)}</a></p>
+<p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:#87837A;">{html.escape(copy['link_hint'])} <a href="{safe_url}" target="_blank" style="color:#5E5B54;word-break:break-all;">{html.escape(offer_url)}</a></p>
 </td>
 </tr>
 </table>
 </td>
 </tr>
 <tr>
-<td style="padding:18px 4px 0;font-size:12px;line-height:1.6;color:#8B93A7;">{html.escape(footer)}</td>
+<td style="padding:18px 4px 0;font-size:12px;line-height:1.6;color:#87837A;">{html.escape(footer)}</td>
 </tr>
 </table>
 </td>

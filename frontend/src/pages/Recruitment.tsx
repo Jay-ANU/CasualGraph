@@ -4,7 +4,15 @@ import { useAuth } from '../contexts/AuthContext';
 import AdminTabs from '../components/AdminTabs';
 import useDocumentTitle from '../utils/useDocumentTitle';
 import OfferExperience from './offer/OfferExperience';
-import { CURRENCIES, EMPLOYMENT_TYPES, OfferSalary, PublicOffer, SALARY_PERIODS } from './offer/offerContent';
+import {
+  CURRENCIES,
+  EMPLOYMENT_TYPES,
+  OfferSalary,
+  PublicOffer,
+  SALARY_PERIODS,
+  offerReference,
+  tokenFromPath,
+} from './offer/offerContent';
 import {
   MANUAL_OFFER_STATUSES,
   OFFER_PLACEHOLDERS,
@@ -92,6 +100,17 @@ const formatDateTime = (value?: string | null) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+};
+
+// The short reference printed on the candidate's offer page and in the email.
+const referenceOf = (offerUrl?: string | null) => {
+  if (!offerUrl) return '';
+  try {
+    const token = tokenFromPath(new URL(offerUrl).pathname);
+    return token ? offerReference(token) : '';
+  } catch {
+    return '';
+  }
 };
 
 const readJson = async (response: Response) => {
@@ -1098,6 +1117,7 @@ const Recruitment: React.FC = () => {
                             )}
                             <dl className="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
                               {[
+                                ['Reference', referenceOf(offer.offer_url)],
                                 ['Salary', offer.salary?.formatted],
                                 ['Also included', offer.extra_compensation],
                                 ['Team', offer.team],

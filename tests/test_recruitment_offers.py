@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import smtplib
-import uuid
 from contextlib import ExitStack, contextmanager
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 import aiosqlite
@@ -861,3 +862,14 @@ def test_http_offer_page_round_trip(tmp_path):
     assert hero.status_code == 200 and hero.headers["content-type"] == "image/gif"
     assert preview.json()["page"]["benefits"] == ["Flexible hours", "Conference budget"]
     assert "http://localhost:3000/offer/preview" in preview.json()["html"]
+
+
+def test_frontend_lists_match_the_backend():
+    """The admin form and offer page offer exactly the currencies and placeholders the backend accepts."""
+    root = Path(__file__).resolve().parents[1] / "frontend" / "src" / "pages"
+    content = (root / "offer" / "offerContent.ts").read_text(encoding="utf-8")
+    currencies = re.search(r"export const CURRENCIES = \[(.*?)\];", content, re.S).group(1)
+    assert tuple(re.findall(r"'([A-Z]{3})'", currencies)) == offers.CURRENCIES
+    templates = (root / "recruitment" / "offerTemplates.ts").read_text(encoding="utf-8")
+    placeholders = re.search(r"export const OFFER_PLACEHOLDERS[^=]*= \[(.*?)\];", templates, re.S).group(1)
+    assert re.findall(r"key: '([a-z_]+)'", placeholders) == list(offers.PLACEHOLDER_LABELS)

@@ -50,45 +50,67 @@ export const SALARY_PERIODS: Array<{ value: string; en: string; zh: string }> = 
   { value: 'hour', en: 'per hour', zh: '每小时' },
 ];
 
-export const CURRENCIES = ['AUD', 'USD', 'CNY', 'EUR', 'GBP', 'HKD', 'SGD', 'NZD', 'CAD', 'JPY'];
+// Candidates can be anywhere: the common currencies first, then the rest alphabetically.
+// Keep in sync with CURRENCIES in recruitment_offers.py.
+export const CURRENCIES = [
+  'AUD', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'SGD', 'JPY', 'CAD', 'NZD',
+  'AED', 'BRL', 'CHF', 'CZK', 'DKK', 'IDR', 'ILS', 'INR', 'KRW', 'MXN',
+  'MYR', 'NOK', 'PHP', 'PLN', 'SAR', 'SEK', 'THB', 'TRY', 'TWD', 'VND',
+  'ZAR',
+];
 
 export const OFFER_COPY = {
   en: {
-    confidential: 'Confidential offer',
+    confidential: 'Private and confidential',
     kicker: 'Offer of employment',
-    greeting: (name: string) => `Welcome aboard, ${name}.`,
-    intro: (organisation: string) => `${organisation} would love you to join as`,
-    accept: 'Accept offer',
+    issued: (date: string) => `Issued ${date}`,
+    greeting: (name: string) => (name ? `${name}, we would like you to join us.` : 'We would like you to join us.'),
+    intro: (organisation: string, position: string) =>
+      position
+        ? `${organisation} is offering you the position of ${position}. Everything is set out below.`
+        : `${organisation} is offering you a position. Everything is set out below.`,
+    replyRequest: (date: string) => `Please let us know by ${date}.`,
+    sentenceGap: ' ',
+    card: {
+      reference: 'Reference',
+      issued: 'Issued',
+      start: 'Start',
+      replyBy: 'Reply by',
+      holder: 'Prepared for',
+    },
+    accept: 'Accept the offer',
     decline: 'Decline',
-    replyWithin: 'Reply within',
-    replyDatePassed: 'The reply date has passed',
-    units: { days: 'days', hours: 'hrs', minutes: 'min', seconds: 'sec' },
-    scroll: 'See the details',
+    jump: 'Reply to this offer',
+    replyTitle: 'Your reply',
+    replyBy: (date: string) => `Reply by ${date}`,
+    remaining: (days: number, clock: string) => (days > 0 ? `${days} ${days === 1 ? 'day' : 'days'} ${clock} left` : `${clock} left`),
+    replyDatePassed: 'The reply date has passed. You can still answer, and the team will see it.',
     compensation: 'Compensation',
     baseSalary: 'Base salary',
     alsoIncluded: 'Also included',
     role: 'The role',
     startDate: 'Start date',
-    replyBy: 'Reply by',
+    replyByLabel: 'Reply by',
     reportsTo: 'Reports to',
     location: 'Location',
     employment: 'Employment',
     team: 'Team',
     benefits: 'Benefits',
-    note: 'A note from the team',
-    signature: (sender: string, organisation: string) => `${sender}, ${organisation}`,
-    decideTitle: 'Ready to decide?',
+    note: (sender: string) => (sender ? `A note from ${sender}` : 'A note from the team'),
     decideBody: 'Your answer goes straight to the team. You can add a message if you like.',
     messageLabel: 'Message to the team (optional)',
     acceptTitle: 'Accept this offer?',
-    acceptBody: (position: string) => `You are accepting the position of ${position}.`,
+    acceptBody: (position: string, organisation: string) =>
+      position ? `You are accepting the position of ${position} at ${organisation}.` : `You are accepting the offer from ${organisation}.`,
     declineTitle: 'Decline this offer?',
     declineBody: 'We are sorry to hear that. A short note helps the team, but it is optional.',
     confirmAccept: 'Accept offer',
     confirmDecline: 'Decline offer',
     cancel: 'Cancel',
     sending: 'Sending…',
-    acceptedTitle: (name: string) => `Welcome to the team, ${name}!`,
+    stampAccepted: 'Accepted',
+    stampDeclined: 'Declined',
+    acceptedTitle: (name: string) => (name ? `Welcome to the team, ${name}.` : 'Welcome to the team.'),
     acceptedBody: 'Your acceptance is with the team. They will be in touch about next steps.',
     declinedTitle: 'Offer declined',
     declinedBody: 'Thank you for letting us know. We wish you all the best.',
@@ -101,61 +123,75 @@ export const OFFER_COPY = {
     errorTitle: 'We couldn’t load your offer',
     errorBody: 'Check your connection and try again.',
     retry: 'Try again',
-    loading: ['Verifying your private link', 'Unsealing the offer', 'Rendering the details'],
+    loading: 'Opening your offer',
     privateNote: 'This page is private to you. Please don’t share the link.',
     previewBanner: 'Preview of the candidate’s offer page. Buttons are disabled.',
     closePreview: 'Close preview',
     respondFailed: 'Your answer could not be sent. Please try again.',
   },
   zh: {
-    confidential: '机密录用通知',
+    confidential: '私人机密',
     kicker: '录用通知',
-    greeting: (name: string) => `欢迎加入，${name}。`,
-    intro: (organisation: string) => `${organisation} 诚邀您担任`,
+    issued: (date: string) => `签发于${date}`,
+    // Zero-width spaces mark where the headline may wrap (the page keeps CJK words together).
+    greeting: (name: string) => (name ? `${name}，\u200B我们诚挚\u200B邀请您加入。` : '我们诚挚\u200B邀请您加入。'),
+    intro: (organisation: string, position: string) =>
+      position ? `${organisation} 诚聘您担任${position}，详情如下。` : `${organisation} 诚聘您加入，详情如下。`,
+    replyRequest: (date: string) => `请于${date}前告知我们您的决定。`,
+    sentenceGap: '',
+    card: {
+      reference: '编号',
+      issued: '签发',
+      start: '入职',
+      replyBy: '回复截止',
+      holder: '致',
+    },
     accept: '接受录用',
     decline: '婉拒',
-    replyWithin: '回复剩余时间',
-    replyDatePassed: '回复截止日期已过',
-    units: { days: '天', hours: '时', minutes: '分', seconds: '秒' },
-    scroll: '查看详情',
+    jump: '答复此录用',
+    replyTitle: '您的答复',
+    replyBy: (date: string) => `请于${date}前回复`,
+    remaining: (days: number, clock: string) => (days > 0 ? `剩余 ${days} 天 ${clock}` : `剩余 ${clock}`),
+    replyDatePassed: '回复截止日期已过。您仍可以答复，团队会看到。',
     compensation: '薪酬',
     baseSalary: '基本薪资',
     alsoIncluded: '另含',
     role: '职位信息',
     startDate: '入职日期',
-    replyBy: '回复截止',
+    replyByLabel: '回复截止',
     reportsTo: '汇报对象',
     location: '工作地点',
     employment: '用工类型',
     team: '团队',
     benefits: '福利',
-    note: '来自团队的话',
-    signature: (sender: string, organisation: string) => `${sender}，${organisation}`,
-    decideTitle: '准备好做决定了吗？',
+    note: (sender: string) => (sender ? `来自${sender}的话` : '来自团队的话'),
     decideBody: '您的答复会直接送达团队，也可以附上留言。',
     messageLabel: '给团队的留言（可选）',
     acceptTitle: '确认接受此录用？',
-    acceptBody: (position: string) => `您将接受「${position}」职位。`,
+    acceptBody: (position: string, organisation: string) =>
+      position ? `您将接受 ${organisation} 的「${position}」职位。` : `您将接受 ${organisation} 的录用。`,
     declineTitle: '确认婉拒此录用？',
     declineBody: '很遗憾听到这个消息。简单说明原因会对团队很有帮助（可选）。',
     confirmAccept: '确认接受',
     confirmDecline: '确认婉拒',
     cancel: '取消',
     sending: '正在提交…',
-    acceptedTitle: (name: string) => `欢迎加入团队，${name}！`,
+    stampAccepted: '已接受',
+    stampDeclined: '已婉拒',
+    acceptedTitle: (name: string) => (name ? `欢迎加入团队，${name}。` : '欢迎加入团队。'),
     acceptedBody: '团队已收到您的答复，稍后会与您联系后续安排。',
     declinedTitle: '已婉拒此录用',
     declinedBody: '感谢您的告知，祝您一切顺利。',
-    acceptedOn: (date: string) => `已于 ${date} 接受`,
-    declinedOn: (date: string) => `已于 ${date} 婉拒`,
+    acceptedOn: (date: string) => `已于${date}接受`,
+    declinedOn: (date: string) => `已于${date}婉拒`,
     withdrawnTitle: '此录用已撤回',
-    withdrawnBody: (sender: string) => `如有疑问，请联系 ${sender || '团队'}。`,
+    withdrawnBody: (sender: string) => `如有疑问，请联系${sender || '团队'}。`,
     invalidTitle: '此录用链接无效',
     invalidBody: '请打开录用邮件中的完整链接，或联系发件人获取新链接。',
     errorTitle: '无法加载录用详情',
     errorBody: '请检查网络连接后重试。',
     retry: '重试',
-    loading: ['正在验证专属链接', '正在解封录用通知', '正在生成详情'],
+    loading: '正在打开录用通知',
     privateNote: '此页面仅供您本人查看，请勿转发链接。',
     previewBanner: '候选人录用页面预览，按钮已停用。',
     closePreview: '关闭预览',
@@ -168,7 +204,7 @@ export type OfferCopy = (typeof OFFER_COPY)['en'];
 export const copyFor = (language?: string): OfferCopy =>
   (language === 'zh' ? OFFER_COPY.zh : OFFER_COPY.en) as OfferCopy;
 
-const CJK = /[㐀-鿿豈-﫿]/;
+const CJK = /[㐀-鿿豈-﫿]/;
 
 /** "Ada Lovelace" → "Ada"; Chinese names are used in full. */
 export const greetingName = (fullName: string) => {
@@ -207,11 +243,26 @@ export const formatLongDate = (value: string | null | undefined, language: Offer
   });
 };
 
-export const formatTimestamp = (value: string | null | undefined, language: OfferLanguage) => {
+/** "9 Oct 2026" / "2026年10月9日": the compact form used on the credential card. */
+export const formatShortDate = (value: string | null | undefined, language: OfferLanguage) => {
+  const date = parseIsoDate(value);
+  if (!date) return '';
+  return date.toLocaleDateString(localeFor(language), { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
+export const formatTimestamp = (
+  value: string | null | undefined,
+  language: OfferLanguage,
+  style: 'long' | 'short' = 'long'
+) => {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(localeFor(language), { day: 'numeric', month: 'long', year: 'numeric' });
+  return date.toLocaleDateString(localeFor(language), {
+    day: 'numeric',
+    month: style === 'short' ? 'short' : 'long',
+    year: 'numeric',
+  });
 };
 
 /** Groups thousands; shows cents only when asked to, or when the amount has them. */
@@ -231,11 +282,15 @@ export interface CountdownParts {
   passed: boolean;
 }
 
+const endOfReplyDay = (respondBy: string | undefined): Date | null => {
+  const day = parseIsoDate(respondBy);
+  return day ? new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59) : null;
+};
+
 /** Time left until the end of the reply day, in the candidate's own time zone. */
 export const countdownTo = (respondBy: string | undefined, now: Date): CountdownParts | null => {
-  const day = parseIsoDate(respondBy);
-  if (!day) return null;
-  const deadline = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59);
+  const deadline = endOfReplyDay(respondBy);
+  if (!deadline) return null;
   const remaining = Math.max(0, Math.floor((deadline.getTime() - now.getTime()) / 1000));
   return {
     days: Math.floor(remaining / 86400),
@@ -248,4 +303,75 @@ export const countdownTo = (respondBy: string | undefined, now: Date): Countdown
 
 export const twoDigits = (value: number) => (value < 10 ? `0${value}` : String(value));
 
-export const easeOutExpo = (t: number) => (t >= 1 ? 1 : 1 - Math.pow(2, -10 * t));
+/** "08:49:35" for the part of the countdown below a day. */
+export const clockOf = (parts: CountdownParts) =>
+  `${twoDigits(parts.hours)}:${twoDigits(parts.minutes)}:${twoDigits(parts.seconds)}`;
+
+/**
+ * Share of the reply window still open, from the moment the offer was sent to the end
+ * of the reply day: 1 just after sending, 0 once the date has passed. Null when either
+ * end is unknown, in which case the page simply shows the full line.
+ */
+export const replyWindowLeft = (
+  sentAt: string | null | undefined,
+  respondBy: string | undefined,
+  now: Date
+): number | null => {
+  const deadline = endOfReplyDay(respondBy);
+  if (!deadline) return null;
+  const start = sentAt ? new Date(sentAt).getTime() : Number.NaN;
+  if (!Number.isFinite(start) || start >= deadline.getTime()) return null;
+  const left = (deadline.getTime() - now.getTime()) / (deadline.getTime() - start);
+  return Math.min(1, Math.max(0, left));
+};
+
+const OFFER_PATH = /^\/offer\/([A-Za-z0-9_-]{16,128})\/?$/;
+
+/** The offer token from a page path such as /offer/abc…, or "" (e.g. in the admin preview). */
+export const tokenFromPath = (pathname: string) => {
+  const match = OFFER_PATH.exec(pathname || '');
+  return match ? match[1] : '';
+};
+
+const fnv1a = (text: string, seed = 0x811c9dc5) => {
+  let hash = seed >>> 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash >>> 0;
+};
+
+// Crockford's base 32: no I, L, O or U, so the reference is easy to read out.
+const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+/** A short, stable reference such as "7F3A-92K1", derived from the offer's token. */
+export const offerReference = (seed: string) => {
+  const first = fnv1a(seed);
+  const second = fnv1a(`${seed}\u0000${first}`);
+  let characters = '';
+  for (let index = 0; index < 4; index += 1) characters += ALPHABET[(first >>> (index * 5)) & 31];
+  for (let index = 0; index < 4; index += 1) characters += ALPHABET[(second >>> (index * 5)) & 31];
+  return `${characters.slice(0, 4)}-${characters.slice(4)}`;
+};
+
+/**
+ * Bar and gap widths (in units) for the code strip printed on the credential, derived
+ * from the same seed as the reference so the two always belong together.
+ */
+export const referenceBars = (seed: string, count = 30): Array<[number, number]> => {
+  const bars: Array<[number, number]> = [];
+  let bits = 0;
+  for (let index = 0; index < count; index += 1) {
+    if (index % 10 === 0) bits = fnv1a(`${seed}/${index}`);
+    const chunk = (bits >>> ((index % 10) * 3)) & 7;
+    const bar = 1 + (chunk & 1) + ((chunk >>> 1) & 1); // 1, 2, 2 or 3 units
+    const gap = 1 + ((chunk >>> 2) & 1); // 1 or 2 units
+    bars.push([bar, gap]);
+  }
+  return bars;
+};
+
+/** Something stable to derive the reference from when the page has no token (the admin preview). */
+export const referenceSeed = (offer: PublicOffer, pathname: string) =>
+  tokenFromPath(pathname) || `draft:${offer.organisation}|${offer.candidate_name}|${offer.position}|${offer.sent_at || ''}`;

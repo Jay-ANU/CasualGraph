@@ -12,11 +12,11 @@ const apiBase = () => {
 
 type LoadState = 'loading' | 'ready' | 'invalid' | 'error';
 
-// Keeps the page dark while it is open (no white flash on overscroll) and out of search results.
+// Keeps the page on warm paper while it is open (no flash on overscroll) and out of search results.
 const useOfferPageChrome = () => {
   useEffect(() => {
     const previousBackground = document.body.style.background;
-    document.body.style.background = '#04050a';
+    document.body.style.background = '#FBFAF8';
     const robots = document.createElement('meta');
     robots.name = 'robots';
     robots.content = 'noindex, nofollow';
