@@ -1,30 +1,31 @@
 import { formatSourceChipLabel, formatSourceDocumentTitle, linkCitations } from './ragUi';
 
 describe('RAG evidence labels', () => {
-  it('prefers the real source filename when stale chunk metadata points at another report', () => {
+  it('prefers the real source filename when stale chunk metadata points at another document', () => {
+    // "agreement" appears in both names but says nothing about which document this is.
     const source = {
       chunk_id: 'chunk_0',
-      text: 'Apple ESG content',
-      document_id: 'aa_sustainability_report_2022_20260505062611',
-      document_title: 'aa-sustainability-report-2022',
-      source: '63ce4de69503662010f3a660_Apple_Pollution Emissions.pdf',
+      text: 'Lease terms',
+      document_id: 'supply_agreement_2023_20260505062611',
+      document_title: 'supply-agreement-2023',
+      source: '63ce4de69503662010f3a660_Office Lease Agreement.pdf',
     };
 
-    expect(formatSourceDocumentTitle(source)).toBe('Apple Pollution Emissions');
-    expect(formatSourceChipLabel(source)).toBe('apple pollution · chunk_0');
+    expect(formatSourceDocumentTitle(source)).toBe('Office Lease Agreement');
+    expect(formatSourceChipLabel(source)).toBe('office lease · chunk_0');
   });
 
   it('keeps the document title when it agrees with the source filename', () => {
     const source = {
       chunk_id: 'chunk_0',
-      text: 'American Airlines sustainability content',
-      document_id: 'aa_sustainability_report_2022_20260501043104',
-      document_title: 'aa-sustainability-report-2022',
-      source: 'aa-sustainability-report-2022.pdf',
+      text: 'Supply terms',
+      document_id: 'supply_agreement_2023_20260501043104',
+      document_title: 'supply-agreement-2023',
+      source: 'supply-agreement-2023.pdf',
     };
 
-    expect(formatSourceDocumentTitle(source)).toBe('aa sustainability report 2022');
-    expect(formatSourceChipLabel(source)).toBe('aa sustainability · chunk_0');
+    expect(formatSourceDocumentTitle(source)).toBe('supply agreement 2023');
+    expect(formatSourceChipLabel(source)).toBe('supply agreement · chunk_0');
   });
 });
 
@@ -35,8 +36,8 @@ describe('linkCitations', () => {
   ];
 
   it('numbers known evidence markers in source order', () => {
-    expect(linkCitations('Scope 2 fell [chunk_1]. Targets [chunk_0, chunk_1].', sources)).toBe(
-      'Scope 2 fell [2](#cite-2). Targets [1](#cite-1)[2](#cite-2).',
+    expect(linkCitations('Payment is due in 30 days [chunk_1]. Either party may terminate [chunk_0, chunk_1].', sources)).toBe(
+      'Payment is due in 30 days [2](#cite-2). Either party may terminate [1](#cite-1)[2](#cite-2).',
     );
   });
 
@@ -51,11 +52,11 @@ describe('linkCitations', () => {
     );
   });
 
-  it('leaves ids that more than one report uses unlinked', () => {
+  it('leaves ids that more than one document uses unlinked', () => {
     const shared = [
-      { chunk_id: 'chunk_3', document_id: 'report-a', text: 'a' },
-      { chunk_id: 'chunk_3', document_id: 'report-b', text: 'b' },
-      { chunk_id: 'chunk_4', document_id: 'report-b', text: 'c' },
+      { chunk_id: 'chunk_3', document_id: 'contract-a', text: 'a' },
+      { chunk_id: 'chunk_3', document_id: 'contract-b', text: 'b' },
+      { chunk_id: 'chunk_4', document_id: 'contract-b', text: 'c' },
     ];
     expect(linkCitations('Both [chunk_3], one [chunk_4].', shared)).toBe('Both [chunk_3], one [3](#cite-3).');
   });

@@ -1,68 +1,19 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, Trash2 } from 'lucide-react';
+import { apiFetch, jsonRequest } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
-import AdminTabs from '../components/AdminTabs';
+import type {
+  AdminOverview,
+  AdminUploadDeleteResponse,
+  AdminUploadsResponse,
+  InviteCodeResponse,
+  RagUnlimitedUser,
+  RagUnlimitedUserResponse,
+  RagUnlimitedUsersResponse,
+  UploadAudit,
+} from '../types/api';
+import { DOCUMENT_CATEGORIES, documentCategoryLabel } from '../utils/documentCategories';
 import useDocumentTitle from '../utils/useDocumentTitle';
-
-interface UploadAudit {
-  job_id: string;
-  document_id?: string;
-  title: string;
-  filename?: string;
-  domain?: string;
-  source_type?: string;
-  source?: string;
-  uploader?: {
-    email?: string;
-    username?: string;
-  };
-  status: string;
-  stage?: string;
-  created_at: string;
-  updated_at?: string;
-  completed_at?: string;
-  error?: string;
-  deleted_at?: string;
-  delete_reason?: string;
-  cleanup_status?: string;
-  cleanup_detail?: string;
-  cleanup_completed_at?: string;
-  duplicate_of_document_id?: string;
-  stats?: {
-    chunks?: number;
-    entities?: number;
-    relations?: number;
-  };
-}
-
-interface AdminOverview {
-  totals: {
-    uploads: number;
-    completed: number;
-    failed: number;
-    rejected?: number;
-    deleted?: number;
-    active: number;
-    chunks: number;
-    entities: number;
-    relations: number;
-  };
-  daily: Array<{ date: string; uploads: number }>;
-  recent_uploads: UploadAudit[];
-}
-
-interface RagUnlimitedUser {
-  email: string;
-  note?: string;
-  created_by_user_id?: string;
-  created_at: string;
-}
-
-const apiBase = () => {
-  const host = window.location.hostname || '127.0.0.1';
-  const localApiHost = host === 'localhost' || host === '127.0.0.1';
-  return process.env.REACT_APP_ESG_API_BASE || (localApiHost ? 'http://127.0.0.1:8000' : '');
-};
 
 const formatDateTime = (value?: string) => {
   if (!value) return '-';
@@ -89,17 +40,6 @@ const cleanupClass = (status?: string) => {
 
 const humanize = (value?: string) => String(value || '').replace(/_/g, ' ');
 
-const domainOptions = [
-  { value: 'general', label: 'General' },
-  { value: 'esg_report', label: 'ESG report' },
-  { value: 'academic', label: 'Academic prior' },
-  { value: 'regulatory', label: 'Regulatory context' },
-  { value: 'news', label: 'News' },
-  { value: 'environmental', label: 'Environmental' },
-  { value: 'social', label: 'Social' },
-  { value: 'governance', label: 'Governance' },
-];
-
 const sourceTypeOptions = [
   { value: '', label: 'Auto-detect' },
   { value: 'corporate_disclosure', label: 'Corporate disclosure' },
@@ -112,7 +52,7 @@ const sourceTypeOptions = [
 ];
 
 const Admin: React.FC = () => {
-  const { token, user } = useAuth();
+  const { user } = useAuth();
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [uploads, setUploads] = useState<UploadAudit[]>([]);
   const [ragUnlimitedUsers, setRagUnlimitedUsers] = useState<RagUnlimitedUser[]>([]);
@@ -128,36 +68,30 @@ const Admin: React.FC = () => {
   const [unlimitedEmail, setUnlimitedEmail] = useState('');
   const [unlimitedNote, setUnlimitedNote] = useState('');
   const [savingUnlimitedUser, setSavingUnlimitedUser] = useState(false);
-  const base = useMemo(apiBase, []);
   useDocumentTitle('Admin');
 
   const loadAdminData = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-      const [overviewRes, uploadsRes, unlimitedUsersRes] = await Promise.all([
-        fetch(`${base}/admin/overview?days=14`, { headers }),
-        fetch(`${base}/admin/uploads?limit=100`, { headers }),
-        fetch(`${base}/admin/rag-unlimited-users`, { headers }),
+      const [overviewPayload, uploadsPayload, unlimitedUsersPayload] = await Promise.all([
+        apiFetch<AdminOverview>('/admin/overview?days=14'),
+        apiFetch<AdminUploadsResponse>('/admin/uploads?limit=100'),
+        apiFetch<RagUnlimitedUsersResponse>('/admin/rag-unlimited-users'),
       ]);
-      const overviewPayload = await overviewRes.json();
-      const uploadsPayload = await uploadsRes.json();
-      const unlimitedUsersPayload = await unlimitedUsersRes.json();
-      if (!overviewRes.ok) throw new Error(overviewPayload.detail || overviewPayload.message || 'Unable to load admin overview');
-      if (!uploadsRes.ok) throw new Error(uploadsPayload.detail || uploadsPayload.message || 'Unable to load upload logs');
-      if (!unlimitedUsersRes.ok) throw new Error(unlimitedUsersPayload.detail || unlimitedUsersPayload.message || 'Unable to load Pro users');
       setOverview(overviewPayload);
-      setUploads(Array.isArray(uploadsPayload.uploads) ? uploadsPayload.uploads : []);
-      setRagUnlimitedUsers(Array.isArray(unlimitedUsersPayload.users) ? unlimitedUsersPayload.users : []);
+      setUploads(Array.isArray(uploadsPayload?.uploads) ? uploadsPayload.uploads : []);
+      setRagUnlimitedUsers(Array.isArray(unlimitedUsersPayload?.users) ? unlimitedUsersPayload.users : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load admin data');
     } finally {
       setLoading(false);
     }
-  }, [base, token]);
+  }, []);
 
   useEffect(() => {
+    // Initial load; the Refresh button calls the same function.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loadAdminData flags loading before it fetches
     loadAdminData();
   }, [loadAdminData]);
 
@@ -188,17 +122,7 @@ const Admin: React.FC = () => {
   const saveEdit = async (jobId: string) => {
     setActionMessage('');
     try {
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      };
-      const response = await fetch(`${base}/admin/uploads/${jobId}`, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify(editForm),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to update upload');
+      await apiFetch(`/admin/uploads/${jobId}`, jsonRequest('PATCH', editForm));
       setEditingJobId(null);
       setActionMessage('Upload metadata updated.');
       await loadAdminData();
@@ -213,13 +137,9 @@ const Admin: React.FC = () => {
     }
     setActionMessage('');
     try {
-      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await fetch(`${base}/admin/uploads/${upload.job_id}?reason=admin_deleted`, {
+      const payload = await apiFetch<AdminUploadDeleteResponse>(`/admin/uploads/${upload.job_id}?reason=admin_deleted`, {
         method: 'DELETE',
-        headers,
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to delete upload');
       setActionMessage(
         payload?.cleanup?.queued
           ? 'Upload marked as deleted. Resource cleanup is running in the background.'
@@ -235,17 +155,10 @@ const Admin: React.FC = () => {
     setSavingUnlimitedUser(true);
     setActionMessage('');
     try {
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      };
-      const response = await fetch(`${base}/admin/rag-unlimited-users`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ email: unlimitedEmail, note: unlimitedNote }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to add Pro user');
+      const payload = await apiFetch<RagUnlimitedUserResponse>(
+        '/admin/rag-unlimited-users',
+        jsonRequest('POST', { email: unlimitedEmail, note: unlimitedNote }),
+      );
       setUnlimitedEmail('');
       setUnlimitedNote('');
       setActionMessage(`${payload?.user?.email || 'User'} is now on Pro with 300 daily points.`);
@@ -263,13 +176,7 @@ const Admin: React.FC = () => {
     }
     setActionMessage('');
     try {
-      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await fetch(`${base}/admin/rag-unlimited-users/${encodeURIComponent(email)}`, {
-        method: 'DELETE',
-        headers,
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to remove Pro user');
+      await apiFetch(`/admin/rag-unlimited-users/${encodeURIComponent(email)}`, { method: 'DELETE' });
       setActionMessage(`${email} now uses the Free 30-point daily limit.`);
       await loadAdminData();
     } catch (err) {
@@ -281,19 +188,9 @@ const Admin: React.FC = () => {
     setCreatingInvite(true);
     setActionMessage('');
     try {
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      };
-      const response = await fetch(`${base}/admin/invite-codes`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ ttl_minutes: 5 }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || payload.message || 'Unable to create invite code');
-      setInviteCode(payload.invite_code || '');
-      setInviteExpiresAt(payload.expires_at || '');
+      const payload = await apiFetch<InviteCodeResponse>('/admin/invite-codes', jsonRequest('POST', { ttl_minutes: 5 }));
+      setInviteCode(payload?.invite_code || '');
+      setInviteExpiresAt(payload?.expires_at || '');
       setActionMessage('Admin invite code created. It expires in 5 minutes or after one successful use.');
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to create invite code');
@@ -313,9 +210,7 @@ const Admin: React.FC = () => {
 
   return (
     <div className="mx-auto max-w-content px-5 pb-24 pt-10 sm:px-8 lg:pt-14">
-      <AdminTabs />
-
-      <header className="mt-8 flex flex-wrap items-end justify-between gap-4">
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="page-title">Document operations</h1>
           <p className="mt-1 text-sm text-ink-3">Uploads, processing status and corpus growth across the workspace.</p>
@@ -574,9 +469,12 @@ const Admin: React.FC = () => {
                             className="input h-8 text-sm"
                             aria-label="Category"
                           >
-                            {domainOptions.map(option => (
+                            {DOCUMENT_CATEGORIES.map(option => (
                               <option key={option.value} value={option.value}>{option.label}</option>
                             ))}
+                            {!DOCUMENT_CATEGORIES.some(option => option.value === editForm.domain) && (
+                              <option value={editForm.domain}>{documentCategoryLabel(editForm.domain)}</option>
+                            )}
                           </select>
                           <select
                             value={editForm.source_type}
@@ -598,7 +496,7 @@ const Admin: React.FC = () => {
                         </div>
                       ) : (
                         <>
-                          <div className="text-ink-2">{humanize(upload.domain || 'general')}</div>
+                          <div className="text-ink-2">{documentCategoryLabel(upload.domain)}</div>
                           <div className="text-xs text-ink-4">{humanize(upload.source_type) || 'auto'}</div>
                           {upload.source && <div className="mt-0.5 max-w-[12rem] truncate text-xs text-ink-4">{upload.source}</div>}
                         </>

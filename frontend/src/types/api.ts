@@ -1,32 +1,3 @@
-export type SourceType = 'report_evidence' | 'graph_inference' | 'general_knowledge' | 'speculation';
-
-export interface CausalChainStep {
-  step: string;
-  source_type: SourceType;
-  evidence_refs: string[];
-}
-
-export interface PredictionAnswer {
-  prediction: string;
-  confidence: 'low' | 'medium' | 'high';
-  confidence_score?: number;
-  confidence_breakdown?: {
-    evidence_coverage?: number;
-    source_quality?: number;
-    citation_density?: number;
-    speculation_load?: number;
-    counter_pressure?: number;
-    assumption_pressure?: number;
-  };
-  confidence_rationale?: string;
-  causal_chain: CausalChainStep[];
-  key_assumptions: string[];
-  counter_evidence: string[];
-  disclaimer: string;
-  raw?: string;
-  parse_error?: string | null;
-}
-
 export type RagIntent = 'answer' | 'prediction' | 'comparison' | 'graph_reasoning' | 'summary' | 'chitchat';
 export type RagReasoningMode = 'flash' | 'deep';
 export type AgentPath = 'rag' | 'agent';
@@ -112,10 +83,6 @@ export interface RagResponse {
   reasoning_mode?: RagReasoningMode;
   intent?: RagIntent;
   blocks?: RagBlock[];
-  // Deprecated: legacy structured-prediction payload. The Deep tier now returns
-  // plain markdown via `answer`. Left on the type so cached responses from
-  // older sessions still parse.
-  prediction?: PredictionAnswer;
   sources: RagSource[];
   graph_sources?: RagGraphSource;
   layered_sources?: {
@@ -170,3 +137,208 @@ export type RagStreamEvent =
   | { type: 'token'; text: string }
   | { type: 'done'; payload: RagResponse }
   | { type: 'error'; message: string };
+
+// ---- Accounts --------------------------------------------------------------
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  username: string;
+  role?: string;
+  plan?: string;
+  plan_label?: string;
+  points_limit?: number | null;
+  unlimited?: boolean;
+  created_at?: string;
+}
+
+/** `POST /auth/login` and `POST /auth/register`. */
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
+
+/** `GET /auth/me` wraps the user; older servers returned it bare. */
+export type MeResponse = { user?: AuthUser } & Partial<AuthUser>;
+
+export interface CaptchaResponse {
+  captcha_id: string;
+  image: string;
+}
+
+export interface EmailCodeResponse {
+  cooldown_seconds?: number;
+}
+
+// ---- Documents -------------------------------------------------------------
+
+/** A library document as `GET /documents` and `GET /documents/{id}` return it. */
+export interface DocumentSummary {
+  id: string;
+  title: string;
+  domain: string;
+  source: string;
+  document_group?: string;
+  owner_user_id?: string;
+  visibility_scope?: string;
+  source_type?: string;
+  chunk_count?: number;
+  ingested_at?: string;
+  neo4j_sync?: {
+    enabled?: boolean;
+    synced?: boolean;
+    database?: string;
+    chunks_synced?: number;
+    entities_synced?: number;
+    relations_synced?: number;
+    reason?: string;
+  };
+}
+
+export interface DocumentListResponse {
+  documents?: DocumentSummary[];
+}
+
+export interface DocumentDetailResponse {
+  document: DocumentSummary;
+}
+
+/** `POST /documents/upload-async`. */
+export interface UploadJobCreatedResponse {
+  job_id?: string;
+}
+
+/** `GET /documents/jobs/{id}`. */
+export interface UploadJobResponse {
+  status?: 'queued' | 'running' | 'completed' | 'failed' | 'rejected' | string;
+  stage?: string;
+  progress?: number;
+  message?: string;
+  error?: string;
+  result?: {
+    document?: DocumentSummary;
+    stats?: { chunk_count?: number };
+    duplicate?: boolean;
+    matched_by?: string;
+  };
+}
+
+// ---- Chat sessions ---------------------------------------------------------
+
+export interface ChatSessionPayload {
+  id?: string;
+  title?: string;
+  selected_document_id?: string;
+  mode?: string;
+  created_at?: string;
+  updated_at?: string;
+  message_count?: number;
+}
+
+/** A stored message; `data` is whatever the client saved with it. */
+export interface ChatMessagePayload {
+  role?: string;
+  content?: string;
+  timestamp?: string;
+  data?: unknown;
+}
+
+export interface ChatSessionResponse {
+  session?: ChatSessionPayload;
+}
+
+export interface ChatSessionListResponse {
+  sessions?: ChatSessionPayload[];
+}
+
+export interface ChatSessionDetailResponse extends ChatSessionResponse {
+  messages?: ChatMessagePayload[];
+}
+
+// ---- Model status ----------------------------------------------------------
+
+/** `GET /models/status`. Other fields the server may send are ignored. */
+export interface ModelConfiguration {
+  provider: string;
+  model: string;
+  configured: boolean;
+  modes: Record<'flash' | 'deep', { model: string; configured: boolean; thinking: boolean }>;
+}
+
+// ---- Admin -----------------------------------------------------------------
+
+export interface UploadAudit {
+  job_id: string;
+  document_id?: string;
+  title: string;
+  filename?: string;
+  domain?: string;
+  source_type?: string;
+  source?: string;
+  uploader?: {
+    email?: string;
+    username?: string;
+  };
+  status: string;
+  stage?: string;
+  created_at: string;
+  updated_at?: string;
+  completed_at?: string;
+  error?: string;
+  deleted_at?: string;
+  delete_reason?: string;
+  cleanup_status?: string;
+  cleanup_detail?: string;
+  cleanup_completed_at?: string;
+  duplicate_of_document_id?: string;
+  stats?: {
+    chunks?: number;
+    entities?: number;
+    relations?: number;
+  };
+}
+
+/** `GET /admin/overview`. */
+export interface AdminOverview {
+  totals: {
+    uploads: number;
+    completed: number;
+    failed: number;
+    rejected?: number;
+    deleted?: number;
+    active: number;
+    chunks: number;
+    entities: number;
+    relations: number;
+  };
+  daily: Array<{ date: string; uploads: number }>;
+  recent_uploads: UploadAudit[];
+}
+
+export interface AdminUploadsResponse {
+  uploads?: UploadAudit[];
+}
+
+export interface AdminUploadDeleteResponse {
+  cleanup?: { queued?: boolean };
+}
+
+export interface RagUnlimitedUser {
+  email: string;
+  note?: string;
+  created_by_user_id?: string;
+  created_at: string;
+}
+
+export interface RagUnlimitedUsersResponse {
+  users?: RagUnlimitedUser[];
+}
+
+export interface RagUnlimitedUserResponse {
+  user?: { email?: string };
+}
+
+export interface InviteCodeResponse {
+  invite_code?: string;
+  expires_at?: string;
+}

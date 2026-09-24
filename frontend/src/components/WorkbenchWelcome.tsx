@@ -4,7 +4,7 @@ import { ArrowRight, FileUp } from 'lucide-react';
 type Starter = { title: string; prompt: string; tier: 'flash' | 'deep' };
 
 interface Props {
-  reportCount: number;
+  documentCount: number;
   starters: Starter[];
   composer: React.ReactNode;
   onUpload: () => void;
@@ -13,15 +13,15 @@ interface Props {
 }
 
 /** Empty state of the research desk: greeting, the composer, and a few ways in. */
-export default function WorkbenchWelcome({ reportCount, starters, composer, onUpload, onLibrary, onPrompt }: Props) {
+export default function WorkbenchWelcome({ documentCount, starters, composer, onUpload, onLibrary, onPrompt }: Props) {
   return (
     <div className="research-welcome mx-auto flex min-h-full w-full max-w-[760px] flex-col justify-center px-4 pb-12 pt-10 sm:px-6">
       <h2 className="display text-center text-[30px] leading-tight sm:text-display-md">What would you like to research?</h2>
       <p className="mt-3 text-center text-sm text-ink-3">
         <span>
-          {reportCount > 0
-            ? `${reportCount} report${reportCount === 1 ? '' : 's'} in your library`
-            : 'Start with a report, or ask a general question'}
+          {documentCount > 0
+            ? `${documentCount} document${documentCount === 1 ? '' : 's'} in your library`
+            : 'Start with a document, or ask a general question'}
         </span>
         <span aria-hidden="true" className="mx-2 text-ink-5">·</span>
         <button type="button" onClick={onLibrary} className="text-link text-ink-2">
@@ -56,7 +56,7 @@ export default function WorkbenchWelcome({ reportCount, starters, composer, onUp
         <FileUp className="h-4 w-4 shrink-0 text-ink-4" />
         <span className="min-w-0 flex-1">
           <span className="block text-[13px] font-medium text-ink">Bring your own evidence</span>
-          <span className="block text-[13px] text-ink-3">Upload a report and ask questions about it.</span>
+          <span className="block text-[13px] text-ink-3">Upload a contract and ask questions about it.</span>
         </span>
         <ArrowRight className="h-4 w-4 shrink-0 text-ink-4" />
       </button>

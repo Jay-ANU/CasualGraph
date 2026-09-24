@@ -8,14 +8,11 @@ import {
   AlertCircle,
   ArrowUp,
   BrainCircuit,
-  Briefcase,
   Check,
   CheckCircle2,
   ChevronsUpDown,
   Circle,
   Copy,
-  Database,
-  Download,
   Eye,
   FileText,
   FileUp,
@@ -36,16 +33,33 @@ import {
   ThumbsUp,
   Trash2,
   X,
-  Zap,
 } from 'lucide-react';
-import { GraphVisualizer } from '../components';
 import BrandLogo from '../components/BrandLogo';
 import ModelStatus from '../components/ModelStatus';
 import WorkbenchWelcome from '../components/WorkbenchWelcome';
+import { ApiError, apiFetch, jsonRequest } from '../api/client';
+import { apiBase } from '../api/config';
+import { openEventStream, readSseEvents } from '../api/sse';
 import { useAuth } from '../contexts/AuthContext';
 import useDocumentTitle from '../utils/useDocumentTitle';
-import type { GraphData, GraphEdge, GraphHighlightPath, GraphNode } from '../types/graph';
-import type { AgentTraceStep, FeedbackPayload, FeedbackRating, FeedbackReasonTag, RagReasoningMode, RagResponse, RagSource } from '../types/api';
+import { DOCUMENT_CATEGORIES, documentCategoryLabel } from '../utils/documentCategories';
+import type {
+  AgentTraceStep,
+  ChatSessionDetailResponse,
+  ChatSessionListResponse,
+  ChatSessionResponse,
+  DocumentDetailResponse,
+  DocumentListResponse,
+  DocumentSummary,
+  FeedbackPayload,
+  FeedbackRating,
+  FeedbackReasonTag,
+  RagReasoningMode,
+  RagResponse,
+  RagSource,
+  UploadJobCreatedResponse,
+  UploadJobResponse,
+} from '../types/api';
 import {
   STORAGE_KEYS,
   buildChatMessage,
@@ -62,7 +76,6 @@ import {
   linkCitations,
   normalizeMathForMarkdown,
   normalizeStreamingMarkdown,
-  readSseEvents,
 } from './agent/ragUi';
 import {
   formatAgentPartialDescription,
@@ -71,194 +84,24 @@ import {
   formatAgentTraceSummary,
   mergeAgentTraceSteps,
 } from './agent/agentTraceUi';
-import {
-  SKILL_FILE_ACCEPT,
-  SKILL_FILE_ALLOWED_LABEL,
-  formatSkillFileSize,
-  validateSkillFile,
-} from './agent/skillFiles';
 
-interface CausalRelationship {
-  cause: string;
-  effect: string;
-  confidence: number;
-  evidence: string;
-  domain: string;
-  relationship_type: string;
-}
-interface Document {
-  id: string;
-  title: string;
-  domain: string;
-  source: string;
-  document_group?: string;
-  source_type?: string;
-  graph?: GraphData;
-  relationships?: CausalRelationship[];
-  relationship_count?: number;
-  chunk_count?: number;
-  ingested_at?: string;
-  processed_text_path?: string;
-  chunks_path?: string;
-  extractions_path?: string;
-  graph_path?: string;
-  vector_store_path?: string;
-  neo4j_sync?: {
-    enabled?: boolean;
-    synced?: boolean;
-    database?: string;
-    chunks_synced?: number;
-    entities_synced?: number;
-    relations_synced?: number;
-    reason?: string;
-  };
-}
-interface Neo4jStatus {
-  enabled?: boolean;
-  connected?: boolean;
-  database?: string;
-  auto_sync?: boolean;
-  reason?: string;
-  message?: string;
-  stats?: {
-    counts?: {
-      document_count?: number;
-      chunk_count?: number;
-      entity_count?: number;
-      relation_count?: number;
-      mention_count?: number;
-    };
-  };
-}
-
-interface UploadSubmission {
-  title: string;
-  content?: string;
-  file?: File | null;
-  domain?: string;
-  sourceType?: string;
-  source?: string;
-  openDocumentsOnComplete?: boolean;
-}
-
-interface SkillUploadDraft {
-  name: string;
-  size: number;
-  status: 'accepted' | 'rejected';
-  reason: string;
-}
-
-const BUILT_IN_AGENT_SKILLS = [
-  {
-    name: 'Evidence Planner',
-    owner: 'CausalGraph',
-    status: 'Installed',
-    summary: 'Builds a report-specific evidence plan before retrieval so broad ESG questions are decomposed into verifiable targets.',
-    trigger: 'Multi-report comparisons, category coverage, missing evidence checks',
-  },
-  {
-    name: 'Dynamic Replanner',
-    owner: 'CausalGraph',
-    status: 'Installed',
-    summary: 'Adds targeted follow-up searches when the current evidence set is thin, mismatched, or missing a requested entity.',
-    trigger: 'Incomplete retrieval, low evidence coverage, ambiguous entities',
-  },
-  {
-    name: 'Reflexion Verifier',
-    owner: 'CausalGraph',
-    status: 'Installed',
-    summary: 'Checks whether the answer is supported by the collected chunks and marks partial answers when coverage is insufficient.',
-    trigger: 'Final answer preparation and uncertainty reporting',
-  },
-  {
-    name: 'Graph Context Reader',
-    owner: 'CausalGraph',
-    status: 'Available',
-    summary: 'Reads extracted entity relationships from the report graph and keeps graph context separate from cited report chunks.',
-    trigger: 'Causal links, governance relationships, supply-chain dependencies',
-  },
-];
-
-const GRAPH_DOMAIN_LABELS: Record<string, string> = {
-  environmental: 'Environmental',
-  social: 'Social',
-  governance: 'Governance',
-  general: 'General',
-  ai: 'AI',
-};
-
-const DOMAIN_DOT_CLASS: Record<string, string> = {
-  environmental: 'bg-domain-e',
-  social: 'bg-domain-s',
-  governance: 'bg-domain-g',
-  ai: 'bg-domain-ai',
-  general: 'bg-domain-general',
-};
+type Document = DocumentSummary;
 
 const QUERY_TOKEN_PATTERN = /[A-Za-z][A-Za-z0-9_-]{2,}|[\u4e00-\u9fff]{2,}/g;
 const QUERY_STOP_WORDS = new Set([
-  'about', 'against', 'company', 'document', 'does', 'doing', 'esg', 'for', 'from', 'have',
+  'about', 'against', 'company', 'document', 'does', 'doing', 'for', 'from', 'have',
 ]);
 
 const CONTEXTUAL_QUERY_PATTERN =
   /^(it|its|they|them|their|this|that|these|those|what about|how about|and|also|then|why|how|when|where)\b/i;
 
-const REPORT_REFERENCE_PATTERN =
-  /\b(this report|the report|this document|the document|this company|the company)\b|这份报告|这个报告|该报告|这个文件/iu;
+const DOCUMENT_REFERENCE_PATTERN =
+  /\b(this (?:contract|agreement|report|document|company)|the (?:contract|agreement|report|document|company))\b|这份合同|该合同|本合同|这份协议|这份报告|这个报告|该报告|这个文件/iu;
 
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 120;
 const STREAM_RENDER_INTERVAL_MS = 80;
 
 const normalizeQueryToken = (value: string) => value.trim().toLowerCase();
-const normalizeGraphDomain = (value?: string) => {
-  const normalized = String(value || 'general').trim().toLowerCase();
-  if (normalized.includes('environment')) return 'environmental';
-  if (normalized.includes('social')) return 'social';
-  if (normalized.includes('govern')) return 'governance';
-  if (normalized === 'ai' || normalized.includes('artificial')) return 'ai';
-  return 'general';
-};
-
-const humanizeGraphToken = (value?: string) =>
-  String(value || '')
-    .replace(/^[A-Z]+:/, '')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-const isUsableGraphLabel = (value?: string) => {
-  const trimmed = String(value || '').trim();
-  if (!trimmed) return false;
-  if (/^E\d+$/i.test(trimmed)) return false;
-  if (/^[A-Z_]+:[a-z0-9_]+$/i.test(trimmed)) return false;
-  return true;
-};
-
-const isAnonymousGraphToken = (value?: string) => {
-  const trimmed = String(value || '').trim();
-  if (!trimmed) return true;
-  if (/^E\d+$/i.test(trimmed)) return true;
-  if (/^Entity$/i.test(trimmed)) return true;
-  return false;
-};
-
-const getGraphNodeLabel = (node: Record<string, any>) => {
-  const metadata = node?.metadata && typeof node.metadata === 'object' ? node.metadata : {};
-  const candidates = [
-    node?.name,
-    metadata?.display_name,
-    metadata?.label,
-    metadata?.name,
-    humanizeGraphToken(node?.normalized_name),
-    humanizeGraphToken(node?.id),
-  ];
-  const preferred = candidates.find(candidate => isUsableGraphLabel(candidate));
-  return String(preferred || 'Entity');
-};
-
-const GRAPH_ENTITY_STOP_WORDS = new Set([
-  'annual', 'corporate', 'esg', 'fiscal', 'report', 'responsibility', 'sustainability', 'year',
-]);
 
 const extractQueryTokens = (value: string): string[] => {
   const matches = value.match(QUERY_TOKEN_PATTERN) || [];
@@ -267,24 +110,11 @@ const extractQueryTokens = (value: string): string[] => {
     .filter(token => token.length >= 2 && !QUERY_STOP_WORDS.has(token));
 };
 
-const getDocumentCompanyTerms = (doc: Document): Set<string> => {
-  const terms = new Set<string>();
+const getDocumentCompanyTerms = (doc: Document): Set<string> => new Set(extractQueryTokens(doc.title || ''));
 
-  const pushTerms = (value: string | undefined) => {
-    extractQueryTokens(value || '').forEach(token => terms.add(token));
-  };
-
-  pushTerms(doc.title);
-  doc.graph?.nodes.forEach((node: GraphNode) => {
-    if (node.type.toLowerCase().includes('company')) {
-      pushTerms(node.label);
-    }
-  });
-  doc.relationships?.forEach(rel => {
-    pushTerms(rel.cause);
-    pushTerms(rel.effect);
-  });
-  return terms;
+const formatDocumentDate = (value?: string) => {
+  const date = new Date(value || '');
+  return value && !Number.isNaN(date.getTime()) ? date.toLocaleDateString() : '—';
 };
 
 const shouldPreferSelectedDocument = (query: string, selectedDocument: Document | null, documents: Document[]) => {
@@ -292,7 +122,7 @@ const shouldPreferSelectedDocument = (query: string, selectedDocument: Document 
 
   const trimmed = query.trim();
   if (!trimmed) return false;
-  if (CONTEXTUAL_QUERY_PATTERN.test(trimmed) || trimmed.endsWith('呢') || REPORT_REFERENCE_PATTERN.test(trimmed)) {
+  if (CONTEXTUAL_QUERY_PATTERN.test(trimmed) || trimmed.endsWith('呢') || DOCUMENT_REFERENCE_PATTERN.test(trimmed)) {
     return true;
   }
 
@@ -316,235 +146,12 @@ const shouldPreferSelectedDocument = (query: string, selectedDocument: Document 
   return true;
 };
 
-const deriveNeo4jAnchorEntity = (document: Document | null): string | null => {
-  if (!document) return null;
-
-  const companyNodes = (document.graph?.nodes || [])
-    .filter((node: GraphNode) => node.type.toLowerCase().includes('company') && isUsableGraphLabel(node.label))
-    .sort((a: GraphNode, b: GraphNode) => b.confidence - a.confidence);
-  if (companyNodes.length > 0) {
-    return companyNodes[0].label;
-  }
-
-  const relationshipEntity = (document.relationships || []).find(
-    rel => /^[A-Z][A-Za-z0-9& ._-]{1,}$/.test(rel.cause) && !isAnonymousGraphToken(rel.cause)
-  );
-  if (relationshipEntity) {
-    return relationshipEntity.cause;
-  }
-
-  const titleTerms = extractQueryTokens(document.title).filter(term => !GRAPH_ENTITY_STOP_WORDS.has(term));
-  return titleTerms[0] || null;
-};
-
-const mapNeo4jSubgraphToGraphData = (payload: any): GraphData | null => {
-  const rawNodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
-  const rawEdges = Array.isArray(payload?.edges) ? payload.edges : [];
-  if (rawNodes.length === 0) return null;
-
-  const nodes = rawNodes
-    .map((node: any) => {
-      const metadata = node?.metadata && typeof node.metadata === 'object' ? node.metadata : {};
-      return {
-        id: String(node.id || node.name || node.normalized_name || ''),
-        label: getGraphNodeLabel(node),
-        domain: normalizeGraphDomain(node.esg_domain || node.domain || metadata.esg_domain || metadata.domain),
-        type: String(node.type || node.entity_type || metadata.raw_type || 'Entity'),
-        confidence: Number(node.confidence || 0.85),
-        description: String(node.description || metadata.description || ''),
-        company: metadata.company ? String(metadata.company) : undefined,
-        year: metadata.year ? String(metadata.year) : undefined,
-        normalizedName: node.normalized_name ? String(node.normalized_name) : undefined,
-        metadata,
-      };
-    })
-    .filter((node: GraphData['nodes'][number]) => node.id);
-
-  const nodeIds = new Set(nodes.map((node: GraphNode) => node.id));
-  const nodeMap = new Map<string, GraphNode>(nodes.map((node: GraphNode) => [node.id, node]));
-  const edges = rawEdges
-    .map((edge: any) => {
-      const source = String(edge.source || '');
-      const target = String(edge.target || '');
-      const sourceDomain = nodeMap.get(source)?.domain;
-      const targetDomain = nodeMap.get(target)?.domain;
-      return {
-        source,
-        target,
-        relationship_type: String(edge.relation_type || edge.relationship_type || 'RELATED_TO'),
-        confidence: Number(edge.confidence || 0.75),
-        evidence: String(edge.evidence || ''),
-        domain: sourceDomain === targetDomain ? sourceDomain || 'general' : 'general',
-        documentId: edge.document_id ? String(edge.document_id) : undefined,
-        chunkId: edge.chunk_id ? String(edge.chunk_id) : undefined,
-      };
-    })
-    .filter((edge: GraphEdge) => edge.source && edge.target && nodeIds.has(edge.source) && nodeIds.has(edge.target));
-
-  return {
-    nodes,
-    edges,
-    metadata: {
-      node_count: nodes.length,
-      edge_count: edges.length,
-      is_directed: true,
-      is_acyclic: false,
-    },
-  };
-};
-
-const getGraphEdgeId = (edge: GraphData['edges'][number]) => `${edge.source}|${edge.relationship_type}|${edge.target}`;
-
-const getGraphDegreeMap = (graph: GraphData) => {
-  const degreeMap = new Map<string, number>();
-  graph.nodes.forEach((node: GraphNode) => degreeMap.set(node.id, 0));
-  graph.edges.forEach((edge: GraphEdge) => {
-    degreeMap.set(edge.source, (degreeMap.get(edge.source) || 0) + 1);
-    degreeMap.set(edge.target, (degreeMap.get(edge.target) || 0) + 1);
-  });
-  return degreeMap;
-};
-
-const getGraphFocusNodeId = (graph: GraphData | null) => {
-  if (!graph || graph.nodes.length === 0) return null;
-  const degreeMap = getGraphDegreeMap(graph);
-  const companyNode = graph.nodes
-    .filter((node: GraphNode) => node.type.toLowerCase().includes('company'))
-    .sort((a: GraphNode, b: GraphNode) => (degreeMap.get(b.id) || 0) - (degreeMap.get(a.id) || 0))[0];
-  if (companyNode) return companyNode.id;
-
-  return [...graph.nodes].sort((a: GraphNode, b: GraphNode) => (degreeMap.get(b.id) || 0) - (degreeMap.get(a.id) || 0))[0]?.id || null;
-};
-
-const formatGraphLabel = (value: string) => value.replace(/_/g, ' ');
-
-const getDomainBreakdown = (graph: GraphData | null) => {
-  if (!graph) return [];
-  const counts = new Map<string, number>();
-  graph.nodes.forEach((node: GraphNode) => {
-    const domain = normalizeGraphDomain(node.domain);
-    counts.set(domain, (counts.get(domain) || 0) + 1);
-  });
-  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-};
-
-const getTopConnectedNodes = (graph: GraphData | null, limit = 5) => {
-  if (!graph) return [];
-  const degreeMap = getGraphDegreeMap(graph);
-  return [...graph.nodes]
-    .sort((a: GraphNode, b: GraphNode) => (degreeMap.get(b.id) || 0) - (degreeMap.get(a.id) || 0))
-    .slice(0, limit)
-    .map((node: GraphNode) => ({ ...node, degree: degreeMap.get(node.id) || 0 }));
-};
-
-const sanitizeGraphData = (graph: GraphData | null): GraphData | null => {
-  if (!graph) return null;
-
-  const nodeMap = new Map<string, GraphNode>();
-  graph.nodes.forEach((node: GraphNode) => {
-    const existing = nodeMap.get(node.id);
-    if (!existing) {
-      nodeMap.set(node.id, node);
-      return;
-    }
-
-    nodeMap.set(node.id, {
-      ...existing,
-      confidence: Math.max(existing.confidence, node.confidence),
-      description: existing.description || node.description,
-      company: existing.company || node.company,
-      year: existing.year || node.year,
-      metadata: { ...(node.metadata || {}), ...(existing.metadata || {}) },
-    });
-  });
-
-  const nodes = Array.from(nodeMap.values());
-  const validNodeIds = new Set(nodes.map((node: GraphNode) => node.id));
-  const edgeMap = new Map<string, GraphEdge>();
-
-  graph.edges.forEach((edge: GraphEdge) => {
-    if (!validNodeIds.has(edge.source) || !validNodeIds.has(edge.target)) return;
-    const edgeId = getGraphEdgeId(edge);
-    const existing = edgeMap.get(edgeId);
-    if (!existing) {
-      edgeMap.set(edgeId, edge);
-      return;
-    }
-
-    edgeMap.set(edgeId, {
-      ...existing,
-      confidence: Math.max(existing.confidence, edge.confidence),
-      evidence: existing.evidence || edge.evidence,
-      metadata: { ...(edge.metadata || {}), ...(existing.metadata || {}) },
-    });
-  });
-
-  const edges = Array.from(edgeMap.values());
-  return {
-    nodes,
-    edges,
-    metadata: {
-      node_count: nodes.length,
-      edge_count: edges.length,
-      is_directed: graph.metadata?.is_directed ?? true,
-      is_acyclic: graph.metadata?.is_acyclic ?? false,
-    },
-  };
-};
-
-const documentNeedsGraphRepair = (document: Document | null) => {
-  if (!document?.id || !document.graph) return false;
-
-  const hasAnonymousNode = (document.graph.nodes || []).some(
-    (node: GraphNode) => isAnonymousGraphToken(node.label) || isAnonymousGraphToken(node.id)
-  );
-  const hasAnonymousRelationship = (document.relationships || []).some(
-    rel => isAnonymousGraphToken(rel.cause) || isAnonymousGraphToken(rel.effect)
-  );
-  return hasAnonymousNode || hasAnonymousRelationship;
-};
-
-// An empty or unreachable private library must not be replaced with demo data.
-const SAMPLE_DOCUMENTS: Document[] = [];
-
-const readApiErrorMessage = async (response: Response): Promise<string> => {
-  const fallback = `RAG service returned ${response.status}${response.statusText ? ` ${response.statusText}` : ''}.`;
-  let raw = '';
-  try {
-    raw = await response.text();
-  } catch {
-    return fallback;
-  }
-
-  if (!raw.trim()) {
-    return fallback;
-  }
-
-  try {
-    const payload = JSON.parse(raw) as { message?: string; error?: string; detail?: string | { message?: string; error?: string } };
-    if (payload?.error === 'no_accessible_documents') {
-      return 'No searchable ESG documents are available for this account yet. Upload a report or try again after the global knowledge base is indexed.';
-    }
-    if (typeof payload?.detail === 'string') {
-      return payload.detail;
-    }
-    if (payload?.detail && typeof payload.detail === 'object') {
-      return payload.detail.message || payload.detail.error || fallback;
-    }
-    return payload?.message || payload?.error || fallback;
-  } catch {
-    if (raw.trim().startsWith('<!DOCTYPE') || raw.trim().startsWith('<html')) {
-      return `${fallback} The response was HTML, so check that REACT_APP_ESG_API_BASE points to the backend API rather than the frontend route.`;
-    }
-    return raw.slice(0, 240);
-  }
-};
-
-const isChatMemoryUnavailablePayload = (payload: any) => {
-  const error = String(payload?.error || '').toLowerCase();
-  const message = String(payload?.message || payload?.detail || payload?.warning || '').toLowerCase();
-  return error === 'chat_memory_unavailable' || message.includes('chat memory is unavailable');
-};
+// The chat endpoints answer 503 with error "chat_memory_unavailable" when chat
+// memory is switched off; the desk then works without saved sessions.
+const isChatMemoryUnavailableResponse = (error: unknown) =>
+  error instanceof ApiError &&
+  error.status === 503 &&
+  (error.code === 'chat_memory_unavailable' || error.message.toLowerCase().includes('chat memory is unavailable'));
 
 const isChatMemoryUnavailableError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error || '');
@@ -671,12 +278,12 @@ const formatTraceEventTitle = (step: AgentTraceStep) => {
 
   if (phase === 'plan') return 'Planned the search';
   if (phase === 'thought' && tool === 'search_documents' && expectedEntity) return `Decided to search for ${expectedEntity}`;
-  if (phase === 'thought' && tool === 'search_documents') return 'Decided to search the reports';
+  if (phase === 'thought' && tool === 'search_documents') return 'Decided to search the documents';
   if (phase === 'thought' && (tool === 'get_graph_context' || tool === 'query_neo4j')) return 'Decided to check the graph';
   if (phase === 'thought' && tool === 'summarize_evidence') return 'Decided to summarise the evidence';
   if (phase === 'thought') return 'Chose the next step';
 
-  if (tool === 'search_documents') return describeStep(step, 'Searching the reports', 'Searched the reports', 'Report search failed');
+  if (tool === 'search_documents') return describeStep(step, 'Searching the documents', 'Searched the documents', 'Document search failed');
   if (tool === 'read_chunks') return describeStep(step, 'Reading passages', 'Read passages', 'Reading passages failed');
   if (tool === 'get_graph_context' || tool === 'query_neo4j') return describeStep(step, 'Checking the graph', 'Checked the graph', 'Graph check failed');
   if (tool === 'summarize_evidence') return describeStep(step, 'Summarising the evidence', 'Summarised the evidence');
@@ -754,7 +361,7 @@ const buildPipelineTraceStep = (
 
   if (stage === 'context_ready') {
     const detail = [
-      `${sources} report section${sources === 1 ? '' : 's'}`,
+      `${sources} passage${sources === 1 ? '' : 's'}`,
       graphEdges ? `${graphEdges} graph relationship${graphEdges === 1 ? '' : 's'}` : '',
       strategy ? `${strategy} retrieval` : '',
       subQueries > 1 ? `${subQueries} sub-queries` : '',
@@ -764,7 +371,7 @@ const buildPipelineTraceStep = (
       stage: 'context_ready',
       tool: null,
       status: 'completed',
-      summary: detail ? `Prepared context from ${detail}.` : 'Prepared retrieved report and graph context.',
+      summary: detail ? `Prepared context from ${detail}.` : 'Prepared the retrieved passages.',
       phase: 'context_ready',
       meta: {
         strategy,
@@ -795,7 +402,7 @@ const buildPipelineTraceStep = (
       stage: 'generating',
       tool: null,
       status: 'running',
-      summary: 'Writing the answer from prepared report evidence and graph context.',
+      summary: 'Writing the answer from the retrieved passages.',
       phase: 'generating',
     };
   }
@@ -866,7 +473,7 @@ const TraceEvents: React.FC<{
 
 type NumberedSource = { source: RagSource; n: number };
 
-// Group cited passages by report while keeping the answer's citation numbers.
+// Group cited passages by document while keeping the answer's citation numbers.
 const groupSourcesByDocument = (sources: RagSource[]) => {
   const groups = new Map<string, { key: string; title: string; items: NumberedSource[] }>();
   sources.forEach((source, index) => {
@@ -1002,7 +609,7 @@ const AgentWorkspaceDrawer: React.FC<{
 
               {fileGroups.length > 0 && (
                 <div className="mt-6 border-t border-line pt-4">
-                  <div className="section-label mb-2">Reports used</div>
+                  <div className="section-label mb-2">Documents used</div>
                   <ul className="space-y-2">
                     {fileGroups.map(group => (
                       <li key={group.key}>
@@ -1074,6 +681,7 @@ type AnswerLinkProps = React.ComponentPropsWithoutRef<'a'> & { node?: unknown };
 
 // Answer markdown links: citations become buttons that open the cited passage,
 // web links open in a new tab, in-page links (such as footnotes) stay in place.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- `node` is react-markdown's AST node; it must not reach the <a>
 const AnswerLink = ({ href, children, node, ...rest }: AnswerLinkProps) => {
   const openCitation = React.useContext(CitationContext);
   const citation = /^#cite-(\d+)$/.exec(href || '');
@@ -1107,9 +715,6 @@ const Agent: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
   const accountPlanLabel = formatAccountPlanLabel(user);
-  const apiHost = typeof window !== 'undefined' ? window.location.hostname || '127.0.0.1' : '127.0.0.1';
-  const localApiHost = apiHost === 'localhost' || apiHost === '127.0.0.1';
-  const esgApiBase = process.env.REACT_APP_ESG_API_BASE || (localApiHost ? `http://${apiHost}:8000` : '');
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>('');
@@ -1172,29 +777,10 @@ const Agent: React.FC = () => {
   const [uploadStage, setUploadStage] = useState('');
   const [uploadMessage, setUploadMessage] = useState('');
   const [uploadStatusTitle, setUploadStatusTitle] = useState('');
-  const quickUploadInputRef = useRef<HTMLInputElement>(null);
-  // uploadStatusResult is no longer rendered (legacy 2xl right aside removed),
-  // but the setter is still called by the upload flow for future use. Read access
-  // intentionally absent until a new surface needs it.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [uploadStatusResult, setUploadStatusResult] = useState<'success' | 'duplicate' | 'error' | null>(null);
   const [activeTab, setActiveTab] = useState('chat');
   const [isSearchPaletteOpen, setIsSearchPaletteOpen] = useState(false);
   const [taskSearchTerm, setTaskSearchTerm] = useState('');
   const taskSearchInputRef = useRef<HTMLInputElement>(null);
-  const [skillSearchTerm, setSkillSearchTerm] = useState('');
-  const [skillUploadDraft, setSkillUploadDraft] = useState<SkillUploadDraft | null>(null);
-  const [isDraggingSkillFile, setIsDraggingSkillFile] = useState(false);
-  const skillFileInputRef = useRef<HTMLInputElement>(null);
-  const [neo4jStatus, setNeo4jStatus] = useState<Neo4jStatus | null>(null);
-  const [neo4jGraph, setNeo4jGraph] = useState<GraphData | null>(null);
-  const [neo4jGraphState, setNeo4jGraphState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
-  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
-  const [selectedGraphEdgeId, setSelectedGraphEdgeId] = useState<string | null>(null);
-  const [highlightPath, setHighlightPath] = useState<GraphHighlightPath | null>(null);
-  const [isDocumentGraphOpen, setIsDocumentGraphOpen] = useState(false);
-  const [repairingDocumentId, setRepairingDocumentId] = useState<string | null>(null);
-  const attemptedGraphRepairRef = useRef<Set<string>>(new Set());
   const uploadStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement>(null);
   const conversationEndRef = useRef<HTMLDivElement>(null);
@@ -1229,29 +815,6 @@ const Agent: React.FC = () => {
     return () => window.cancelAnimationFrame(frameId);
   }, [activeTab, conversation.length, scrollToBottom]);
   useEffect(() => {
-    if (activeTab !== 'documents' || !isAdmin) return;
-    const loadNeo4jStatus = async () => {
-      try {
-        const response = await fetch(`${esgApiBase}/graph/neo4j/status`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        const payload = await response.json();
-        setNeo4jStatus(payload);
-      } catch (error) {
-        setNeo4jStatus({
-          enabled: true,
-          connected: false,
-          reason: 'request_failed',
-          message: error instanceof Error ? error.message : 'Unable to load Neo4j status',
-        });
-      }
-    };
-    loadNeo4jStatus();
-  }, [activeTab, esgApiBase, documents.length, isAdmin, token]);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterType, setFilterType] = useState('');
-  useEffect(() => {
     if (hasAppliedInitialPromptRef.current) return;
 
     const prompt = (searchParams.get('prompt') || '').trim();
@@ -1266,18 +829,6 @@ const Agent: React.FC = () => {
     setSearchParams(nextParams, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === 'f') {
-        e.preventDefault();
-        if (searchInputRef.current && activeTab === 'documents') {
-          searchInputRef.current.focus();
-        }
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [activeTab]);
   useEffect(() => {
     if (!isSearchPaletteOpen) return;
     const frameId = window.requestAnimationFrame(() => {
@@ -1357,15 +908,9 @@ const Agent: React.FC = () => {
   }, []);
 
   const fetchDocumentDetail = useCallback(async (documentId: string): Promise<Document> => {
-    const response = await fetch(`${esgApiBase}/documents/${encodeURIComponent(documentId)}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload?.message || payload?.detail || payload?.error || 'Unable to load document detail');
-    }
-    return payload.document as Document;
-  }, [esgApiBase, token]);
+    const payload = await apiFetch<DocumentDetailResponse>(`/documents/${encodeURIComponent(documentId)}`);
+    return payload.document;
+  }, []);
 
   const fetchChatSessions = useCallback(async () => {
     if (!isAuthenticated) {
@@ -1380,23 +925,17 @@ const Agent: React.FC = () => {
     setIsChatSessionsLoading(true);
     setChatSessionsError('');
     try {
-      const response = await fetch(`${esgApiBase}/chat/sessions`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        if (response.status === 503 && isChatMemoryUnavailablePayload(payload)) {
-          setChatSessions([]);
-          setCurrentSessionId('');
-          persistCurrentSessionId('');
-          setConversation([]);
-          return;
-        }
-        throw new Error(payload?.message || payload?.detail || payload?.error || 'Unable to load chat sessions');
-      }
+      const payload = await apiFetch<ChatSessionListResponse>('/chat/sessions');
       const sessions = Array.isArray(payload?.sessions) ? payload.sessions.map(toSessionSummary) : [];
       setChatSessions(sessions);
     } catch (error) {
+      if (isChatMemoryUnavailableResponse(error)) {
+        setChatSessions([]);
+        setCurrentSessionId('');
+        persistCurrentSessionId('');
+        setConversation([]);
+        return;
+      }
       console.error('Failed to load chat sessions:', error);
       setChatSessionsError(error instanceof Error ? error.message : 'Unable to load chat sessions');
       setChatSessions([]);
@@ -1404,25 +943,19 @@ const Agent: React.FC = () => {
       setIsChatSessionsLoading(false);
       setHasLoadedChatSessions(true);
     }
-  }, [esgApiBase, isAuthenticated, persistCurrentSessionId, token]);
+  }, [isAuthenticated, persistCurrentSessionId]);
 
   const fetchSessionDetail = useCallback(async (sessionId: string) => {
-    const response = await fetch(`${esgApiBase}/chat/sessions/${encodeURIComponent(sessionId)}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload?.message || payload?.detail || payload?.error || 'Unable to load chat session');
-    }
+    const payload = await apiFetch<ChatSessionDetailResponse>(`/chat/sessions/${encodeURIComponent(sessionId)}`);
 
     const session = toSessionSummary(payload?.session || {});
     const messages = Array.isArray(payload?.messages)
       ? payload.messages
-          .map((message: any) =>
+          .map((message) =>
             buildChatMessage(
               String(message?.role || '').toLowerCase() === 'user' ? 'user' : 'agent',
               String(message?.content || ''),
-              message?.data,
+              message?.data as ChatMessage['data'],
               message?.timestamp,
             )
           )
@@ -1433,70 +966,43 @@ const Agent: React.FC = () => {
       session,
       messages,
     };
-  }, [esgApiBase, token]);
+  }, []);
 
   const createServerSession = useCallback(async (initial?: Partial<ChatSession>) => {
-    const response = await fetch(`${esgApiBase}/chat/sessions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({
-        title: initial?.title || '',
-        selected_document_id: initial?.selectedDocumentId || selectedDocument?.id || '',
-        mode: initial?.mode || 'ask',
-      }),
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload?.message || payload?.detail || payload?.error || 'Unable to create chat session');
-    }
+    const payload = await apiFetch<ChatSessionResponse>('/chat/sessions', jsonRequest('POST', {
+      title: initial?.title || '',
+      selected_document_id: initial?.selectedDocumentId || selectedDocument?.id || '',
+      mode: initial?.mode || 'ask',
+    }));
     const session = toSessionSummary(payload?.session || {});
     upsertChatSession(session);
     return session;
-  }, [esgApiBase, selectedDocument?.id, token, upsertChatSession]);
+  }, [selectedDocument?.id, upsertChatSession]);
 
   const appendSessionMessage = useCallback(async (sessionId: string, message: ChatMessage) => {
-    const response = await fetch(`${esgApiBase}/chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({
+    const payload = await apiFetch<ChatSessionResponse>(
+      `/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
+      jsonRequest('POST', {
         role: message.type === 'agent' ? 'assistant' : 'user',
         content: message.content,
         timestamp: message.timestamp.toISOString(),
         data: message.data || {},
       }),
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload?.message || payload?.detail || payload?.error || 'Unable to persist chat message');
-    }
+    );
     const session = toSessionSummary(payload?.session || {});
     upsertChatSession(session);
     return session;
-  }, [esgApiBase, token, upsertChatSession]);
+  }, [upsertChatSession]);
 
   const updateServerSession = useCallback(async (sessionId: string, update: { title?: string; selected_document_id?: string; mode?: string }) => {
-    const response = await fetch(`${esgApiBase}/chat/sessions/${encodeURIComponent(sessionId)}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(update),
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload?.message || payload?.detail || payload?.error || 'Unable to update chat session');
-    }
+    const payload = await apiFetch<ChatSessionResponse>(
+      `/chat/sessions/${encodeURIComponent(sessionId)}`,
+      jsonRequest('PATCH', update),
+    );
     const session = toSessionSummary(payload?.session || {});
     upsertChatSession(session);
     return session;
-  }, [esgApiBase, token, upsertChatSession]);
+  }, [upsertChatSession]);
 
   useEffect(() => {
     try {
@@ -1515,7 +1021,6 @@ const Agent: React.FC = () => {
   const selectDocument = useCallback(async (document: Document) => {
     setSelectedDocument(document);
     setQueryDocumentIds(prev => [document.id, ...prev.filter(id => id !== document.id)].slice(0, 3));
-    setIsDocumentGraphOpen(false);
     persistSelectedDocumentId(document.id);
 
     if (currentSessionId) {
@@ -1528,11 +1033,6 @@ const Agent: React.FC = () => {
         }
         console.error('Failed to sync selected document to chat session:', error);
       }
-    }
-
-    const alreadyDetailed = Boolean(document.relationships && document.graph && document.graph.nodes.length > 0);
-    if (alreadyDetailed) {
-      return;
     }
 
     setLoadingDocumentId(document.id);
@@ -1560,16 +1060,8 @@ const Agent: React.FC = () => {
       setIsDocumentsLoading(true);
       setDocumentsError('');
       try {
-        const response = await fetch(`${esgApiBase}/documents`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload?.message || payload?.detail || payload?.error || 'Unable to load documents');
-        }
-
-        const remoteDocuments: Document[] = Array.isArray(payload?.documents) ? payload.documents : [];
-        const nextDocuments = remoteDocuments.length > 0 ? remoteDocuments : SAMPLE_DOCUMENTS;
+        const payload = await apiFetch<DocumentListResponse>('/documents');
+        const nextDocuments: Document[] = Array.isArray(payload?.documents) ? payload.documents : [];
         setDocuments(nextDocuments);
 
         const savedSelectedDocumentId = localStorage.getItem(STORAGE_KEYS.selectedDocumentId) || '';
@@ -1579,7 +1071,7 @@ const Agent: React.FC = () => {
           null;
         setSelectedDocument(initialSelected);
 
-        if (initialSelected && remoteDocuments.some(doc => doc.id === initialSelected.id)) {
+        if (initialSelected) {
           if (currentSessionId || pendingSessionDocumentId) {
             void fetchDocumentDetail(initialSelected.id)
               .then((detailed) => {
@@ -1593,14 +1085,14 @@ const Agent: React.FC = () => {
             void selectDocument(initialSelected);
           }
         } else {
-          persistSelectedDocumentId(initialSelected?.id);
+          persistSelectedDocumentId();
         }
       } catch (error) {
         console.error('Failed to load documents from backend:', error);
         setDocumentsError(error instanceof Error ? error.message : 'Unable to load documents');
-        setDocuments(SAMPLE_DOCUMENTS);
-        setSelectedDocument(SAMPLE_DOCUMENTS[0] || null);
-        persistSelectedDocumentId(SAMPLE_DOCUMENTS[0]?.id);
+        setDocuments([]);
+        setSelectedDocument(null);
+        persistSelectedDocumentId();
       } finally {
         setIsDocumentsLoading(false);
       }
@@ -1611,7 +1103,7 @@ const Agent: React.FC = () => {
     // session-restore flow uses useEffect@918 to apply the pending id once
     // documents arrive, so document list reload should not be triggered by it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSessionId, esgApiBase, fetchDocumentDetail, isAuthenticated, persistSelectedDocumentId, selectDocument, token]);
+  }, [currentSessionId, fetchDocumentDetail, isAuthenticated, persistSelectedDocumentId, selectDocument]);
 
   useEffect(() => {
     persistSelectedDocumentId(selectedDocument?.id);
@@ -1724,108 +1216,6 @@ const Agent: React.FC = () => {
     }
   }, [documents, pendingSessionDocumentId, selectDocument, selectedDocument?.id]);
   useEffect(() => {
-    if (activeTab !== 'documents' || !selectedDocument) {
-      setNeo4jGraph(null);
-      setNeo4jGraphState('idle');
-      return;
-    }
-
-    const shouldLoadNeo4jGraph = Boolean(isAdmin && neo4jStatus?.connected && selectedDocument.neo4j_sync?.synced);
-    const anchorEntity = deriveNeo4jAnchorEntity(selectedDocument);
-    if (!shouldLoadNeo4jGraph || !anchorEntity) {
-      setNeo4jGraph(null);
-      setNeo4jGraphState('idle');
-      return;
-    }
-
-    let cancelled = false;
-    const loadNeo4jGraph = async () => {
-      setNeo4jGraphState('loading');
-      try {
-        const response = await fetch(
-          `${esgApiBase}/graph/neo4j/subgraph?entity=${encodeURIComponent(anchorEntity)}&hops=1&limit=36`,
-          { headers: token ? { Authorization: `Bearer ${token}` } : {} }
-        );
-        const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload?.message || payload?.error || 'Neo4j subgraph request failed');
-        }
-
-        const graph = mapNeo4jSubgraphToGraphData(payload);
-        if (cancelled) return;
-        if (graph) {
-          setNeo4jGraph(graph);
-          setNeo4jGraphState('ready');
-          return;
-        }
-
-        setNeo4jGraph(null);
-        setNeo4jGraphState('error');
-      } catch (error) {
-        if (cancelled) return;
-        console.error('Failed to load Neo4j graph:', error);
-        setNeo4jGraph(null);
-        setNeo4jGraphState('error');
-      }
-    };
-
-    loadNeo4jGraph();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, esgApiBase, isAdmin, neo4jStatus?.connected, selectedDocument, token]);
-
-  useEffect(() => {
-    if (!isAdmin) return;
-    if (activeTab !== 'documents' || !selectedDocument) return;
-    if (!documentNeedsGraphRepair(selectedDocument)) return;
-    if (repairingDocumentId === selectedDocument.id) return;
-    if (attemptedGraphRepairRef.current.has(selectedDocument.id)) return;
-
-    attemptedGraphRepairRef.current.add(selectedDocument.id);
-    setRepairingDocumentId(selectedDocument.id);
-    setNeo4jGraph(null);
-    setNeo4jGraphState('idle');
-
-    const repairGraph = async () => {
-      try {
-        const response = await fetch(`${esgApiBase}/documents/rebuild-graph`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify(selectedDocument),
-        });
-        const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload?.message || payload?.error || 'Graph rebuild failed');
-        }
-        const repairedDocument = payload?.document as Document | undefined;
-        if (!repairedDocument) {
-          throw new Error('Graph rebuild returned no document payload');
-        }
-
-        setDocuments(prev => prev.map(doc => (doc.id === repairedDocument.id ? repairedDocument : doc)));
-        setSelectedDocument(prev => (prev?.id === repairedDocument.id ? repairedDocument : prev));
-      } catch (error) {
-        console.error('Graph repair failed:', error);
-      } finally {
-        setRepairingDocumentId(current => (current === selectedDocument.id ? null : current));
-      }
-    };
-
-    repairGraph();
-  }, [activeTab, esgApiBase, isAdmin, repairingDocumentId, selectedDocument, token]);
-  useEffect(() => {
-    const activeGraph = neo4jGraph || selectedDocument?.graph || null;
-    const focusNodeId = getGraphFocusNodeId(activeGraph);
-    setSelectedGraphNodeId(focusNodeId);
-    setSelectedGraphEdgeId(null);
-    setHighlightPath(null);
-  }, [neo4jGraph, selectedDocument]);
-
-  useEffect(() => {
     return () => {
       if (uploadStatusTimerRef.current) {
         clearTimeout(uploadStatusTimerRef.current);
@@ -1842,7 +1232,6 @@ const Agent: React.FC = () => {
 
   const dismissUploadStatus = () => {
     clearUploadStatusTimer();
-    setUploadStatusResult(null);
     setUploadStatusTitle('');
     setUploadProgress(0);
     setUploadStage('');
@@ -1856,27 +1245,22 @@ const Agent: React.FC = () => {
     }, 4000);
   };
 
-  const handleUpload = async (submission?: UploadSubmission) => {
-    const fileToUpload = submission?.file ?? uploadedFile;
-    const contentToUpload = submission?.content ?? (fileContent || uploadForm.content);
-    const titleToUpload = (submission?.title ?? uploadForm.title).trim();
-    const domainToUpload = submission?.domain ?? uploadForm.domain;
-    const sourceTypeToUpload = submission?.sourceType ?? uploadForm.source_type;
-    const sourceToUpload = submission?.source ?? uploadForm.source;
-    const openDocumentsOnComplete = submission?.openDocumentsOnComplete ?? true;
+  const handleUpload = async () => {
+    const fileToUpload = uploadedFile;
+    const contentToUpload = fileContent || uploadForm.content;
+    const titleToUpload = uploadForm.title.trim();
 
     if (!titleToUpload || (!contentToUpload && !fileToUpload)) {
       addAgentMessage("Add a title and a file or some text before indexing.", "error");
       return;
     }
     if (!isAuthenticated) {
-      addAgentMessage("Sign in to upload reports.", "error");
+      addAgentMessage("Sign in to upload documents.", "error");
       return;
     }
     setIsUploading(true);
     clearUploadStatusTimer();
     setUploadStatusTitle(fileToUpload?.name || titleToUpload || 'Uploaded document');
-    setUploadStatusResult(null);
     setUploadProgress(1);
     setUploadStage('queued');
     setUploadMessage('Queued for processing');
@@ -1884,44 +1268,33 @@ const Agent: React.FC = () => {
     try {
       const formData = new FormData();
       formData.append('title', titleToUpload);
-      formData.append('domain', domainToUpload);
-      formData.append('source_type', sourceTypeToUpload);
-      formData.append('source', sourceToUpload);
+      formData.append('domain', uploadForm.domain);
+      formData.append('source_type', uploadForm.source_type);
+      formData.append('source', uploadForm.source);
       if (fileToUpload) {
         formData.append('file', fileToUpload);
       } else {
         formData.append('content', contentToUpload);
       }
 
-      const response = await fetch(`${esgApiBase}/documents/upload-async`, {
+      const payload = await apiFetch<UploadJobCreatedResponse>('/documents/upload-async', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: formData
+        body: formData,
       });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.message || payload?.detail || payload?.error || 'Upload failed');
-      }
       const jobId = payload?.job_id;
       if (!jobId) {
         throw new Error('Upload job was created without a job id.');
       }
 
       let uploadedDocument: Document | null = null;
-      let finalStats: any = null;
+      let finalStats: { chunk_count?: number } | null = null;
       let isDuplicate = false;
       let duplicateMatchedBy = '';
       let lastMessage = 'Queued for processing';
 
       while (!uploadedDocument) {
         await new Promise(resolve => setTimeout(resolve, 1200));
-        const jobResponse = await fetch(`${esgApiBase}/documents/jobs/${jobId}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        const jobPayload = await jobResponse.json();
-        if (!jobResponse.ok) {
-          throw new Error(jobPayload?.message || jobPayload?.detail || jobPayload?.error || 'Unable to fetch upload progress');
-        }
+        const jobPayload = await apiFetch<UploadJobResponse>(`/documents/jobs/${jobId}`);
 
         const progress = Number(jobPayload?.progress || 0);
         const stage = String(jobPayload?.stage || 'processing');
@@ -1959,15 +1332,12 @@ const Agent: React.FC = () => {
       setUploadProgress(100);
       setUploadStage('completed');
       setUploadMessage(isDuplicate ? 'Duplicate detected; reusing existing document' : 'Document processing complete');
-      setUploadStatusResult(isDuplicate ? 'duplicate' : 'success');
       scheduleUploadStatusDismiss();
       const successMessage = isDuplicate
         ? `“${completedDocument.title}” is already in your library (matched by ${duplicateMatchedBy || 'content hash'}), so the existing copy will be used.`
-        : `“${completedDocument.title}” is indexed and ready to search: ${finalStats?.chunk_count || 0} passages, ${completedDocument.graph?.metadata?.node_count || 0} entities and ${completedDocument.relationships?.length || 0} relationships.`;
+        : `“${completedDocument.title}” is indexed and ready to search: ${finalStats?.chunk_count || 0} passages.`;
       addAgentMessage(successMessage, "success");
-      if (openDocumentsOnComplete) {
-        setActiveTab('documents');
-      }
+      setActiveTab('documents');
       setSelectedDocument(completedDocument);
       persistSelectedDocumentId(completedDocument.id);
     } catch (error) {
@@ -1975,7 +1345,6 @@ const Agent: React.FC = () => {
         const message = error instanceof Error ? error.message : 'Unknown error';
         const rejected = /rejected/i.test(message);
         clearUploadStatusTimer();
-        setUploadStatusResult('error');
         setUploadStage('failed');
         setUploadMessage(message);
         setUploadProgress(current => Math.max(current, 100));
@@ -2003,45 +1372,6 @@ const Agent: React.FC = () => {
     pushConversationMessage(message);
     return message;
   }, [pushConversationMessage]);
-
-  const handleOpenFullGraph = useCallback(async () => {
-    const params = new URLSearchParams();
-    params.set('scope', selectedDocument?.id ? 'document' : 'all');
-    if (selectedDocument?.id) {
-      params.set('document_id', selectedDocument.id);
-    }
-    const graphWindow = window.open('about:blank', '_blank');
-    if (!graphWindow) {
-      addAgentMessage('Your browser blocked the graph window. Allow pop-ups for this site and try again.', 'error');
-      return;
-    }
-    graphWindow.opener = null;
-
-    if (isAuthenticated && token) {
-      try {
-        const response = await fetch(`${esgApiBase}/kg-view/ticket`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ document_id: selectedDocument?.id || '' }),
-        });
-        const payload = await response.json().catch(() => ({} as { ticket?: string; detail?: string; message?: string }));
-        if (!response.ok || !payload.ticket) {
-          throw new Error(payload.detail || payload.message || 'Could not create graph access ticket');
-        }
-        params.set('ticket', payload.ticket);
-      } catch (error) {
-        console.error('Failed to create graph access ticket:', error);
-        graphWindow.close();
-        addAgentMessage('The graph view couldn’t be opened. Refresh the page and try again.', 'error');
-        return;
-      }
-    }
-
-    graphWindow.location.href = `${esgApiBase}/kg-view?${params.toString()}`;
-  }, [addAgentMessage, esgApiBase, isAuthenticated, selectedDocument?.id, token]);
 
   const addAgentMessageToSession = useCallback(async (
     sessionId: string,
@@ -2097,18 +1427,7 @@ const Agent: React.FC = () => {
           }))
       };
 
-      const response = await fetch(`${esgApiBase}/rag/ask/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        throw new Error(await readApiErrorMessage(response));
-      }
+      const response = await openEventStream('/rag/ask/stream', requestBody);
 
       const placeholderTimestamp = new Date();
       const placeholderMessage = buildChatMessage('agent', '', {
@@ -2307,7 +1626,7 @@ const Agent: React.FC = () => {
       console.error('RAG query error:', error);
       const content = error instanceof Error
         ? `Couldn’t finish the answer: ${error.message}`
-        : `Couldn’t reach the research service at ${esgApiBase || 'the configured API'}. Check that the API is running.`;
+        : `Couldn’t reach the research service at ${apiBase() || 'the configured API'}. Check that the API is running.`;
       if (sessionId) {
         await addAgentMessageToSession(sessionId, content, 'error');
       } else {
@@ -2438,14 +1757,7 @@ const Agent: React.FC = () => {
   };
   const handleDeleteSession = async (id: string) => {
     try {
-      const response = await fetch(`${esgApiBase}/chat/sessions/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.message || payload?.detail || payload?.error || 'Unable to delete chat session');
-      }
+      await apiFetch(`/chat/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
       setChatSessions(prev => prev.filter(session => session.id !== id));
       if (id === currentSessionId) {
         setCurrentSessionId('');
@@ -2468,27 +1780,8 @@ const Agent: React.FC = () => {
       return;
     }
 
-    const target = documents.find(doc => doc.id === id);
-    if (target?.id === 'sample_esg_report') {
-      setDocuments(documents.filter(doc => doc.id !== id));
-      setQueryDocumentIds(prev => prev.filter(docId => docId !== id));
-      if (selectedDocument?.id === id) {
-        setSelectedDocument(null);
-        persistSelectedDocumentId('');
-      }
-      addAgentMessage("Report deleted.");
-      return;
-    }
-
     try {
-      const response = await fetch(`${esgApiBase}/documents/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.message || payload?.detail || payload?.error || 'Unable to delete document');
-      }
+      await apiFetch(`/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
       const remaining = documents.filter(doc => doc.id !== id);
       setDocuments(remaining);
       setQueryDocumentIds(prev => prev.filter(docId => docId !== id));
@@ -2496,42 +1789,20 @@ const Agent: React.FC = () => {
         const nextSelected = remaining[0] || null;
         setSelectedDocument(nextSelected);
         persistSelectedDocumentId(nextSelected?.id);
-        if (nextSelected && nextSelected.id !== 'sample_esg_report') {
+        if (nextSelected) {
           void selectDocument(nextSelected);
         }
       }
-      addAgentMessage("Report deleted.");
+      addAgentMessage("Document deleted.");
     } catch (error) {
       console.error('Delete document failed:', error);
       addAgentMessage(
-        error instanceof Error ? `Couldn’t delete the report: ${error.message}` : 'Couldn’t delete the report.',
+        error instanceof Error ? `Couldn’t delete the document: ${error.message}` : 'Couldn’t delete the document.',
         "error"
       );
     }
   };
-  const exportGraph = (document: Document, format: string) => {
-    const dataStr = JSON.stringify(document.graph, null, 2);
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(dataBlob);
-    const link = window.document.createElement('a');
-    link.href = url;
-    link.download = `${document.title}_graph.${format}`;
-    link.click();
-    URL.revokeObjectURL(url);
-    addAgentMessage(`Graph exported as ${format.toUpperCase()}.`);
-  };
-  const getFilteredRelationships = (relationships: CausalRelationship[]) => {
-    return relationships.filter(rel => {
-      const matchesSearch = searchTerm === '' || 
-        rel.cause.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        rel.effect.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        rel.evidence.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesType = filterType === '' || 
-        rel.relationship_type.toLowerCase().includes(filterType.toLowerCase());
-      return matchesSearch && matchesType;
-    });
-  };
-  const handleFileUpload = async (file: File, options: { autoUpload?: boolean } = {}) => {
+  const handleFileUpload = async (file: File) => {
     console.log('File upload triggered:', file.name, file.type, file.size);
     const maxSize = 50 * 1024 * 1024;
     if (file.size > maxSize) {
@@ -2562,9 +1833,7 @@ const Agent: React.FC = () => {
       const preview = lowerName.endsWith('.txt') || file.type === 'text/plain'
         ? await file.text()
         : '';
-      const inferredTitle = options.autoUpload
-        ? file.name.replace(/\.[^/.]+$/, '')
-        : uploadForm.title || file.name.replace(/\.[^/.]+$/, '');
+      const inferredTitle = uploadForm.title || file.name.replace(/\.[^/.]+$/, '');
       setFileContent(preview);
       if (!uploadForm.title) {
         setUploadForm(prev => ({
@@ -2572,20 +1841,7 @@ const Agent: React.FC = () => {
           title: inferredTitle
         }));
       }
-      if (options.autoUpload) {
-        setIsProcessingFile(false);
-        await handleUpload({
-          title: inferredTitle,
-          file,
-          content: preview,
-          domain: 'general',
-          sourceType: '',
-          source: '',
-          openDocumentsOnComplete: false,
-        });
-      } else {
-        addAgentMessage(`“${file.name}” is ready. Select “Index this report” to process it.`, "success");
-      }
+      addAgentMessage(`“${file.name}” is ready. Select “Index this document” to process it.`, "success");
     } catch (error) {
       console.error('File processing error:', error);
       addAgentMessage(`Couldn’t read that file: ${error instanceof Error ? error.message : 'unknown error'}. Try a different file.`, "error");
@@ -2597,41 +1853,17 @@ const Agent: React.FC = () => {
 
   const handleUploadEntry = () => {
     if (!isAuthenticated) {
-      addAgentMessage("Sign in to upload reports.", "error");
+      addAgentMessage("Sign in to upload documents.", "error");
       return;
     }
     setActiveTab('upload');
   };
 
-  const handleSkillFileUpload = (file: File) => {
-    const validation = validateSkillFile(file);
-    setSkillUploadDraft({
-      name: file.name,
-      size: file.size,
-      status: validation.valid ? 'accepted' : 'rejected',
-      reason: validation.valid
-        ? 'Skill file accepted. It is staged for validation and does not enter the report corpus.'
-        : validation.reason,
-    });
-  };
-
   const totalDocuments = documents.length;
   const agentStarterCards: Array<{ title: string; prompt: string; tier: RagReasoningMode }> = [
-    {
-      title: 'Summarise',
-      prompt: 'Summarise the strategy, targets and main risks in the most relevant reports, with citations.',
-      tier: 'flash',
-    },
-    {
-      title: 'Compare',
-      prompt: 'Compare the climate targets across my reports. Where do they differ, and what evidence backs each one?',
-      tier: 'flash',
-    },
-    {
-      title: 'Assess risk',
-      prompt: 'Which ESG issues in these reports are most likely to become business risks, and how strong is the evidence for each?',
-      tier: 'deep',
-    },
+    { title: '总结', prompt: '总结这份合同的关键条款', tier: 'flash' },
+    { title: '评估风险', prompt: '违约责任条款有哪些风险？', tier: 'deep' },
+    { title: '对比', prompt: '对比两份合同的付款条件', tier: 'flash' },
   ];
   const selectedQueryDocuments = queryDocumentIds
     .map((id) => documents.find((doc) => doc.id === id))
@@ -2646,16 +1878,16 @@ const Agent: React.FC = () => {
   const scopedDocumentCount = effectiveQueryDocumentIds.length;
   const queryScopeLabel =
     queryScopeMode === 'all'
-      ? 'All reports'
+      ? 'All documents'
       : scopedDocumentCount > 0
         ? `${scopedDocumentCount} selected`
-        : 'Current report';
+        : 'Current document';
   const queryScopeDetail =
     queryScopeMode === 'all'
-      ? `${totalDocuments} reports available`
+      ? `${totalDocuments} documents available`
       : selectedQueryDocuments.length > 0
         ? selectedQueryDocuments.map((doc) => doc.title).join(', ')
-        : selectedDocument?.title || 'No report selected';
+        : selectedDocument?.title || 'No document selected';
   const loadingSteps = getLoadingSteps(tier);
   const currentLoadingStep = loadingSteps[Math.min(loadingStepIndex, loadingSteps.length - 1)];
   const showLongWaitHint = isLoading && loadingElapsedMs >= 8000;
@@ -2663,7 +1895,6 @@ const Agent: React.FC = () => {
     loadingElapsedMs >= 15000
       ? 'Still working. Large libraries can take a little longer.'
       : 'Gathering evidence can take a few more seconds.';
-  const filteredSelectedRelationships = getFilteredRelationships(selectedDocument?.relationships || []);
   const sortedTaskSessions = [...chatSessions].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   const normalizedTaskSearch = taskSearchTerm.trim().toLowerCase();
   const filteredTaskSessions = sortedTaskSessions.filter((session) => {
@@ -2672,12 +1903,6 @@ const Agent: React.FC = () => {
       session.title.toLowerCase().includes(normalizedTaskSearch) ||
       formatRelativeTime(session.updatedAt).toLowerCase().includes(normalizedTaskSearch)
     );
-  });
-  const normalizedSkillSearch = skillSearchTerm.trim().toLowerCase();
-  const filteredSkillCards = BUILT_IN_AGENT_SKILLS.filter((skill) => {
-    if (!normalizedSkillSearch) return true;
-    return [skill.name, skill.owner, skill.summary, skill.trigger]
-      .some((value) => value.toLowerCase().includes(normalizedSkillSearch));
   });
   const uploadDisabled = isUploading || isProcessingFile || !uploadForm.title || (!uploadedFile && !fileContent && !uploadForm.content);
   const displayedConversation = conversation.filter(
@@ -2792,23 +2017,14 @@ const Agent: React.FC = () => {
     };
 
     try {
-      const response = await fetch(`${esgApiBase}/feedback`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
-      if (response.status === 409) {
+      await apiFetch('/feedback', jsonRequest('POST', payload));
+      markFeedbackSubmitted(message, messageId, rating);
+    } catch (error) {
+      // 409: this answer already has feedback on the server.
+      if (error instanceof ApiError && error.status === 409) {
         markFeedbackSubmitted(message, messageId, rating);
         return;
       }
-      if (!response.ok) {
-        throw new Error(await readApiErrorMessage(response));
-      }
-      markFeedbackSubmitted(message, messageId, rating);
-    } catch (error) {
       setFeedbackDrafts(prev => ({
         ...prev,
         [messageId]: {
@@ -2821,17 +2037,6 @@ const Agent: React.FC = () => {
     }
   };
   const uploadDisplayTitle = uploadStatusTitle || uploadedFile?.name || uploadForm.title || 'Uploaded document';
-  const neo4jCounts = neo4jStatus?.stats?.counts || {};
-  const selectedNeo4jSync = selectedDocument?.neo4j_sync;
-  const neo4jConnected = Boolean(neo4jStatus?.connected);
-  const baseGraph = neo4jGraph || selectedDocument?.graph || null;
-  const displayedGraph = sanitizeGraphData(baseGraph);
-  const graphFocusNodeId = getGraphFocusNodeId(displayedGraph);
-  const graphDegreeMap = displayedGraph ? getGraphDegreeMap(displayedGraph) : new Map<string, number>();
-  const graphDomainBreakdown = getDomainBreakdown(displayedGraph);
-  const graphTopNodes = getTopConnectedNodes(displayedGraph);
-  const selectedGraphNode = displayedGraph?.nodes.find((node: GraphNode) => node.id === selectedGraphNodeId) || null;
-  const selectedGraphEdge = displayedGraph?.edges.find((edge: GraphEdge) => getGraphEdgeId(edge) === selectedGraphEdgeId) || null;
   const latestAgentMessage = [...displayedConversation].reverse().find((message) => (
     message.type === 'agent' &&
     (
@@ -2863,8 +2068,7 @@ const Agent: React.FC = () => {
   const mobileTitle =
     activeTab === 'documents' ? 'Library'
       : activeTab === 'upload' ? 'Upload'
-        : activeTab === 'skills' ? 'Skills'
-          : isEmptyChat ? 'New research' : sessionTitle;
+        : isEmptyChat ? 'New research' : sessionTitle;
   useDocumentTitle(activeTab === 'chat' && isEmptyChat ? 'Research desk' : mobileTitle);
   const searchShortcut =
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent) ? '⌘K' : 'Ctrl K';
@@ -3007,15 +2211,6 @@ const Agent: React.FC = () => {
           Upload
           {isUploading && <span className="ml-auto font-mono text-[11px] text-ink-4">{uploadProgress}%</span>}
         </button>
-        <button
-          type="button"
-          onClick={() => showTab('skills')}
-          aria-current={activeTab === 'skills' ? 'page' : undefined}
-          className="nav-item"
-        >
-          <Zap className="h-4 w-4" />
-          Skills
-        </button>
       </nav>
 
       <div className="cg-scroll mt-6 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
@@ -3084,25 +2279,11 @@ const Agent: React.FC = () => {
                 <Home className="h-4 w-4 text-ink-4" />
                 Home
               </Link>
-              <Link to="/causal-inference" className="menu-item" role="menuitem">
-                <Network className="h-4 w-4 text-ink-4" />
-                Knowledge graph
-              </Link>
-              <Link to="/desktop" className="menu-item" role="menuitem">
-                <Download className="h-4 w-4 text-ink-4" />
-                Desktop app
-              </Link>
               {isAdmin && (
-                <>
-                  <Link to="/admin" className="menu-item" role="menuitem">
-                    <ShieldCheck className="h-4 w-4 text-ink-4" />
-                    Admin console
-                  </Link>
-                  <Link to="/admin/recruitment" className="menu-item" role="menuitem">
-                    <Briefcase className="h-4 w-4 text-ink-4" />
-                    Recruitment
-                  </Link>
-                </>
+                <Link to="/admin" className="menu-item" role="menuitem">
+                  <ShieldCheck className="h-4 w-4 text-ink-4" />
+                  Admin console
+                </Link>
               )}
               <div className="menu-sep" />
               <button
@@ -3253,7 +2434,7 @@ const Agent: React.FC = () => {
               onClick={() => setActiveTab('documents')}
               className="px-1 text-xs font-medium text-ink-3 underline decoration-line-strong underline-offset-2 transition-colors hover:text-ink"
             >
-              {effectiveQueryDocumentIds.length ? 'Change' : 'Choose reports'}
+              {effectiveQueryDocumentIds.length ? 'Change' : 'Choose documents'}
             </button>
           </div>
         )}
@@ -3281,8 +2462,8 @@ const Agent: React.FC = () => {
           }}
           placeholder={
             tier === 'deep'
-              ? 'Ask something that needs several reports, a comparison or a chain of reasoning…'
-              : 'Ask about emissions, targets, suppliers, governance…'
+              ? 'Ask something that needs several documents, a comparison or a chain of reasoning…'
+              : 'Ask about payment terms, liability, termination, confidentiality…'
           }
           rows={1}
           className="block max-h-[200px] min-h-[52px] w-full resize-none bg-transparent px-4 pb-2 pt-3.5 text-[15.5px] leading-6 text-ink outline-none placeholder:text-ink-5 disabled:cursor-not-allowed"
@@ -3294,8 +2475,8 @@ const Agent: React.FC = () => {
             onClick={handleUploadEntry}
             disabled={isUploading || isProcessingFile}
             className="icon-btn"
-            title="Upload report"
-            aria-label="Upload report"
+            title="Upload document"
+            aria-label="Upload document"
           >
             <Paperclip className="h-4 w-4" />
           </button>
@@ -3303,7 +2484,7 @@ const Agent: React.FC = () => {
             type="button"
             onClick={() => setQueryScopeMode(queryScopeMode === 'all' ? 'selected' : 'all')}
             className="inline-flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[13px] text-ink-3 transition-colors hover:bg-paper-hover hover:text-ink"
-            title={`Scope: ${queryScopeDetail}. Click to switch between all reports and selected reports.`}
+            title={`Scope: ${queryScopeDetail}. Click to switch between all documents and selected documents.`}
           >
             <FolderOpen className="h-4 w-4 shrink-0" />
             <span className="truncate">{queryScopeLabel}</span>
@@ -3340,7 +2521,7 @@ const Agent: React.FC = () => {
         </div>
       </form>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-1">
-        <ModelStatus apiBase={esgApiBase} tier={tier} />
+        <ModelStatus tier={tier} />
         <span className="hidden text-xs text-ink-4 md:inline">Check the cited passages before relying on an answer.</span>
       </div>
     </div>
@@ -3595,7 +2776,7 @@ const Agent: React.FC = () => {
         >
           {isEmptyChat ? (
             <WorkbenchWelcome
-              reportCount={totalDocuments}
+              documentCount={totalDocuments}
               starters={agentStarterCards}
               composer={renderComposer()}
               onUpload={handleUploadEntry}
@@ -3657,364 +2838,44 @@ const Agent: React.FC = () => {
     );
   };
 
-  const nodeLabelFor = (nodeId: string) =>
-    displayedGraph?.nodes.find((node: GraphNode) => node.id === nodeId)?.label || nodeId;
-
-  const renderGraphInspector = () => {
-    const connectedEdges = selectedGraphNode
-      ? (displayedGraph?.edges || []).filter(
-          (edge: GraphEdge) => edge.source === selectedGraphNode.id || edge.target === selectedGraphNode.id,
-        )
-      : [];
-    const canReset = Boolean(selectedGraphEdge) || selectedGraphNodeId !== graphFocusNodeId;
-    return (
-      <div className="rounded-xl border border-line bg-white">
-        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
-          <span className="text-sm font-medium text-ink">
-            {selectedGraphEdge ? 'Relationship' : selectedGraphNode ? 'Entity' : 'Overview'}
-          </span>
-          {canReset && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedGraphEdgeId(null);
-                setSelectedGraphNodeId(graphFocusNodeId);
-              }}
-              className="btn btn-ghost btn-sm h-7"
-            >
-              Reset
-            </button>
-          )}
+  const renderDocumentDetail = (doc: Document) => (
+    <section className="min-w-0" aria-label="Document details">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <h2 className="break-words text-xl font-semibold leading-snug text-ink">{doc.title}</h2>
+          {doc.source && <p className="mt-1 truncate font-mono text-xs text-ink-4">{doc.source}</p>}
+          {loadingDocumentId === doc.id && <p className="mt-2 text-sm text-ink-3">Loading details…</p>}
         </div>
-        <div className="grid gap-6 p-4 md:grid-cols-2">
-          <div className="min-w-0">
-            {selectedGraphEdge ? (
-              <div className="space-y-2 text-sm">
-                <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                  <span className="font-medium text-ink">{nodeLabelFor(selectedGraphEdge.source)}</span>
-                  <span className="font-mono text-xs text-ink-4">{formatGraphLabel(selectedGraphEdge.relationship_type)}</span>
-                  <span className="font-medium text-ink">{nodeLabelFor(selectedGraphEdge.target)}</span>
-                </p>
-                <p className="text-xs text-ink-4">Confidence {(selectedGraphEdge.confidence * 100).toFixed(0)}%</p>
-                <p className="leading-6 text-ink-2">
-                  {selectedGraphEdge.evidence || 'No evidence passage is attached to this relationship.'}
-                </p>
-              </div>
-            ) : selectedGraphNode ? (
-              <div>
-                <p className="text-base font-medium text-ink">{selectedGraphNode.label}</p>
-                <p className="mt-0.5 text-xs text-ink-4">
-                  {[
-                    formatGraphLabel(selectedGraphNode.type),
-                    GRAPH_DOMAIN_LABELS[normalizeGraphDomain(selectedGraphNode.domain)] || selectedGraphNode.domain,
-                    `${graphDegreeMap.get(selectedGraphNode.id) || 0} connections`,
-                    `${(selectedGraphNode.confidence * 100).toFixed(0)}% confidence`,
-                    selectedGraphNode.company,
-                    selectedGraphNode.year,
-                  ].filter(Boolean).join(' · ')}
-                </p>
-                {selectedGraphNode.description && (
-                  <p className="mt-2 text-sm leading-6 text-ink-2">{selectedGraphNode.description}</p>
-                )}
-                <div className="section-label mb-1 mt-4">Relationships</div>
-                {connectedEdges.length === 0 ? (
-                  <p className="text-sm text-ink-4">No relationships recorded for this entity.</p>
-                ) : (
-                  <ul className="divide-y divide-line">
-                    {connectedEdges.slice(0, 5).map((edge: GraphEdge) => {
-                      const otherId = edge.source === selectedGraphNode.id ? edge.target : edge.source;
-                      return (
-                        <li key={getGraphEdgeId(edge)}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedGraphEdgeId(getGraphEdgeId(edge));
-                              setSelectedGraphNodeId(null);
-                            }}
-                            className="flex w-full items-baseline justify-between gap-3 py-2 text-left text-sm transition-colors hover:text-ink"
-                          >
-                            <span className="min-w-0 truncate text-ink-2">
-                              <span className="font-mono text-xs text-ink-4">{formatGraphLabel(edge.relationship_type)}</span>{' '}
-                              {nodeLabelFor(otherId)}
-                            </span>
-                            <span className="shrink-0 font-mono text-xs text-ink-4">{(edge.confidence * 100).toFixed(0)}%</span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
-            ) : (
-              <p className="text-sm leading-6 text-ink-3">Select an entity or a relationship in the graph to read its details here.</p>
-            )}
-          </div>
-
-          <div className="min-w-0">
-            <div className="section-label mb-1.5">Domains</div>
-            <div className="flex flex-wrap gap-1.5">
-              {graphDomainBreakdown.length > 0 ? graphDomainBreakdown.map(([domain, count]) => (
-                <span key={domain} className="tag">
-                  <span className={`status-dot ${DOMAIN_DOT_CLASS[domain] || 'bg-domain-general'}`} />
-                  {GRAPH_DOMAIN_LABELS[domain] || domain}
-                  <span className="tabular-nums text-ink-4">{count}</span>
-                </span>
-              )) : (
-                <span className="text-sm text-ink-4">No domain information.</span>
-              )}
-            </div>
-            <div className="section-label mb-1 mt-4">Most connected</div>
-            <ul className="divide-y divide-line">
-              {graphTopNodes.slice(0, 4).map(node => (
-                <li key={node.id}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedGraphNodeId(node.id);
-                      setSelectedGraphEdgeId(null);
-                    }}
-                    className="flex w-full items-baseline justify-between gap-3 py-2 text-left text-sm transition-colors hover:text-ink"
-                  >
-                    <span className={`truncate ${node.id === selectedGraphNodeId ? 'font-medium text-ink' : 'text-ink-2'}`}>{node.label}</span>
-                    <span className="shrink-0 font-mono text-xs text-ink-4">{node.degree} links</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
+        <button type="button" onClick={() => askAboutDocument(doc)} className="btn btn-primary btn-sm">
+          Ask about this document
+        </button>
       </div>
-    );
-  };
 
-  const renderDocumentDetail = (doc: Document) => {
-    const totalRelationships = doc.relationships?.length || 0;
-    return (
-      <section className="min-w-0" aria-label="Report details">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <h2 className="break-words text-xl font-semibold leading-snug text-ink">{doc.title}</h2>
-            {doc.source && <p className="mt-1 truncate font-mono text-xs text-ink-4">{doc.source}</p>}
-            {loadingDocumentId === doc.id && <p className="mt-2 text-sm text-ink-3">Loading details…</p>}
+      <dl className="mt-6 grid grid-cols-3 divide-x divide-line rounded-xl border border-line bg-white">
+        {[
+          ['Passages', String(doc.chunk_count || 0)],
+          ['Category', documentCategoryLabel(doc.domain)],
+          ['Added', formatDocumentDate(doc.ingested_at)],
+        ].map(([label, value]) => (
+          <div key={label} className="min-w-0 px-4 py-3">
+            <dt className="text-xs text-ink-4">{label}</dt>
+            <dd className="mt-1 truncate text-lg font-semibold tabular-nums text-ink">{value}</dd>
           </div>
-          <button type="button" onClick={() => askAboutDocument(doc)} className="btn btn-primary btn-sm">
-            Ask about this report
-          </button>
-        </div>
-
-        <dl className="mt-6 grid grid-cols-3 divide-x divide-line rounded-xl border border-line bg-white">
-          {[
-            ['Concepts', String(doc.graph?.metadata?.node_count || 0)],
-            ['Connections', String(doc.graph?.metadata?.edge_count || 0)],
-            ['Structure', doc.graph?.metadata?.is_acyclic ? 'Acyclic' : 'Cyclic'],
-          ].map(([label, value]) => (
-            <div key={label} className="min-w-0 px-4 py-3">
-              <dt className="text-xs text-ink-4">{label}</dt>
-              <dd className="mt-1 truncate text-lg font-semibold tabular-nums text-ink">{value}</dd>
-            </div>
-          ))}
-        </dl>
-
-        {isAdmin && (
-          <div className="mt-6 overflow-hidden rounded-xl border border-line bg-white">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
-              <div className="flex min-w-0 items-center gap-2 text-sm">
-                <Database className="h-4 w-4 shrink-0 text-ink-4" />
-                <span className="font-medium text-ink">Neo4j</span>
-                <span className={`status-dot ${neo4jConnected ? 'bg-ok' : neo4jStatus ? 'bg-warn' : 'bg-line-strong'}`} />
-                <span className="text-ink-3">{neo4jStatus ? (neo4jConnected ? 'Connected' : 'Unavailable') : 'Checking…'}</span>
-              </div>
-              <div className="flex gap-2">
-                <button type="button" onClick={handleOpenFullGraph} className="btn btn-secondary btn-sm">
-                  <Network className="h-3.5 w-3.5" />
-                  Open full graph
-                </button>
-                <button type="button" onClick={() => setActiveTab('upload')} className="btn btn-ghost btn-sm">
-                  Add report
-                </button>
-              </div>
-            </div>
-            {neo4jStatus && !neo4jConnected && (
-              <p className="border-b border-line px-4 py-2.5 text-sm text-ink-3">
-                {neo4jStatus.message || neo4jStatus.reason || 'Neo4j status check failed.'}
-              </p>
-            )}
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 px-4 py-3 sm:grid-cols-5">
-              {([
-                ['Documents', neo4jCounts.document_count],
-                ['Chunks', neo4jCounts.chunk_count],
-                ['Entities', neo4jCounts.entity_count],
-                ['Relations', neo4jCounts.relation_count],
-                ['Mentions', neo4jCounts.mention_count],
-              ] as Array<[string, number | undefined]>).map(([label, value]) => (
-                <div key={label}>
-                  <dt className="text-xs text-ink-4">{label}</dt>
-                  <dd className="mt-0.5 text-sm font-medium tabular-nums text-ink">
-                    {typeof value === 'number' ? value.toLocaleString() : '—'}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-            {selectedNeo4jSync && (
-              <p className="border-t border-line px-4 py-2.5 text-xs text-ink-3">
-                This report:{' '}
-                {selectedNeo4jSync.synced
-                  ? `synced · ${selectedNeo4jSync.chunks_synced || 0} chunks · ${selectedNeo4jSync.entities_synced || 0} entities · ${selectedNeo4jSync.relations_synced || 0} relations`
-                  : selectedNeo4jSync.reason || 'not synced'}
-              </p>
-            )}
-          </div>
-        )}
-
-        <div className="mt-8">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="text-base font-semibold text-ink">Graph</h3>
-              <p className="mt-0.5 text-sm text-ink-3">
-                {neo4jGraphState === 'ready'
-                  ? 'The Neo4j subgraph around this report.'
-                  : 'Entities and relationships extracted from this report.'}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsDocumentGraphOpen(prev => !prev)}
-              aria-expanded={isDocumentGraphOpen}
-              className="btn btn-secondary btn-sm"
-            >
-              {isDocumentGraphOpen ? 'Hide graph' : 'Show graph'}
-            </button>
-          </div>
-          {isDocumentGraphOpen && (
-            <div className="mt-4 space-y-4">
-              {neo4jGraphState === 'loading' ? (
-                <div className="flex h-[360px] items-center justify-center gap-2 rounded-xl border border-line bg-white text-sm text-ink-3">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading the graph…
-                </div>
-              ) : displayedGraph && displayedGraph.nodes.length > 0 ? (
-                <>
-                  <GraphVisualizer
-                    graph={displayedGraph}
-                    height={520}
-                    focusNodeId={selectedGraphNodeId || graphFocusNodeId}
-                    selectedNodeId={selectedGraphNodeId}
-                    selectedEdgeId={selectedGraphEdgeId}
-                    highlightPath={highlightPath}
-                    onNodeSelect={(node: GraphNode) => {
-                      setSelectedGraphNodeId(node.id);
-                      setSelectedGraphEdgeId(null);
-                      setHighlightPath(null);
-                    }}
-                    onEdgeSelect={(edge: GraphEdge) => {
-                      setSelectedGraphEdgeId(getGraphEdgeId(edge));
-                      setSelectedGraphNodeId(null);
-                      setHighlightPath(null);
-                    }}
-                  />
-                  {renderGraphInspector()}
-                </>
-              ) : (
-                <div className="rounded-xl border border-dashed border-line-strong px-6 py-12 text-center">
-                  <p className="font-medium text-ink">No graph for this report</p>
-                  <p className="mt-1 text-sm text-ink-3">
-                    {displayedGraph
-                      ? 'Not enough connected entities were extracted to draw one.'
-                      : 'This report has not been extracted into a graph yet.'}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-10">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h3 className="text-base font-semibold text-ink">Relationships</h3>
-              <p className="mt-0.5 text-sm text-ink-3">
-                Showing {filteredSelectedRelationships.length} of {totalRelationships}
-              </p>
-            </div>
-            <div className="flex w-full gap-2 sm:w-auto">
-              <div className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-4" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  placeholder="Search relationships"
-                  aria-label="Search relationships"
-                  value={searchTerm}
-                  className="input h-9 pl-8 pr-8 text-sm"
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-                {searchTerm && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchTerm('')}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-ink-4 hover:text-ink"
-                    aria-label="Clear search"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-              <select
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value)}
-                aria-label="Relationship type"
-                className="input h-9 w-auto text-sm"
-              >
-                <option value="">All types</option>
-                <option value="causes">Causes</option>
-                <option value="influences">Influences</option>
-                <option value="leads_to">Leads to</option>
-                <option value="affects">Affects</option>
-                <option value="improves">Improves</option>
-                <option value="harms">Harms</option>
-              </select>
-            </div>
-          </div>
-          {filteredSelectedRelationships.length === 0 ? (
-            <div className="mt-4 rounded-xl border border-dashed border-line-strong px-6 py-10 text-center">
-              <p className="font-medium text-ink">No relationships found</p>
-              <p className="mt-1 text-sm text-ink-3">Try a broader search or clear the type filter.</p>
-            </div>
-          ) : (
-            <ul className="mt-4 divide-y divide-line border-y border-line">
-              {filteredSelectedRelationships.map((rel, index) => (
-                <li key={index} className="py-3.5">
-                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1.5">
-                    <p className="min-w-0 text-sm">
-                      <span className="font-medium text-ink">{rel.cause}</span>
-                      <span className="mx-2 text-ink-4">→</span>
-                      <span className="font-medium text-ink">{rel.effect}</span>
-                    </p>
-                    <span className="flex shrink-0 items-center gap-2 text-xs text-ink-4">
-                      <span className="tag h-5 px-1.5 font-mono text-[11px]">{rel.relationship_type}</span>
-                      <span className="tabular-nums">{(rel.confidence * 100).toFixed(0)}%</span>
-                    </span>
-                  </div>
-                  {rel.evidence && <p className="mt-1.5 text-sm leading-6 text-ink-3">{rel.evidence}</p>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-    );
-  };
+        ))}
+      </dl>
+    </section>
+  );
 
   const renderLibraryView = () => (
     <div className="mx-auto w-full max-w-[1200px] px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="page-title">Library</h1>
-          <p className="mt-1 text-sm text-ink-3">Reports you can search. Put up to three in scope to focus a question on them.</p>
+          <p className="mt-1 text-sm text-ink-3">Documents you can search. Put up to three in scope to focus a question on them.</p>
         </div>
         <button type="button" onClick={handleUploadEntry} className="btn btn-secondary btn-sm">
           <FileUp className="h-4 w-4" />
-          Upload report
+          Upload document
         </button>
       </div>
 
@@ -4024,30 +2885,29 @@ const Agent: React.FC = () => {
       {isDocumentsLoading && (
         <div className="mt-5 flex items-center gap-2 text-sm text-ink-3">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Loading reports…
+          Loading documents…
         </div>
       )}
 
       {documents.length === 0 ? (
         !isDocumentsLoading && (
           <div className="mt-8 rounded-xl border border-dashed border-line-strong px-6 py-16 text-center">
-            <p className="font-medium text-ink">No reports yet</p>
+            <p className="font-medium text-ink">No documents yet</p>
             <p className="mx-auto mt-1 max-w-sm text-sm text-ink-3">
-              Upload a sustainability report to start asking questions about it.
+              Upload a contract to start asking questions about it.
             </p>
             <button type="button" onClick={handleUploadEntry} className="btn btn-primary btn-sm mt-5">
-              Upload a report
+              Upload a document
             </button>
           </div>
         )
       ) : (
         <div className="mt-6 grid gap-8 xl:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] xl:items-start">
-          <ul className="panel divide-y divide-line overflow-hidden" aria-label="Reports">
+          <ul className="panel divide-y divide-line overflow-hidden" aria-label="Documents">
             {documents.map((doc) => {
               const inQueryScope = queryDocumentIds.includes(doc.id);
               const canAddToScope = inQueryScope || queryDocumentIds.length < 3;
               const isSelected = selectedDocument?.id === doc.id;
-              const relationshipCount = doc.relationship_count ?? (doc.relationships?.length || 0);
               return (
                 <li
                   key={doc.id}
@@ -4066,7 +2926,7 @@ const Agent: React.FC = () => {
                   >
                     <span className="line-clamp-2 break-words text-sm font-medium leading-snug text-ink">{doc.title}</span>
                     <span className="mt-1 block text-xs text-ink-4">
-                      {doc.graph?.metadata?.node_count || 0} concepts · {relationshipCount} relationships
+                      {doc.chunk_count || 0} passages
                     </span>
                   </button>
                   <div className="flex shrink-0 items-center gap-0.5">
@@ -4075,7 +2935,7 @@ const Agent: React.FC = () => {
                       onClick={() => toggleDocumentInScope(doc.id)}
                       disabled={!canAddToScope}
                       aria-pressed={inQueryScope}
-                      title={inQueryScope ? 'Remove from question scope' : canAddToScope ? 'Add to question scope' : 'Up to three reports can be in scope'}
+                      title={inQueryScope ? 'Remove from question scope' : canAddToScope ? 'Add to question scope' : 'Up to three documents can be in scope'}
                       className={`h-7 rounded-md px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
                         inQueryScope
                           ? 'bg-ink text-white hover:bg-ink-2'
@@ -4087,18 +2947,9 @@ const Agent: React.FC = () => {
                     {isAdmin && renderSyncStatus(doc)}
                     <button
                       type="button"
-                      onClick={() => exportGraph(doc, 'json')}
-                      className="icon-btn h-7 w-7 sm:opacity-0 sm:focus:opacity-100 sm:group-hover:opacity-100"
-                      title="Export graph as JSON"
-                      aria-label={`Export graph for ${doc.title}`}
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => deleteDocument(doc.id)}
                       className="icon-btn h-7 w-7 hover:text-err sm:opacity-0 sm:focus:opacity-100 sm:group-hover:opacity-100"
-                      title="Delete report"
+                      title="Delete document"
                       aria-label={`Delete ${doc.title}`}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -4113,7 +2964,7 @@ const Agent: React.FC = () => {
             renderDocumentDetail(selectedDocument)
           ) : (
             <div className="rounded-xl border border-dashed border-line-strong px-6 py-16 text-center text-sm text-ink-3">
-              Select a report to see what was extracted from it.
+              Select a document to see its details.
             </div>
           )}
         </div>
@@ -4123,10 +2974,9 @@ const Agent: React.FC = () => {
 
   const renderUploadView = () => (
     <div className="mx-auto w-full max-w-[720px] px-4 py-6 sm:px-6 lg:py-10">
-      <h1 className="page-title">Upload a report</h1>
+      <h1 className="page-title">Upload a document</h1>
       <p className="mt-1 text-sm leading-6 text-ink-3">
-        PDF, Word, plain text or RTF, up to 50 MB. The report is split into passages, indexed for search and read for
-        entities and relationships.
+        PDF, Word, plain text or RTF, up to 50 MB. The document is split into passages and indexed for search.
       </p>
 
       <div className="segmented mt-6" role="tablist" aria-label="Input method">
@@ -4174,7 +3024,7 @@ const Agent: React.FC = () => {
               <div
                 role="button"
                 tabIndex={0}
-                aria-label="Choose a report file"
+                aria-label="Choose a file"
                 onClick={() => fileInputRef.current?.click()}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -4245,9 +3095,9 @@ const Agent: React.FC = () => {
             value={uploadForm.content}
             onChange={(e) => setUploadForm({ ...uploadForm, content: e.target.value })}
             rows={14}
-            aria-label="Report text"
+            aria-label="Document text"
             className="input min-h-[300px] resize-y text-sm"
-            placeholder="Paste a section, an excerpt or the whole report."
+            placeholder="Paste a section, an excerpt or the whole document."
           />
         )}
       </div>
@@ -4261,7 +3111,7 @@ const Agent: React.FC = () => {
             value={uploadForm.title}
             onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
             className="input"
-            placeholder={uploadedFile?.name || 'For example: Orbis Materials Sustainability Report 2024'}
+            placeholder={uploadedFile?.name || 'For example: Equipment Purchase Agreement 2024'}
           />
         </div>
 
@@ -4275,30 +3125,9 @@ const Agent: React.FC = () => {
                 onChange={(e) => setUploadForm({ ...uploadForm, domain: e.target.value })}
                 className="input"
               >
-                <option value="general">General</option>
-                <option value="esg_report">ESG report</option>
-                <option value="academic">Academic prior</option>
-                <option value="regulatory">Regulatory context</option>
-                <option value="news">News</option>
-                <option value="environmental">Environmental</option>
-                <option value="social">Social</option>
-                <option value="governance">Governance</option>
-              </select>
-            </div>
-            <div>
-              <label className="field-label" htmlFor="upload-source-type">Source type</label>
-              <select
-                id="upload-source-type"
-                value={uploadForm.source_type}
-                onChange={(e) => setUploadForm({ ...uploadForm, source_type: e.target.value })}
-                className="input"
-              >
-                <option value="">Detect automatically</option>
-                <option value="corporate_disclosure">Corporate disclosure</option>
-                <option value="peer_reviewed">Peer reviewed</option>
-                <option value="regulatory_doc">Regulatory document</option>
-                <option value="analyst_report">Analyst report</option>
-                <option value="news_article">News article</option>
+                {DOCUMENT_CATEGORIES.map((category) => (
+                  <option key={category.value} value={category.value}>{category.label}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -4313,7 +3142,7 @@ const Agent: React.FC = () => {
               {uploadStage ? `${uploadStage.charAt(0).toUpperCase()}${uploadStage.slice(1)}…` : 'Processing…'}
             </>
           ) : (
-            'Index this report'
+            'Index this document'
           )}
         </button>
         {!isUploading && uploadDisabled && (
@@ -4335,143 +3164,8 @@ const Agent: React.FC = () => {
     </div>
   );
 
-  const renderSkillsView = () => (
-    <div className="mx-auto w-full max-w-[880px] px-4 py-6 sm:px-6 lg:py-10">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="page-title">Skills</h1>
-          <p className="mt-1 max-w-xl text-sm leading-6 text-ink-3">
-            Skills shape how the research agent plans, searches and checks its work. They are kept separate from your
-            report library.
-          </p>
-        </div>
-        <button type="button" onClick={() => skillFileInputRef.current?.click()} className="btn btn-secondary btn-sm">
-          <FileUp className="h-4 w-4" />
-          Upload skill
-        </button>
-      </div>
-
-      <div className="relative mt-6">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-4" />
-        <input
-          value={skillSearchTerm}
-          onChange={(event) => setSkillSearchTerm(event.target.value)}
-          className="input pl-9"
-          placeholder="Search skills"
-          aria-label="Search skills"
-        />
-      </div>
-
-      {filteredSkillCards.length === 0 ? (
-        <p className="py-10 text-center text-sm text-ink-4">No skills match “{skillSearchTerm}”.</p>
-      ) : (
-        <ul className="mt-4 divide-y divide-line border-y border-line">
-          {filteredSkillCards.map((skill) => (
-            <li key={skill.name} className="grid gap-1.5 py-4 sm:grid-cols-[200px_minmax(0,1fr)] sm:gap-6">
-              <div>
-                <h2 className="text-sm font-medium text-ink">{skill.name}</h2>
-                <p className="mt-1 flex items-center gap-1.5 text-xs text-ink-4">
-                  <span className={`status-dot ${skill.status === 'Installed' ? 'bg-ok' : 'bg-line-strong'}`} />
-                  {skill.status} · {skill.owner}
-                </p>
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm leading-6 text-ink-2">{skill.summary}</p>
-                <p className="mt-1 text-xs leading-5 text-ink-4">Used for: {skill.trigger}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <section className="mt-10">
-        <h2 className="text-base font-semibold text-ink">Add a skill</h2>
-        <p className="mt-1 text-sm leading-6 text-ink-3">
-          Accepted files: <span className="font-mono text-xs">{SKILL_FILE_ALLOWED_LABEL}</span>. Reports and other
-          documents belong in Upload.
-        </p>
-        <input
-          ref={skillFileInputRef}
-          type="file"
-          accept={SKILL_FILE_ACCEPT}
-          className="hidden"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            event.target.value = '';
-            if (file) handleSkillFileUpload(file);
-          }}
-        />
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label="Choose a skill file"
-          onClick={() => skillFileInputRef.current?.click()}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              skillFileInputRef.current?.click();
-            }
-          }}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setIsDraggingSkillFile(true);
-          }}
-          onDragLeave={() => setIsDraggingSkillFile(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setIsDraggingSkillFile(false);
-            const file = event.dataTransfer.files?.[0];
-            if (file) handleSkillFileUpload(file);
-          }}
-          className={`mt-4 flex min-h-[140px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-6 py-8 text-center transition-colors ${
-            isDraggingSkillFile ? 'border-ink bg-white' : 'border-line-strong bg-white/60 hover:border-ink-5 hover:bg-white'
-          }`}
-        >
-          <p className="text-sm font-medium text-ink">
-            {isDraggingSkillFile ? 'Drop to add the skill' : 'Drop a skill file here, or click to browse'}
-          </p>
-          <p className="mt-1 text-xs text-ink-4">Up to 10 MB</p>
-        </div>
-
-        {skillUploadDraft && (
-          <div
-            className={`mt-4 flex items-start gap-3 rounded-xl border px-4 py-3 ${
-              skillUploadDraft.status === 'accepted'
-                ? 'border-ok-line bg-ok-bg text-ok'
-                : 'border-warn-line bg-warn-bg text-warn'
-            }`}
-          >
-            {skillUploadDraft.status === 'accepted'
-              ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-              : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">
-                {skillUploadDraft.name}
-                <span className="ml-2 font-normal opacity-80">{formatSkillFileSize(skillUploadDraft.size)}</span>
-              </p>
-              <p className="mt-0.5 text-sm leading-5">{skillUploadDraft.reason}</p>
-            </div>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-
   return (
     <div className="research-workspace flex h-screen h-dvh overflow-hidden bg-paper text-ink">
-      <input
-        ref={quickUploadInputRef}
-        type="file"
-        accept=".pdf,.doc,.docx,.txt,.rtf"
-        className="hidden"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          event.target.value = '';
-          if (file) {
-            void handleFileUpload(file, { autoUpload: true });
-          }
-        }}
-      />
       {isSearchPaletteOpen && renderSearchPalette()}
 
       <aside className="hidden w-[260px] shrink-0 border-r border-line bg-paper-sunken lg:block">
@@ -4534,7 +3228,6 @@ const Agent: React.FC = () => {
           <div className="cg-scroll min-h-0 flex-1 overflow-y-auto">
             {activeTab === 'documents' && renderLibraryView()}
             {activeTab === 'upload' && renderUploadView()}
-            {activeTab === 'skills' && renderSkillsView()}
           </div>
         )}
       </div>

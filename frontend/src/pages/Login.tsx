@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
+import { apiFetch, jsonRequest } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
+import type { AuthResponse, CaptchaResponse, EmailCodeResponse } from '../types/api';
 import useDocumentTitle from '../utils/useDocumentTitle';
 
 type Mode = 'login' | 'register';
@@ -28,25 +30,16 @@ const Login: React.FC = () => {
   const [adminInviteCode, setAdminInviteCode] = useState('');
   useDocumentTitle(mode === 'login' ? 'Sign in' : 'Create account');
 
-  const host = window.location.hostname || '127.0.0.1';
-  const localApiHost = host === 'localhost' || host === '127.0.0.1';
-  const apiBase = process.env.REACT_APP_ESG_API_BASE || (localApiHost ? `http://${host}:8000` : '');
-
   const fetchCaptcha = useCallback(async () => {
     try {
-      const res = await fetch(`${apiBase}/auth/captcha`);
-      const data = await res.json();
+      const data = await apiFetch<CaptchaResponse>('/auth/captcha');
       setCaptchaId(data.captcha_id);
       setCaptchaImage(data.image);
       setCaptchaCode('');
     } catch {
       setError('Failed to load captcha');
     }
-  }, [apiBase]);
-
-  useEffect(() => {
-    if (mode === 'register') fetchCaptcha();
-  }, [mode, fetchCaptcha]);
+  }, []);
 
   useEffect(() => {
     if (emailCodeCooldown <= 0) return;
@@ -66,20 +59,14 @@ const Login: React.FC = () => {
     }
     setEmailCodeSending(true);
     try {
-      const res = await fetch(`${apiBase}/auth/email-code/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          captcha_id: captchaId,
-          captcha_code: captchaCode,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Unable to send email code');
+      const data = await apiFetch<EmailCodeResponse>('/auth/email-code/send', jsonRequest('POST', {
+        email,
+        captcha_id: captchaId,
+        captcha_code: captchaCode,
+      }));
       setEmailCodeSent(true);
       setEmailCode('');
-      setEmailCodeCooldown(Number(data.cooldown_seconds || 60));
+      setEmailCodeCooldown(Number(data?.cooldown_seconds || 60));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to send email code');
     } finally {
@@ -106,13 +93,7 @@ const Login: React.FC = () => {
             admin_invite_code: registerRole === 'admin' ? adminInviteCode : undefined,
           };
 
-      const res = await fetch(`${apiBase}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Request failed');
+      const data = await apiFetch<AuthResponse>(endpoint, jsonRequest('POST', body));
       login(data.token, data.user);
       const from = (location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null)?.from;
       const redirectTo =
@@ -129,7 +110,9 @@ const Login: React.FC = () => {
   };
 
   const switchMode = () => {
-    setMode(mode === 'login' ? 'register' : 'login');
+    const nextMode: Mode = mode === 'login' ? 'register' : 'login';
+    setMode(nextMode);
+    if (nextMode === 'register') void fetchCaptcha();
     setRegisterRole('user');
     setAdminInviteCode('');
     setEmailCode('');
@@ -146,8 +129,8 @@ const Login: React.FC = () => {
         </h1>
         <p className="mt-3 text-ink-3">
           {mode === 'login'
-            ? 'Continue with your reports and past research.'
-            : 'Your library and research history are private to your account.'}
+            ? 'Continue with your contracts and earlier questions.'
+            : 'Your documents and conversations are private to your account.'}
         </p>
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-5">
@@ -163,7 +146,7 @@ const Login: React.FC = () => {
                     aria-pressed={registerRole === role}
                     className="flex-1 justify-center"
                   >
-                    {role === 'user' ? 'Researcher' : 'Administrator'}
+                    {role === 'user' ? 'Member' : 'Administrator'}
                   </button>
                 ))}
               </div>

@@ -1,5 +1,6 @@
 """Browser smoke verification against the production build; APIs are mock fixtures."""
 import json
+import os
 import threading
 from pathlib import Path
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
@@ -7,7 +8,7 @@ from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD = ROOT / 'frontend' / 'build'
+BUILD = ROOT / 'frontend' / 'dist'
 OUT = ROOT / 'ui-artifacts'
 OUT.mkdir(exist_ok=True)
 
@@ -83,23 +84,31 @@ def check(label, ok, detail=None):
     results.append(entry)
     print(json.dumps(entry), flush=True)
 
+def chromium_executable(playwright):
+    """Playwright's own Chromium when installed; otherwise one already under PLAYWRIGHT_BROWSERS_PATH."""
+    if Path(playwright.chromium.executable_path).is_file():
+        return None
+    root = Path(os.environ.get('PLAYWRIGHT_BROWSERS_PATH') or '/opt/pw-browsers')
+    found = sorted(root.glob('chromium_headless_shell-*/chrome-linux/headless_shell')) or sorted(root.glob('chromium-*/chrome-linux/chrome'))
+    return str(found[-1]) if found else None
+
 def no_overflow(page, label):
     dims = page.evaluate('({scroll:document.documentElement.scrollWidth,viewport:innerWidth})')
     check(label, dims['scroll'] <= dims['viewport'], dims)
 
 try:
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-dev-shm-usage'])
+        browser = p.chromium.launch(headless=True, executable_path=chromium_executable(p), args=['--no-sandbox', '--disable-dev-shm-usage'])
         context = browser.new_context(viewport={'width': 1440, 'height': 1000}, device_scale_factor=1, reduced_motion='reduce')
         context.route('http://127.0.0.1:8000/**', api)
         page = context.new_page()
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
-        check('Home heading', page.get_by_role('heading', name='Answers from sustainability reports, with the page they came from.').count() == 1)
+        check('Home heading', page.get_by_role('heading', name='合同逐条审阅 agent').count() == 1)
         check('Home action empty disabled', page.get_by_role('button', name='Start research', exact=True).is_disabled())
         no_overflow(page, 'Desktop homepage no horizontal overflow')
         page.screenshot(path=str(OUT / 'home-desktop.png'), full_page=True)
-        page.get_by_role('textbox', name='Ask a research question').fill('Check climate evidence')
+        page.get_by_role('textbox', name='Ask a research question').fill('Summarise the payment terms')
         page.get_by_role('button', name='Start research', exact=True).click()
         page.wait_for_url('**/login')
         check('Unauthenticated research opens login', '/login' in page.url)
@@ -107,7 +116,7 @@ try:
         page.goto('http://127.0.0.1:4173/agent', wait_until='networkidle')
         page.get_by_text('Fast answers · configured', exact=True).wait_for()
         check('DeepSeek status displayed', page.get_by_text('DeepSeek V4 Pro', exact=True).count() == 1)
-        check('Empty library not populated with sample', page.get_by_text('Start with a report, or ask a general question', exact=True).count() == 1)
+        check('Empty library not populated with sample', page.get_by_text('Start with a document, or ask a general question', exact=True).count() == 1)
         no_overflow(page, 'Desktop workspace no horizontal overflow')
         page.screenshot(path=str(OUT / 'workspace-desktop.png'), full_page=True)
         page.get_by_role('button', name='Deep', exact=True).click()

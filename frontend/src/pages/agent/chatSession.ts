@@ -1,4 +1,4 @@
-import type { AgentPath, AgentTraceStep, RagBlock, RagGraphSource, RagReasoningMode, RagResponse, RagSource } from '../../types/api';
+import type { AgentPath, AgentTraceStep, ChatSessionPayload, RagBlock, RagGraphSource, RagReasoningMode, RagResponse, RagSource } from '../../types/api';
 
 export interface ChatMessage {
   type: 'user' | 'agent';
@@ -59,7 +59,10 @@ export const buildChatMessage = (
   data,
 });
 
-export const toSessionSummary = (raw: any): ChatSession => ({
+// The server sends snake_case; the camelCase names are accepted too.
+type SessionFields = ChatSessionPayload & { updatedAt?: string; selectedDocumentId?: string; messageCount?: number };
+
+export const toSessionSummary = (raw: SessionFields | null | undefined): ChatSession => ({
   id: String(raw?.id || ''),
   title: String(raw?.title || 'New chat'),
   updatedAt: String(raw?.updated_at || raw?.updatedAt || new Date().toISOString()),

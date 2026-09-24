@@ -1,58 +1,24 @@
-import type { RagReasoningMode, RagSource, RagStreamEvent } from '../../types/api';
+import type { RagReasoningMode, RagSource } from '../../types/api';
 
-export const readSseEvents = async (
-  response: Response,
-  onEvent: (event: RagStreamEvent) => void,
-): Promise<void> => {
-  if (!response.body) {
-    throw new Error('Streaming response body is empty');
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-    const frames = buffer.split('\n\n');
-    buffer = frames.pop() || '';
-
-    for (const frame of frames) {
-      const trimmed = frame.trim();
-      if (!trimmed || trimmed.startsWith(':')) {
-        continue;
-      }
-      const dataLine = trimmed
-        .split('\n')
-        .find((line) => line.startsWith('data:'));
-      if (!dataLine) {
-        continue;
-      }
-      const payload = dataLine.slice(5).trim();
-      if (!payload) {
-        continue;
-      }
-      onEvent(JSON.parse(payload) as RagStreamEvent);
-    }
-
-    if (done) {
-      break;
-    }
-  }
-};
-
+// Words that appear in many contract titles and file names, so they say nothing
+// about whether a title and a file name describe the same document.
 const LOW_VALUE_TITLE_TOKENS = new Set([
-  'report',
-  'reports',
-  'sustainability',
-  'esg',
-  'environmental',
-  'social',
-  'governance',
-  'annual',
+  'contract',
+  'contracts',
+  'agreement',
+  'agreements',
+  'draft',
+  'final',
+  'signed',
+  'executed',
+  'version',
+  'copy',
+  'scan',
   'update',
   'full',
   'pdf',
+  'doc',
+  'docx',
 ]);
 
 export const cleanSourceName = (value?: string): string => {
@@ -87,7 +53,7 @@ export const formatSourceDocumentTitle = (source: RagSource): string => {
       return sourceName;
     }
   }
-  return title || sourceName || documentId || 'Report evidence';
+  return title || sourceName || documentId || 'Source document';
 };
 
 export const formatSourceChipLabel = (source: RagSource): string => {
@@ -106,9 +72,9 @@ export const getLoadingSteps = (tier: RagReasoningMode) => {
     return [
       'Reading the question…',
       'Breaking the question down…',
-      'Searching current, historical and regulatory sources…',
+      'Searching the documents…',
       'Reading the most relevant passages…',
-      'Checking the graph…',
+      'Cross-checking related clauses…',
       'Working through the evidence…',
       'Adding citations…',
       'Finishing the answer…',
@@ -116,7 +82,7 @@ export const getLoadingSteps = (tier: RagReasoningMode) => {
   }
   return [
     'Reading the question…',
-    'Searching the reports…',
+    'Searching the documents…',
     'Reading the most relevant passages…',
     'Writing the answer…',
   ];
@@ -155,8 +121,8 @@ const INLINE_CODE = /(`[^`\n]*`)/g;
  * Turn inline evidence markers such as `[chunk_3]` or `[chunk_3, chunk_7]`
  * into numbered markdown links (`[1](#cite-1)`) that the answer renderer
  * shows as citation buttons. Only markers whose ids all match exactly one
- * cited source are rewritten. Chunk ids are numbered per report, so an id
- * shared by passages from two reports is ambiguous and stays as written, as
+ * cited source are rewritten. Chunk ids are numbered per document, so an id
+ * shared by passages from two documents is ambiguous and stays as written, as
  * do graph markers, prose in brackets, images, link definitions and code.
  */
 export const linkCitations = (markdown: string, sources: RagSource[]): string => {

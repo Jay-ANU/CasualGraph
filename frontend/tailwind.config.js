@@ -2,11 +2,11 @@
 // CausalGraph design tokens. Values mirror the CSS variables in
 // src/styles/cg-tokens.css — change both together.
 //
-// The interface is monochrome on warm paper; colour is reserved for data
-// (ESG domains in the graph) and for status. Serif (Newsreader) is used for
-// editorial headlines only; everything functional is set in IBM Plex Sans.
-module.exports = {
-  content: ['./src/**/*.{js,jsx,ts,tsx}'],
+// The interface is monochrome on warm paper; colour is reserved for status.
+// Serif (Newsreader) is used for editorial headlines only; everything
+// functional is set in IBM Plex Sans.
+export default {
+  content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
   theme: {
     extend: {
       fontFamily: {
@@ -56,13 +56,6 @@ module.exports = {
         err: { DEFAULT: '#B3261E', bg: '#FBECEA', line: '#F0C9C4' },
         info: { DEFAULT: '#2F5AA8', bg: '#EAF0FA', line: '#C9D7F0' },
         success: { DEFAULT: '#2F6F4F', bg: '#E9F2EC' },
-        domain: {
-          e: '#2F7D5B',
-          s: '#3D64C4',
-          g: '#B07A1E',
-          ai: '#7B5BC0',
-          general: '#6F6B63',
-        },
       },
       fontSize: {
         '2xs': ['11px', { lineHeight: '16px' }],

@@ -15,7 +15,7 @@ const traceEventKey = (step: Partial<AgentTraceStep>): string => [
 ].join('|');
 
 const TOOL_LABELS: Record<string, string> = {
-  search_documents: 'Searching reports',
+  search_documents: 'Searching documents',
   read_chunks: 'Reading evidence excerpts',
   get_graph_context: 'Reading graph context',
   query_neo4j: 'Reading graph context',
@@ -27,7 +27,7 @@ const STAGE_LABELS: Record<string, string> = {
   context_ready: 'Preparing RAG context',
   generating: 'Writing grounded answer',
   planning: 'Planning evidence search',
-  searching_reports: 'Searching reports',
+  searching_reports: 'Searching documents',
   querying_graph: 'Reading graph context',
   reading_evidence: 'Reading evidence excerpts',
   synthesizing: 'Drafting grounded answer',
@@ -65,15 +65,15 @@ const PARTIAL_DESCRIPTIONS: Record<string, string> = {
 };
 
 const TOOL_RUNNING_SUMMARIES: Record<string, string> = {
-  search_documents: 'Checking the most relevant report sections.',
-  read_chunks: 'Opening cited report excerpts.',
+  search_documents: 'Checking the most relevant passages.',
+  read_chunks: 'Opening the cited passages.',
   get_graph_context: 'Cross-checking entities and relationships.',
   query_neo4j: 'Cross-checking entities and relationships.',
   summarize_evidence: 'Preparing the final response with citations.',
 };
 
 const TOOL_COMPLETED_SUMMARIES: Record<string, string> = {
-  search_documents: 'Collected report excerpts for the answer.',
+  search_documents: 'Collected passages for the answer.',
   read_chunks: 'Read the cited evidence sections.',
   get_graph_context: 'Cross-checking entities and relationships.',
   query_neo4j: 'Cross-checking entities and relationships.',
@@ -92,17 +92,17 @@ const prettifyFallbackLabel = (value: string): string => (
 const rewriteCountSummary = (summary: string): string | null => {
   const layeredMatch = summary.match(/Retrieved\s+(\d+)\s+primary source chunk\(s\) with layered search\./i);
   if (layeredMatch) {
-    return `Found ${layeredMatch[1]} report sections across the selected scope.`;
+    return `Found ${layeredMatch[1]} passages across the selected scope.`;
   }
 
   const sourceMatch = summary.match(/Retrieved\s+(\d+)\s+source chunk\(s\) with (hybrid|vector) search\./i);
   if (sourceMatch) {
-    return `Found ${sourceMatch[1]} relevant report sections.`;
+    return `Found ${sourceMatch[1]} relevant passages.`;
   }
 
   const readMatch = summary.match(/Read\s+(\d+)\s+chunk\(s\)\./i);
   if (readMatch) {
-    return `Opened ${readMatch[1]} cited report sections.`;
+    return `Opened ${readMatch[1]} cited passages.`;
   }
 
   const graphMatch = summary.match(/Found graph context with\s+(\d+)\s+edge\(s\)\./i);
@@ -146,7 +146,7 @@ export const formatAgentTraceSummary = (
     return 'No matching graph relationships found.';
   }
   if (summary === 'No usable evidence was collected.') {
-    return 'Evidence search finished without usable report excerpts.';
+    return 'Evidence search finished without usable passages.';
   }
   if (summary === 'Synthesized an answer from collected evidence.') {
     return 'Prepared the answer from collected evidence.';
@@ -159,7 +159,7 @@ export const formatAgentTraceSummary = (
   }
   if (/^Action:\s*search_documents(?:\s+for\s+(.+?))?\.$/i.test(summary)) {
     const match = summary.match(/^Action:\s*search_documents(?:\s+for\s+(.+?))?\.$/i);
-    return match?.[1] ? `Searching report evidence for ${match[1]}.` : 'Searching report evidence.';
+    return match?.[1] ? `Searching the documents for ${match[1]}.` : 'Searching the documents.';
   }
   if (/^Action:\s*(get_graph_context|query_neo4j)\.$/i.test(summary)) {
     return 'Checking graph relationships.';
