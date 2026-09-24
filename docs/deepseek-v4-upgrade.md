@@ -43,21 +43,14 @@ An explicit DeepSeek model override is respected: replace old `deepseek-v4-flash
 where Pro is desired. Replace old 2,000-token Deep caps as shown above; reasoning and
 answer share this budget. Existing OpenAI/Anthropic keys are not sent to DeepSeek.
 
-## Screenshot support
-
-V4 Pro is text-only. Screenshot summary now returns a clear `503 vision_unavailable` before
-consuming application quota unless a separate image-capable service is configured with
-`VISION_API_KEY`, `VISION_BASE_URL`, and `VISION_MODEL`. A vision model/key is never guessed
-or silently borrowed from another provider. Text/PDF/Word extraction is unaffected.
-
 ## Verification
 
 ```bash
-python -m compileall -q app.py configs rag ai_service
+python -m compileall -q app.py api services legal configs rag
 python -m pytest -q tests
 cd frontend
 npm ci
-npm test -- --watchAll=false --runInBand
+npm test -- --run
 npm run build
 ```
 

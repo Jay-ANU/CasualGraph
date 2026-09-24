@@ -19,11 +19,24 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("APP_ENV", "development")
 
 
+def _iter_routes(app):
+    """Yield route-like objects with ``path``/``methods``, expanding ``include_router()``.
+
+    Recent FastAPI versions keep included routers as lazy entries in ``app.routes``;
+    ``iter_route_contexts`` walks their effective routes. Older versions list routes flat.
+    """
+    try:
+        from fastapi.routing import iter_route_contexts
+    except ImportError:
+        return list(app.routes)
+    return list(iter_route_contexts(app.routes))
+
+
 def main() -> int:
     from app import app  # noqa: WPS433  (import after sys.path tweak)
 
     lines = set()
-    for route in app.routes:
+    for route in _iter_routes(app):
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", None)
         if not path:

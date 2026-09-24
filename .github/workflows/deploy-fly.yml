@@ -11,13 +11,13 @@ on:
       - '.dockerignore'
       - 'requirements.txt'
       - '*.py'
+      - 'api/**'
+      - 'services/**'
+      - 'legal/**'
       - 'configs/**'
       - 'rag/**'
-      - 'ai_service/**'
-      - 'backend/**'
       - 'graph/**'
       - 'document_processing/**'
-      - 'metric_extraction/**'
       - 'mcp_tools/**'
       - 'notifications/**'
       - 'scripts/fly_start.sh'
@@ -57,11 +57,10 @@ jobs:
       - name: Validate backend before release
         env:
           LLM_PROVIDER: deepseek
-          ESG_MODEL_ALLOW_DOWNLOAD: 'false'
           ESG_EMBEDDING_ALLOW_DOWNLOAD: 'false'
         run: |
           python -m pip install -r requirements.txt pytest pytest-asyncio httpx
-          python -m compileall -q app.py configs rag ai_service
+          python -m compileall -q app.py api services legal configs rag
           python -m pytest -q tests
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Check existing model credential without reading its value
@@ -86,7 +85,6 @@ jobs:
             LLM_PROVIDER=deepseek \
             RAG_ANSWER_MODE=deepseek \
             DEEPSEEK_MODEL=deepseek-v4-pro \
-            DEEPSEEK_EXTRACTION_MODEL=deepseek-v4-pro \
             RAG_DEEP_MODEL=deepseek-v4-pro \
             RAG_DEEP_MAX_TOKENS=16384 \
             RAG_DEEP_TIMEOUT=120

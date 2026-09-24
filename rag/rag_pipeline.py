@@ -231,83 +231,6 @@ def _apply_hybrid_insufficient_fallback(
     return _fallback_hybrid_answer(query, sources), fallback_backend
 
 
-def _build_local_prompt(
-    query: str,
-    context: str,
-    history_block: str,
-    allow_speculation: bool,
-    graph_context: Optional[str] = None,
-    answer_intent: str = "evidence",
-) -> str:
-    conversation_context = f"\nConversation history:\n{history_block}\n" if history_block else ""
-    graph_context_block = f"\nGraph context:\n{graph_context}\n" if graph_context else ""
-    if answer_intent == "general":
-        return f"""You are a practical ESG, business, and academic research assistant.
-
-Answer this as general guidance. Do not claim the answer is based on uploaded reports, and do not cite report chunks.
-{conversation_context}
-
-Question:
-{query}
-
-Answer:
-"""
-
-    if answer_intent == "hybrid":
-        return f"""You are an ESG report question answering assistant.
-
-Use retrieved report excerpts first when they are available. Cite chunk ids only for claims supported by excerpts.
-If the excerpts do not fully answer the question, say so and then provide a clearly labeled "General analysis" section.
-Do not present general reasoning as report-backed.
-{conversation_context}
-{graph_context_block}
-
-Question:
-{query}
-
-Report excerpts:
-{context}
-
-Answer:
-"""
-
-    if allow_speculation:
-        return f"""You are an ESG report question answering assistant.
-
-Use the retrieved report excerpts first.
-If the excerpts do not fully answer the question, say that clearly and then provide a clearly labeled
-"Tentative hypothesis" based on general knowledge.
-Do not present speculative claims as if they were supported by the report.
-{conversation_context}
-{graph_context_block}
-
-Question:
-{query}
-
-Report excerpts:
-{context}
-
-Answer:
-"""
-
-    return f"""You are an ESG report question answering assistant.
-
-Answer the question using only the provided report excerpts.
-If the excerpts do not contain enough information, answer exactly:
-{INSUFFICIENT_CONTEXT_ANSWER}
-{conversation_context}
-{graph_context_block}
-
-Question:
-{query}
-
-Report excerpts:
-{context}
-
-Answer:
-"""
-
-
 def _initialize_timings() -> Dict[str, float]:
     return {
         "rewrite": 0.0,
@@ -1073,20 +996,6 @@ def answer_question(
             strategy=prepared["strategy"],
         )
 
-    context = (
-        "\n\n".join(f"[{item['chunk_id']}] {item['text']}" for item in prepared["sources"])
-        if prepared["sources"]
-        else "No relevant report excerpts were retrieved."
-    )
-    prompt = _build_local_prompt(
-        query=query,
-        context=context,
-        history_block=prepared["history_block"],
-        allow_speculation=prepared["allow_speculation"],
-        graph_context=prepared["graph_context_text"],
-        answer_intent=answer_intent_mode,
-    )
-
     answer = None
     backend = None
     answer_backend_mode = RAG_ANSWER_MODE or "auto"
@@ -1114,33 +1023,6 @@ def answer_question(
             print(f"[rag] OpenAI answering failed: {type(exc).__name__}: {exc}")
             traceback.print_exc()
             answer = None
-
-    try:
-        if answer is None and answer_backend_mode in {"auto", "local_qlora"}:
-            import torch
-            from ai_service.model_loader import get_model_and_tokenizer
-
-            model, tokenizer = get_model_and_tokenizer()
-            inputs = tokenizer(prompt, return_tensors="pt")
-            model_device = next(model.parameters()).device
-            inputs = {key: value.to(model_device) for key, value in inputs.items()}
-
-            with torch.inference_mode():
-                output = model.generate(
-                    **inputs,
-                    max_new_tokens=256,
-                    do_sample=False,
-                    pad_token_id=tokenizer.eos_token_id,
-                )
-
-            answer_tokens = output[0][inputs["input_ids"].shape[1]:]
-            answer = tokenizer.decode(answer_tokens, skip_special_tokens=True).strip()
-            if not answer:
-                answer = INSUFFICIENT_CONTEXT_ANSWER
-            backend = "local_qlora" if prepared["sources"] else "local_qlora_speculative"
-    except Exception as exc:
-        print(f"[rag] Local QLoRA answering failed: {type(exc).__name__}: {exc}")
-        answer = None
 
     if answer is None:
         if answer_intent_mode in {"general", "hybrid"} and not prepared["sources"]:
@@ -1454,43 +1336,6 @@ def stream_answer_question(
                 backend = f"{LLM_PROVIDER}_interrupted"
             else:
                 answer = None
-
-    try:
-        if answer is None and answer_backend_mode in {"auto", "local_qlora"}:
-            import torch
-            from ai_service.model_loader import get_model_and_tokenizer
-
-            context = (
-                "\n\n".join(f"[{item['chunk_id']}] {item['text']}" for item in prepared["sources"])
-                if prepared["sources"]
-                else "No relevant report excerpts were retrieved."
-            )
-            prompt = _build_local_prompt(
-                query=query,
-                context=context,
-                history_block=prepared["history_block"],
-                allow_speculation=prepared["allow_speculation"],
-                graph_context=prepared["graph_context_text"],
-                answer_intent=answer_intent_mode,
-            )
-            model, tokenizer = get_model_and_tokenizer()
-            inputs = tokenizer(prompt, return_tensors="pt")
-            model_device = next(model.parameters()).device
-            inputs = {key: value.to(model_device) for key, value in inputs.items()}
-            with torch.inference_mode():
-                output = model.generate(
-                    **inputs,
-                    max_new_tokens=256,
-                    do_sample=False,
-                    pad_token_id=tokenizer.eos_token_id,
-                )
-            answer_tokens = output[0][inputs["input_ids"].shape[1]:]
-            answer = tokenizer.decode(answer_tokens, skip_special_tokens=True).strip() or INSUFFICIENT_CONTEXT_ANSWER
-            backend = "local_qlora" if prepared["sources"] else "local_qlora_speculative"
-            yield {"type": "token", "text": answer}
-    except Exception as exc:
-        print(f"[rag] Local QLoRA answering failed: {type(exc).__name__}: {exc}")
-        answer = None
 
     if answer is None:
         if answer_intent_mode in {"general", "hybrid"} and not prepared["sources"]:

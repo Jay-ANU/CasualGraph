@@ -1,8 +1,11 @@
 # CausalGraph AI
 
+> **Project direction:** this codebase is being rebuilt into a legal contract-review agent (clause-by-clause review for in-house counsel).
+> The agreed direction, decisions and phase briefs are in [docs/legal-agent/00-alignment.md](docs/legal-agent/00-alignment.md).
+
 > **Research Desk + DeepSeek V4 Pro upgrade:** the default backend no longer needs Claude or OpenAI credits. Fast answers explicitly disable thinking; Deep enables it. See [migration and verification](docs/deepseek-v4-upgrade.md) before deploying.
 
-[GitHub Repository](https://github.com/Jay-ANU/CasualGraph) | [Live App](https://casualgraphai.vercel.app) | [Download macOS Desktop Beta](https://github.com/Jay-ANU/CasualGraph/releases/latest/download/CausalGraph-Pet-0.1.0-mac-arm64.zip)
+[GitHub Repository](https://github.com/Jay-ANU/CasualGraph) | [Live App](https://casualgraphai.vercel.app)
 
 CausalGraph AI is an open-source ESG intelligence application for turning long-form corporate reports into searchable evidence, graph context, and cited agent answers.
 
@@ -16,16 +19,12 @@ This repository contains the application code and configuration templates. It do
 - Retrieval-augmented chat: answer questions from retrieved report evidence instead of unconstrained model memory.
 - Streaming responses: `/rag/ask/stream` supports incremental frontend rendering for the agent page.
 - Citations: responses can include retrieved chunk references, source metadata, and graph-backed evidence.
-- Flash / Deep reasoning tiers: fast OpenAI-backed answers for normal questions, optional Anthropic-backed deep mode for heavier multi-hop reasoning.
+- Fast / Deep reasoning tiers: both default to DeepSeek V4 Pro over its OpenAI-compatible API; Fast disables thinking and Deep enables it. OpenAI or Anthropic are used only after an explicit `LLM_PROVIDER=openai` rollback.
 - Contextual follow-ups: Redis-backed sessions preserve short-term chat state, selected document context, and recent messages.
 - Entity-aware document scoping: follow-up questions can use prior conversation entities to avoid retrieving from the wrong company or report.
-- ESG extraction: local QLoRA extraction, remote DeepSeek extraction, or heuristic fallback depending on environment configuration.
-- Knowledge graph generation: extracted entities and relations are converted into graph JSON and can be synchronized into Neo4j.
-- Graph APIs: inspect Neo4j status, entity neighborhoods, causal forward/backward chains, and shortest paths.
+- Graph APIs (admin): inspect Neo4j status, entity neighborhoods, and subgraphs when Neo4j is configured.
 - Hybrid retrieval controls: vector search, BM25 fusion, multi-query expansion, HyDE, reranking, graph context, and decomposition are all environment-controlled.
-- Admin and audit surfaces: login, admin allowlists, upload monitoring, feedback capture, notification hooks, and trace logging.
-- Recruitment: admins configure an offer (position, team, location, salary, benefits, dates) at `/admin/recruitment` and email it with an animated banner and English or Chinese letter templates. The candidate opens a private, animated offer page, sees the full details and accepts or declines; the admin page tracks views and replies and the sender is emailed the answer.
-- macOS desktop companion: edge-docked assistant window for report drops, screenshot summaries, and follow-up questions without keeping the web app in focus.
+- Admin and audit surfaces: login, admin allowlists, upload monitoring, feedback capture, and notification hooks.
 - Production deployment support: Vercel frontend, Fly.io backend, persistent Fly volume, optional embedded Redis, and external Pinecone / Neo4j services.
 
 ## Architecture
@@ -33,15 +32,14 @@ This repository contains the application code and configuration templates. It do
 ```text
 React frontend
   |
-  | REACT_APP_ESG_API_BASE
+  | VITE_API_BASE
   v
 FastAPI backend (app.py)
   |
   |-- Auth, admin, feedback, document APIs
   |-- PDF/text ingestion and async job tracking
   |-- RAG ask / stream endpoints
-  |-- ESG extraction pipeline
-  |-- Graph and causal reasoning APIs
+  |-- Admin Neo4j graph APIs (optional)
   |
   |-- SQLite files for auth / feedback / local metadata
   |-- Redis for short-term chat memory
@@ -59,30 +57,32 @@ The maintained public deployment currently uses:
 - Redis: optional Redis server started inside the backend container when `REDIS_ENABLED=true`
 - Embeddings: local model or DeepInfra, depending on deployment configuration
 - Vector store: local store or Pinecone
-- Graph store: local JSON or Neo4j
+- Graph store: optional Neo4j
 
 ## Repository Layout
 
 ```text
 .
-├── app.py                         # Main FastAPI application
+├── app.py                         # FastAPI entrypoint: create_app(), middleware, startup, routers
+├── api/
+│   ├── deps.py                    # Auth / DB dependencies shared by routers
+│   └── routers/                   # auth, admin, documents, chat, memory, rag, feedback, graph, system
+├── services/                      # db, auth, rate_limit, document_access, rag_context, memory
 ├── requirements.txt               # Python backend dependencies
+├── pyproject.toml                 # Ruff gate (syntax errors and undefined names)
 ├── Dockerfile                     # Fly.io backend image
 ├── fly.toml                       # Fly.io backend app config
 ├── docker-compose.yml             # Local Neo4j helper
 ├── configs/
 │   └── settings.py                # Runtime configuration loader
-├── ai_service/                    # ESG extraction model clients and schemas
 ├── document_processing/           # PDF parsing, cleaning, chunking
-├── graph/                         # Graph building, Neo4j sync, causal reasoning
+├── graph/                         # Optional Neo4j store (admin graph APIs, graph context)
+├── legal/                         # Legal-review building blocks (legacy Word review helpers)
 ├── rag/                           # Embeddings, vector stores, retrieval, answering
 ├── scripts/                       # Pipeline and deployment helper scripts
-├── backend/                       # Legacy MVP services and SQLite-backed modules
 ├── frontend/                      # React application
 ├── data/                          # Runtime data directories, mostly gitignored
-├── models/                        # Optional local embedding models, gitignored
-├── esg_qlora_adapter/             # Optional local adapter weights, gitignored
-└── qlora_model/                   # Optional local training outputs, gitignored
+└── models/                        # Optional local embedding models, gitignored
 ```
 
 ## Quick Start
@@ -115,36 +115,12 @@ VECTOR_STORE_PROVIDER=local
 ```bash
 cd frontend
 npm install
-REACT_APP_ESG_API_BASE=http://127.0.0.1:8000 npm start
+VITE_API_BASE=http://127.0.0.1:8000 npm run dev
 ```
 
-The React app starts on `http://localhost:3000` by default. In production, set `REACT_APP_ESG_API_BASE` to the deployed backend URL before building.
+The React app starts on `http://localhost:3000` by default. In production, set `VITE_API_BASE` to the deployed backend URL before building.
 
-### 3. Desktop Companion
-
-The public desktop beta is distributed through GitHub Releases:
-
-- macOS Apple Silicon zip: <https://github.com/Jay-ANU/CasualGraph/releases/latest/download/CausalGraph-Pet-0.1.0-mac-arm64.zip>
-- Release page: <https://github.com/Jay-ANU/CasualGraph/releases/latest>
-
-Local desktop development:
-
-```bash
-cd desktop
-npm install
-npm start
-```
-
-Build a macOS zip:
-
-```bash
-cd desktop
-npm run dist:mac
-```
-
-The current beta is unsigned. On macOS, first launch may require Control-clicking the app in Finder and choosing Open.
-
-### 4. Optional Local Neo4j
+### 3. Optional Local Neo4j
 
 ```bash
 docker compose up -d neo4j
@@ -173,29 +149,24 @@ Never commit `.env`, API keys, database files, report uploads, local vector stor
 | `APP_ENV` | Production | Use `development`, `staging`, or `production`. Production and staging enforce a strong JWT secret. |
 | `JWT_SECRET` | Production | Secret used to sign auth tokens. Must be non-default and at least 32 characters in production or staging. |
 | `AUTH_DB_PATH` | Optional | SQLite auth database path. Useful on Fly when pointing to `/data/auth.db`. |
-| `CAUSALGRAPH_DB_PATH` | Optional | SQLite feedback/admin database path. Useful on Fly when pointing to `/data/causalgraph.db`. |
+| `CAUSALGRAPH_DB_PATH` | Optional | Answer-feedback SQLite path. Defaults to `DATA_DIR/causalgraph.db` (`/data/causalgraph.db` on Fly). |
 | `DATA_DIR` | Optional | Runtime data root. Defaults to `data`; production can use `/data`. |
 | `CORS_ALLOW_ORIGINS` | Production | Comma-separated frontend origins, for example `https://casualgraphai.vercel.app`. |
 | `CORS_ALLOW_ORIGIN_REGEX` | Optional | Regex for temporary tunnel origins during demos. |
 | `ADMIN_EMAILS` | Optional | Comma-separated admin allowlist for `/admin`. |
-| `MOCK_MODE` | Optional | Set `false` to use real provider calls when keys are present. |
 
 ### Document Ingestion
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `INGESTION_ENABLED` | `true` | Enables document ingestion endpoints. |
 | `CHUNK_SIZE` | `1500` | Target chunk size for report text. |
 | `CHUNK_OVERLAP` | `150` | Overlap between adjacent chunks. |
-| `EXTRACTION_CACHE_ENABLED` | `true` | Caches repeated extraction work. |
-| `EXTRACTION_CACHE_PATH` | `./data/extraction_cache.sqlite` | SQLite cache path for extraction results. |
-| `EXTRACTION_MAX_WORKERS` | `10` in example | Parallel extraction workers. Keep low for local QLoRA; raise for remote APIs if rate limits allow. |
 | `INGESTION_JOB_MAX_WORKERS` | `4` | Concurrent async ingestion jobs. |
 | `INGESTION_MAX_QUEUED_JOBS` | `16` | Maximum queued ingestion jobs. |
 | `INGESTION_AUDIT_THROTTLE_SECONDS` | `2.0` | Throttles ingestion audit updates. |
 | `DOCUMENT_DEDUP_ENABLED` | `true` | Prevents duplicated document registry entries when supported. |
 
-### Model And Extraction Backends
+### Model Backends
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -207,7 +178,6 @@ Never commit `.env`, API keys, database files, report uploads, local vector stor
 | `OPENAI_TEMPERATURE` | `0.1` | Default answer temperature. |
 | `OPENAI_MAX_TOKENS` | `2048` | Legacy alias, overridden by `CHAT_MAX_TOKENS`. |
 | `OPENAI_TIMEOUT` | `60` | Provider timeout in seconds. |
-| `RAG_FLASH_MODEL` | selected model | Compatibility setting; normal generation uses the selected provider model. |
 | `ANTHROPIC_API_KEY` | empty | Legacy Deep only with explicit `LLM_PROVIDER=openai`; never required by default. |
 | `ANTHROPIC_BASE_URL` | empty | Optional Anthropic-compatible base URL. |
 | `RAG_DEEP_MODEL` | `deepseek-v4-pro` | Deep reasoning model; stale GPT/Claude overrides are ignored with DeepSeek selected. |
@@ -215,16 +185,9 @@ Never commit `.env`, API keys, database files, report uploads, local vector stor
 | `RAG_DEEP_REASONING_EFFORT` | `high` | `low`, `high`, or `max`; DeepSeek thinking mode only. |
 | `RAG_DEEP_TEMPERATURE` | `0.2` | Legacy only; omitted for DeepSeek thinking. |
 | `RAG_DEEP_TIMEOUT` | `120` | Deep provider timeout in seconds. |
-| `ESG_EXTRACTION_BACKEND` | `remote` | Extraction backend policy. Use remote APIs for deployment; local adapters for offline experiments. |
-| `DEEPSEEK_API_KEY` | empty | Enables DeepSeek chat, Deep reasoning, routing and remote ESG extraction. |
+| `DEEPSEEK_API_KEY` | empty | Enables DeepSeek chat, Deep reasoning and routing. |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek OpenAI-compatible endpoint. |
 | `DEEPSEEK_MODEL` | `deepseek-v4-pro` | General DeepSeek model setting. |
-| `DEEPSEEK_EXTRACTION_MODEL` | `deepseek-v4-pro` | Model used for extraction calls. |
-| `DEEPSEEK_EXTRACTION_MAX_TOKENS` | `8000` | Extraction output token cap. |
-| `ESG_BASE_MODEL_PATH` | `Qwen/Qwen2.5-7B-Instruct` | Local or Hugging Face base model path for QLoRA extraction. |
-| `ESG_ADAPTER_PATH` | auto-detected | Local QLoRA adapter directory. |
-| `HF_LOCAL_FILES_ONLY` | `true` in example | Prevents unexpected Hugging Face downloads. |
-| `ESG_MODEL_ALLOW_DOWNLOAD` | `false` | Explicit opt-in for model downloads. |
 
 ### Embeddings And Vector Stores
 
@@ -261,10 +224,6 @@ For `BAAI/bge-m3`, create a Pinecone dense index with:
 | `RAG_GRAPH_CONTEXT_HOPS` | `2` | Graph expansion depth. |
 | `RAG_GRAPH_CONTEXT_LIMIT` | `10` | Max graph records included. |
 | `RAG_GRAPH_CONTEXT_MAX_TRIPLES` | `25` | Max graph triples in prompt context. |
-| `RAG_PREDICTION_ENABLED` | `true` | Enables prediction-style answers when the user explicitly asks for inference. |
-| `RAG_PREDICTION_MODEL` | `OPENAI_MODEL` | Model for prediction answers. |
-| `RAG_PREDICTION_MAX_TOKENS` | `1500` | Prediction token cap. |
-| `RAG_PREDICTION_TEMPERATURE` | `0.2` | Prediction temperature. |
 | `RAG_MULTI_QUERY_ENABLED` | `false` | Generates multiple retrieval queries. |
 | `RAG_MULTI_QUERY_N` | `3` | Number of generated retrieval queries. |
 | `RAG_HYBRID_ENABLED` | `false` | Enables vector + BM25 fusion. |
@@ -319,30 +278,16 @@ CAUSALGRAPH_DB_PATH=/data/causalgraph.db
 | `NEO4J_USER` | `neo4j` | Neo4j username. |
 | `NEO4J_PASSWORD` | empty | Neo4j password. |
 | `NEO4J_DATABASE` | `ESG` in example | Database name. Match the actual Neo4j database. |
-| `NEO4J_AUTO_SYNC` | `true` | Automatically sync extracted graph data after ingestion. |
+| `NEO4J_AUTO_SYNC` | `true` | Reported by `/graph/neo4j/status`. |
 
-When Neo4j is configured, CausalGraph writes:
+Document ingestion no longer extracts entities or writes to Neo4j. The admin `/graph/neo4j/*` routes and the optional graph context read a graph that already exists in the database.
 
-- `(:Document)` nodes
-- `(:Chunk)` nodes
-- `(:Entity)` nodes
-- `(:Document)-[:HAS_CHUNK]->(:Chunk)`
-- `(:Document)-[:HAS_ENTITY]->(:Entity)`
-- `(:Entity)-[:MENTIONED_IN]->(:Chunk)`
-- `(:Entity)-[:RELATIONSHIP]->(:Entity)` edges with evidence and confidence metadata
-
-### Metrics, Tracing, Notifications
+### Notifications
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `TRACE_ENABLED` | `false` | Writes workflow traces as JSONL. |
-| `TRACE_PATH` | `./data/traces.jsonl` | Trace output path. |
-| `ESG_METRICS_EXTRACTION_ENABLED` | `false` | Enables structured ESG metric extraction during ingestion. |
-| `ESG_METRICS_DB_PATH` | `./data/esg_metrics.sqlite` | Metrics database path. |
-| `ESG_METRICS_TAXONOMY_PATH` | `./data/taxonomy/esg_metrics.yaml` | Metric taxonomy file. |
-| `ESG_METRICS_MIN_CONFIDENCE` | `0.5` | Minimum confidence for stored metric rows. |
 | `NOTIFICATIONS_ENABLED` | `false` | Enables notification hooks. |
-| `NOTIFICATIONS_DB_PATH` | `backend/notifications.db` | Notification state database. |
+| `NOTIFICATIONS_DB_PATH` | `DATA_DIR/notifications.db` | Notification state database. |
 | `NOTIFICATIONS_DEDUP_WINDOW_MINUTES` | `60` | Notification deduplication window. |
 | `NOTIFICATIONS_DAILY_EMAIL_CAP` | `8` | Daily email cap. |
 | `NOTIFICATIONS_SMTP_URL` | empty | SMTP URL. |
@@ -352,9 +297,9 @@ When Neo4j is configured, CausalGraph writes:
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `REACT_APP_ESG_API_BASE` | Production | Backend API base URL used by the React app. Example: `https://casualgraph.fly.dev`. |
+| `VITE_API_BASE` | Production | Backend API base URL used by the React app. Example: `https://casualgraph.fly.dev`. |
 
-Local development can omit `REACT_APP_ESG_API_BASE` when the frontend is served from localhost because the app falls back to `http://127.0.0.1:8000` or the matching local host.
+Local development can omit `VITE_API_BASE` when the frontend is served from localhost because the app falls back to `http://127.0.0.1:8000` or the matching local host.
 
 ## API Surface
 
@@ -369,19 +314,7 @@ GET    /admin/overview
 GET    /admin/uploads
 POST   /admin/invite-codes
 DELETE /admin/uploads/{job_id}
-GET    /admin/recruitment/offers
-POST   /admin/recruitment/offers/preview
-POST   /admin/recruitment/offers
-POST   /admin/recruitment/offers/{offer_id}/resend
-PATCH  /admin/recruitment/offers/{offer_id}
-DELETE /admin/recruitment/offers/{offer_id}
-GET    /offers/{token}            # public: the candidate's offer page data
-POST   /offers/{token}/respond    # public: accept or decline
 ```
-
-Recruitment offers are emailed with the same `MAIL_*` SMTP settings as registration codes (see `.env.example`), and every offer is stored in the auth database. When `MAIL_ENABLED=false`, development servers write the offer to the server log instead of sending it, and production (`APP_ENV=production`) refuses to send until mail is configured.
-
-Each email links to `<frontend>/offer/<token>`, where the unguessable token is the candidate's only credential. The frontend address is the admin console's own origin (when it is an allowed CORS origin); set `RECRUITMENT_PUBLIC_URL` to pin it. The animated email banner is generated by `python scripts/generate_offer_assets.py` into `assets/recruitment/`.
 
 ### Chat Sessions
 
@@ -428,36 +361,15 @@ GET    /documents/jobs/{job_id}
 GET    /documents/{document_id}
 DELETE /documents/{document_id}
 POST   /documents/ingest-text
-POST   /documents/rebuild-graph
 ```
 
-### Extraction And Pipeline
+### Neo4j Graph APIs (Admin)
 
 ```text
-POST /extract
-POST /pipeline/pdf
-```
-
-Run the full PDF pipeline locally:
-
-```bash
-python scripts/run_pdf_pipeline.py --pdf data/raw/report.pdf --name example_report
-```
-
-### Graph And Causal APIs
-
-```text
-GET  /kg-view
-GET  /kg-api/filters
-GET  /kg-api/graph
-GET  /kg-api/stats
 GET  /graph/neo4j/status
 GET  /graph/neo4j/entity/{entity_name}
 GET  /graph/neo4j/subgraph
 POST /graph/neo4j/question
-GET  /graph/causal/backward
-GET  /graph/causal/forward
-GET  /graph/causal/path
 ```
 
 ## Deployment Guide
@@ -470,9 +382,9 @@ Recommended Vercel settings:
 
 ```text
 Build Command: npm run build
-Output Directory: build
+Output Directory: dist
 Install Command: npm install
-Environment: REACT_APP_ESG_API_BASE=https://your-backend.example.com
+Environment: VITE_API_BASE=https://your-backend.example.com
 ```
 
 `frontend/vercel.json` rewrites all routes to `index.html` so React Router works on refresh.
@@ -519,7 +431,7 @@ If Redis is embedded in the Fly machine, keep a persistent volume mounted at `/d
 
 ### The frontend returns HTML instead of an API response
 
-`REACT_APP_ESG_API_BASE` probably points to the frontend instead of the backend. Set it to the FastAPI origin, for example `https://casualgraph.fly.dev`.
+`VITE_API_BASE` probably points to the frontend instead of the backend. Set it to the FastAPI origin, for example `https://casualgraph.fly.dev`.
 
 ### RAG says there is not enough information
 
@@ -535,7 +447,7 @@ Set `REDIS_ENABLED=true` and provide a reachable `REDIS_URL`. On Fly with embedd
 
 ### Neo4j is configured but graph answers are empty
 
-Verify `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `NEO4J_DATABASE`, and `NEO4J_AUTO_SYNC=true`, then rebuild or re-ingest the document graph.
+Verify `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, and `NEO4J_DATABASE`. Document ingestion no longer writes to Neo4j, so graph context only comes from a graph that already exists in the database.
 
 ## Open-Source Release Checklist
 

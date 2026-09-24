@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-import app as api
+from services import auth as api
 
 
 class FakeSMTP:
@@ -49,14 +49,14 @@ def _mail_settings(stack: ExitStack, **overrides) -> None:
     }
     settings.update(overrides)
     for name, value in settings.items():
-        stack.enter_context(patch(f"app.{name}", value))
+        stack.enter_context(patch(f"services.auth.{name}", value))
 
 
 def test_verification_code_email_goes_through_the_shared_smtp_sender():
     FakeSMTP.instances = []
     with ExitStack() as stack:
         _mail_settings(stack)
-        stack.enter_context(patch("app.smtplib.SMTP_SSL", FakeSMTP))
+        stack.enter_context(patch("services.auth.smtplib.SMTP_SSL", FakeSMTP))
         api._deliver_email_verification_code(email="New.User@Example.com", code="123456")
 
     [smtp] = FakeSMTP.instances
@@ -68,9 +68,9 @@ def test_starttls_sender_and_failure_mapping():
     FakeSMTP.instances = []
     with ExitStack() as stack:
         _mail_settings(stack, _MAIL_SMTP_SSL=False, _MAIL_SMTP_STARTTLS=True, _MAIL_SMTP_PORT=587)
-        stack.enter_context(patch("app.smtplib.SMTP", FakeSMTP))
+        stack.enter_context(patch("services.auth.smtplib.SMTP", FakeSMTP))
         api._deliver_email_verification_code(email="a@example.com", code="654321")
-        with patch("app._send_mail_message", side_effect=smtplib.SMTPServerDisconnected("gone")):
+        with patch("services.auth._send_mail_message", side_effect=smtplib.SMTPServerDisconnected("gone")):
             with pytest.raises(HTTPException) as exc:
                 api._deliver_email_verification_code(email="a@example.com", code="654321")
 

@@ -1,0 +1,6 @@
+[tool.ruff]
+extend-exclude = [".venv", "node_modules", "frontend"]
+
+[tool.ruff.lint]
+# Minimal CI gate: syntax errors and undefined names only.
+select = ["E9", "F63", "F7", "F82"]

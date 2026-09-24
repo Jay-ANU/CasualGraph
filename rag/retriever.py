@@ -180,6 +180,8 @@ def retrieve_layered_context(
                 primary = retrieve_context(query=query, top_k=top_k, filters=fallback_filters, use_hyde=use_hyde, history_block=history_block)
         return primary
 
+    # The priors/regulatory layers widen the document scope but must keep owner_user_id, so a
+    # non-admin request never reaches other users' private documents.
     def _run_priors() -> List[Dict]:
         prior_filters = dict(base_filters)
         prior_filters.pop("document_ids", None)

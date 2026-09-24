@@ -17,7 +17,7 @@ from configs.settings import (
     NEO4J_USER,
     neo4j_configured,
 )
-from graph.causal_taxonomy import canonicalize_relation
+from graph.relation_types import canonicalize_relation
 from graph.graph_utils import normalize_entity_name
 
 try:

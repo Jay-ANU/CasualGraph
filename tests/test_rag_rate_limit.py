@@ -7,14 +7,14 @@ import aiosqlite
 import pytest
 from fastapi import HTTPException
 
-from app import (
+from api.routers.admin import (
     RagUnlimitedUserRequest,
-    _enforce_rag_rate_limit,
-    _init_auth_db,
     add_rag_unlimited_user,
     delete_rag_unlimited_user,
     list_rag_unlimited_users,
 )
+from services.db import _init_auth_db
+from services.rate_limit import _enforce_rag_rate_limit
 
 
 def test_regular_user_deep_request_costs_five_points_and_blocks_when_daily_points_exhausted(tmp_path):
@@ -25,8 +25,8 @@ async def _regular_user_deep_request_costs_five_points_and_blocks_when_daily_poi
     db_path = tmp_path / "auth.db"
     user = {"id": "user-1", "role": "user"}
 
-    with patch("app._DB_PATH", str(db_path)), patch("app._RAG_FREE_DAILY_POINTS", 6), patch(
-        "app._RAG_MIN_SECONDS_BETWEEN_REQUESTS", 0
+    with patch("services.db._DB_PATH", str(db_path)), patch("services.rate_limit._RAG_FREE_DAILY_POINTS", 6), patch(
+        "services.rate_limit._RAG_MIN_SECONDS_BETWEEN_REQUESTS", 0
     ):
         await _init_auth_db()
         async with aiosqlite.connect(db_path) as db:
@@ -49,8 +49,8 @@ async def _admin_user_bypasses_rag_rate_limit(tmp_path):
     db_path = tmp_path / "auth.db"
     admin = {"id": "admin-1", "role": "admin"}
 
-    with patch("app._DB_PATH", str(db_path)), patch("app._RAG_FREE_DAILY_POINTS", 1), patch(
-        "app._RAG_MIN_SECONDS_BETWEEN_REQUESTS", 999
+    with patch("services.db._DB_PATH", str(db_path)), patch("services.rate_limit._RAG_FREE_DAILY_POINTS", 1), patch(
+        "services.rate_limit._RAG_MIN_SECONDS_BETWEEN_REQUESTS", 999
     ):
         await _init_auth_db()
         async with aiosqlite.connect(db_path) as db:
@@ -67,10 +67,10 @@ async def _whitelisted_user_gets_pro_daily_points_without_admin_permissions(tmp_
     db_path = tmp_path / "auth.db"
     user = {"id": "vip-1", "email": "VIP@Example.com", "role": "user"}
 
-    with patch("app._DB_PATH", str(db_path)), patch("app._RAG_FREE_DAILY_POINTS", 1), patch(
-        "app._RAG_PRO_DAILY_POINTS", 300
+    with patch("services.db._DB_PATH", str(db_path)), patch("services.rate_limit._RAG_FREE_DAILY_POINTS", 1), patch(
+        "services.rate_limit._RAG_PRO_DAILY_POINTS", 300
     ), patch(
-        "app._RAG_MIN_SECONDS_BETWEEN_REQUESTS", 0
+        "services.rate_limit._RAG_MIN_SECONDS_BETWEEN_REQUESTS", 0
     ):
         await _init_auth_db()
         async with aiosqlite.connect(db_path) as db:
@@ -101,7 +101,7 @@ async def _admin_can_add_list_and_delete_rag_unlimited_users(tmp_path):
     db_path = tmp_path / "auth.db"
     admin = {"id": "admin-1", "email": "admin@example.com", "role": "admin"}
 
-    with patch("app._DB_PATH", str(db_path)):
+    with patch("services.db._DB_PATH", str(db_path)):
         await _init_auth_db()
         async with aiosqlite.connect(db_path) as db:
             created = await add_rag_unlimited_user(
@@ -127,7 +127,7 @@ def test_anonymous_rag_is_disabled_by_default(tmp_path):
 async def _anonymous_rag_is_disabled_by_default(tmp_path):
     db_path = tmp_path / "auth.db"
 
-    with patch("app._DB_PATH", str(db_path)), patch("app._RAG_ANONYMOUS_ENABLED", False):
+    with patch("services.db._DB_PATH", str(db_path)), patch("services.rate_limit._RAG_ANONYMOUS_ENABLED", False):
         await _init_auth_db()
         async with aiosqlite.connect(db_path) as db:
             with pytest.raises(HTTPException) as exc:
