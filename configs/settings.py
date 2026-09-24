@@ -213,6 +213,32 @@ def deepseek_configured() -> bool:
     return bool(DEEPSEEK_API_KEY and DEEPSEEK_BASE_URL and DEEPSEEK_MODEL)
 
 
+# --- Phase 1: document model directories --------------------------------------------------
+PARSED_DIR = DATA_DIR / "parsed"  # ParsedDocument JSON: <id>.original.json.enc (encrypted), <id>.redacted.json
+CLAUSES_DIR = DATA_DIR / "clauses"  # ClauseTree JSON per document
+REDACTION_DIR = DATA_DIR / "redaction"  # <id>.review.json.enc, <id>.mapping.json.enc (both encrypted)
+
+# --- Phase 1: de-identification ------------------------------------------------------------
+# Fernet key for everything at rest that still contains original client text.
+# Development falls back to a generated key at DATA_DIR/.redaction_key; production requires it.
+REDACTION_KEY = os.getenv("REDACTION_KEY", "").strip()
+# False (current default): detections are auto-accepted and the document is finalised without a
+# human step, so the existing UI keeps working. Flip to true once the redaction preview UI ships.
+REDACTION_REQUIRE_CONFIRMATION = os.getenv("REDACTION_REQUIRE_CONFIRMATION", "false").strip().lower() in {"1", "true", "yes", "on"}
+REDACTION_DEFAULT_CATEGORIES = [
+    item.strip()
+    for item in os.getenv(
+        "REDACTION_DEFAULT_CATEGORIES",
+        "org,person,id_number,uscc,phone,email,address,bank_account,passport",
+    ).split(",")
+    if item.strip()
+]
+
+# --- Phase 1: multi-document index -----------------------------------------------------------
+VECTOR_SHARD_CACHE_SIZE = int(os.getenv("VECTOR_SHARD_CACHE_SIZE", "32"))  # per-document shards kept in memory
+BM25_MERGE_MAX_CHUNKS = int(os.getenv("BM25_MERGE_MAX_CHUNKS", "50000"))  # cap for on-demand merged BM25 corpora
+
+
 def ensure_directories() -> None:
     """Create the standard project data directories when missing."""
     for directory in (
@@ -222,6 +248,9 @@ def ensure_directories() -> None:
         CHUNK_DIR,
         GRAPH_DIR,
         VECTOR_DIR,
+        PARSED_DIR,
+        CLAUSES_DIR,
+        REDACTION_DIR,
         DOCUMENT_REGISTRY_FILE.parent,
     ):
         directory.mkdir(parents=True, exist_ok=True)

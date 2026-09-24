@@ -42,6 +42,29 @@ ROUTERS = (
     documents_router,
 )
 
+# Phase 1 routers are delivered by parallel work packages. Whichever modules exist are
+# included, so no work package has to edit this file. Each module exposes ``router``.
+OPTIONAL_ROUTER_MODULES = (
+    "api.routers.document_content",  # clauses, canonical text, original file (WP1-A)
+    "api.routers.redaction",  # de-identification review and confirmation (WP1-B)
+    "api.routers.matters",  # matters, membership, audit (WP1-C)
+)
+
+
+def _optional_routers():
+    import importlib
+
+    found = []
+    for module_name in OPTIONAL_ROUTER_MODULES:
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            if exc.name == module_name:
+                continue
+            raise
+        found.append(module.router)
+    return tuple(found)
+
 
 def _validate_startup_security_config(*, app_env: Optional[str] = None, jwt_secret: Optional[str] = None) -> None:
     env = str(app_env if app_env is not None else _APP_ENV).strip().lower()
@@ -123,7 +146,7 @@ def create_app() -> FastAPI:
     )
     application.add_middleware(GZipMiddleware, minimum_size=1024)
     application.on_event("startup")(startup)
-    for router in ROUTERS:
+    for router in (*ROUTERS, *_optional_routers()):
         application.include_router(router)
     return application
 

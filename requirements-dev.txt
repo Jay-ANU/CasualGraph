@@ -1,0 +1,10 @@
+# Development and CI tooling. Runtime dependencies come from requirements.txt.
+-r requirements.txt
+pytest
+pytest-asyncio
+httpx
+ruff
+# Generates the synthetic contract fixtures under tests/fixtures/contracts (scripts/make_contract_fixtures.py).
+reportlab>=4.0
+# Browser smoke test (scripts/research_ui_smoke.py). Never run `playwright install` in the cloud container.
+playwright==1.58.0
