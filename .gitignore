@@ -67,6 +67,7 @@ data/word_edits/
 *.md
 !/README.md
 !/docs/deepseek-v4-upgrade.md
+!/docs/legal-agent/*.md
 
 # Embedded text-to-kg reference: only the web viewer assets are needed at runtime.
 text-to-kg-esg/*
