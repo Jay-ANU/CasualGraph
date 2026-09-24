@@ -1,5 +1,5 @@
 export type OfferLanguage = 'en' | 'zh';
-export type OfferStatus = 'sent' | 'failed' | 'accepted' | 'declined' | 'withdrawn';
+export type OfferStatus = 'sending' | 'sent' | 'failed' | 'accepted' | 'declined' | 'withdrawn';
 
 export interface OfferTemplate {
   subject: string;
@@ -58,6 +58,7 @@ export const OFFER_TEMPLATES: Record<OfferLanguage, OfferTemplate> = {
 };
 
 export const OFFER_STATUS_LABELS: Record<OfferStatus, string> = {
+  sending: 'Sending…',
   sent: 'Awaiting reply',
   accepted: 'Accepted',
   declined: 'Declined',
@@ -66,6 +67,7 @@ export const OFFER_STATUS_LABELS: Record<OfferStatus, string> = {
 };
 
 export const OFFER_STATUS_DOT: Record<OfferStatus, string> = {
+  sending: 'bg-info',
   sent: 'bg-info',
   accepted: 'bg-ok',
   declined: 'bg-ink-5',

@@ -1368,13 +1368,16 @@ def _build_recruitment_message(
     bcc: Optional[str],
 ) -> EmailMessage:
     message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = formataddr((_MAIL_FROM_NAME, _MAIL_FROM))
-    message["To"] = formataddr((candidate_name, candidate_email))
-    if reply_to:
-        message["Reply-To"] = reply_to
-    if bcc:
-        message["Bcc"] = bcc
+    try:
+        message["Subject"] = subject
+        message["From"] = formataddr((_MAIL_FROM_NAME, _MAIL_FROM))
+        message["To"] = formataddr((candidate_name, candidate_email))
+        if reply_to:
+            message["Reply-To"] = reply_to
+        if bcc:
+            message["Bcc"] = bcc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"The offer can't be sent as an email: {exc}") from exc
     message["Date"] = formatdate(usegmt=True)
     message["Message-ID"] = make_msgid(domain=_MAIL_FROM.rpartition("@")[2] or None)
     message.set_content(text)
@@ -1434,6 +1437,7 @@ async def list_recruitment_offers(
     current_user: dict = Depends(require_admin),
     db: aiosqlite.Connection = Depends(_get_db),
 ):
+    await recruitment_offers.expire_stale_sends(db)
     return {
         "offers": await recruitment_offers.list_offers(db, limit=limit),
         "mail": _recruitment_mail_status(),
@@ -1488,15 +1492,6 @@ async def send_recruitment_offer(
             detail=f"An offer for {draft.position} was sent to {draft.candidate_email} less than a minute ago.",
         )
     reply_to, bcc = _recruitment_reply_addresses(request, current_user)
-    offer = await recruitment_offers.insert_offer(
-        db,
-        draft=draft,
-        rendered=rendered,
-        reply_to=reply_to,
-        bcc=bcc,
-        created_by_user_id=str(current_user.get("id") or ""),
-        created_by_email=_normalize_email(str(current_user.get("email") or "")),
-    )
     message = _build_recruitment_message(
         subject=rendered.subject,
         text=rendered.text,
@@ -1505,6 +1500,15 @@ async def send_recruitment_offer(
         candidate_email=draft.candidate_email,
         reply_to=reply_to,
         bcc=bcc,
+    )
+    offer = await recruitment_offers.insert_offer(
+        db,
+        draft=draft,
+        rendered=rendered,
+        reply_to=reply_to,
+        bcc=bcc,
+        created_by_user_id=str(current_user.get("id") or ""),
+        created_by_email=_normalize_email(str(current_user.get("email") or "")),
     )
     return await _deliver_recruitment_offer(
         db,
@@ -1521,9 +1525,12 @@ async def resend_recruitment_offer(
     current_user: dict = Depends(require_admin),
     db: aiosqlite.Connection = Depends(_get_db),
 ):
+    await recruitment_offers.expire_stale_sends(db)
     stored = await recruitment_offers.get_offer_row(db, offer_id)
     if stored is None:
         raise HTTPException(status_code=404, detail="Offer not found")
+    if stored["status"] == "sending":
+        raise HTTPException(status_code=409, detail="This offer is being sent right now.")
     if stored["status"] not in recruitment_offers.RESENDABLE_STATUSES:
         raise HTTPException(
             status_code=409,
@@ -1553,6 +1560,12 @@ async def resend_recruitment_offer(
         reply_to=stored["reply_to"],
         bcc=stored["bcc"],
     )
+    if not await recruitment_offers.claim_for_resend(
+        db,
+        offer_id,
+        cooldown_seconds=_RECRUITMENT_RESEND_COOLDOWN_SECONDS,
+    ):
+        raise HTTPException(status_code=409, detail="This offer is being sent right now or was just sent.")
     return await _deliver_recruitment_offer(
         db,
         offer_id,
@@ -1572,15 +1585,21 @@ async def update_recruitment_offer_status(
     status = str(request.status or "").strip().lower()
     if status not in recruitment_offers.MANUAL_STATUSES:
         raise HTTPException(status_code=400, detail="Status must be sent, accepted, declined or withdrawn.")
+    await recruitment_offers.expire_stale_sends(db)
     offer = await recruitment_offers.get_offer(db, offer_id)
     if offer is None:
         raise HTTPException(status_code=404, detail="Offer not found")
+    if offer["status"] == "sending":
+        raise HTTPException(status_code=409, detail="This offer is being sent right now.")
     if not offer.get("sent_at") and status != "withdrawn":
         raise HTTPException(
             status_code=409,
             detail="This offer has not reached the candidate yet. Send it again or withdraw it.",
         )
-    return {"offer": await recruitment_offers.update_status(db, offer_id, status)}
+    updated = await recruitment_offers.update_status(db, offer_id, status)
+    if updated is None:
+        raise HTTPException(status_code=409, detail="This offer is being sent right now.")
+    return {"offer": updated}
 
 
 @app.delete("/admin/recruitment/offers/{offer_id}")
@@ -1589,8 +1608,12 @@ async def delete_recruitment_offer(
     current_user: dict = Depends(require_admin),
     db: aiosqlite.Connection = Depends(_get_db),
 ):
-    if not await recruitment_offers.delete_offer(db, offer_id):
+    await recruitment_offers.expire_stale_sends(db)
+    offer = await recruitment_offers.get_offer(db, offer_id)
+    if offer is None:
         raise HTTPException(status_code=404, detail="Offer not found")
+    if offer["status"] == "sending" or not await recruitment_offers.delete_offer(db, offer_id):
+        raise HTTPException(status_code=409, detail="This offer is being sent right now.")
     return {"deleted": True, "id": offer_id}
 
 

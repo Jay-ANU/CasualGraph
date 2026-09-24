@@ -21,11 +21,13 @@ import aiosqlite
 
 ORGANISATION_NAME = "CausalGraph AI"
 LANGUAGES = ("en", "zh")
-OFFER_STATUSES = ("sent", "failed", "accepted", "declined", "withdrawn")
+OFFER_STATUSES = ("sending", "sent", "failed", "accepted", "declined", "withdrawn")
 # Statuses an admin can set by hand once the offer has been delivered.
 MANUAL_STATUSES = ("sent", "accepted", "declined", "withdrawn")
 RESENDABLE_STATUSES = ("sent", "failed")
-UNDELIVERED_ERROR = "Delivery did not complete."
+# A send still marked "sending" after this long was cut off (e.g. by a restart).
+SENDING_TIMEOUT_SECONDS = 180
+INTERRUPTED_ERROR = "Delivery was interrupted, so the email may or may not have reached the candidate."
 
 MAX_NAME_CHARS = 120
 MAX_EMAIL_CHARS = 254
@@ -175,10 +177,20 @@ def build_draft(
         language=str(language or "en").strip().lower(),
         subject=clean_line(subject),
         letter=clean_letter(letter),
-        sender_name=clean_line(sender_name),
+        # The sender's name can end up in the subject; keep it from reading as an encoded word.
+        sender_name=clean_line(sender_name).replace("=?", "= ?"),
     )
     if draft.language not in LANGUAGES:
         raise OfferValidationError("Language must be English (en) or Chinese (zh).")
+    # These values go into email headers, where "=?...?=" is decoded as an RFC 2047 encoded word
+    # and could smuggle in line breaks or extra addresses.
+    for label, value in (
+        ("Candidate name", draft.candidate_name),
+        ("Position", draft.position),
+        ("Subject", draft.subject),
+    ):
+        if "=?" in value:
+            raise OfferValidationError(f'{label} can\'t contain "=?".')
     for label, value, limit in (
         ("Candidate name", draft.candidate_name, MAX_NAME_CHARS),
         ("Candidate email", draft.candidate_email, MAX_EMAIL_CHARS),
@@ -480,11 +492,14 @@ async def find_recent_duplicate(
     position: str,
     within_seconds: int = 60,
 ) -> Optional[Dict[str, Any]]:
-    """An offer for the same candidate and position created moments ago, e.g. from a double submit."""
+    """An offer for the same candidate and position sent or sending moments ago, e.g. from a double submit.
+
+    Offers whose delivery failed don't count, so the admin can send again straight away.
+    """
     since = (datetime.now(timezone.utc) - timedelta(seconds=within_seconds)).isoformat()
     cursor = await db.execute(
         f"{_SELECT_OFFER} WHERE candidate_email = ? AND lower(position) = lower(?) AND created_at >= ? "
-        "ORDER BY created_at DESC LIMIT 1",
+        "AND status != 'failed' ORDER BY created_at DESC LIMIT 1",
         (candidate_email, position, since),
     )
     row = await cursor.fetchone()
@@ -501,7 +516,7 @@ async def insert_offer(
     created_by_user_id: str,
     created_by_email: str,
 ) -> Dict[str, Any]:
-    """Record the offer before delivery; it counts as undelivered until ``record_delivery``."""
+    """Record the offer as "sending" before delivery starts."""
     offer_id = str(uuid.uuid4())
     now = _utc_now_iso()
     await db.execute(
@@ -522,9 +537,9 @@ async def insert_offer(
             draft.sender_name,
             reply_to,
             bcc,
-            "failed",
+            "sending",
             None,
-            UNDELIVERED_ERROR,
+            None,
             0,
             created_by_user_id,
             created_by_email,
@@ -553,11 +568,11 @@ async def record_delivery(db: aiosqlite.Connection, offer_id: str, *, delivery: 
 
 
 async def record_failure(db: aiosqlite.Connection, offer_id: str, *, error: str) -> Dict[str, Any]:
-    """Keep the error. An offer that already reached the candidate once stays 'sent'."""
+    """Keep the error. An offer that already reached the candidate once goes back to 'sent'."""
     await db.execute(
         """
         UPDATE recruitment_offers
-        SET status = CASE WHEN sent_at IS NULL THEN 'failed' ELSE status END,
+        SET status = CASE WHEN sent_at IS NULL THEN 'failed' ELSE 'sent' END,
             last_error = ?, updated_at = ?
         WHERE id = ?
         """,
@@ -567,17 +582,54 @@ async def record_failure(db: aiosqlite.Connection, offer_id: str, *, error: str)
     return await get_offer(db, offer_id)
 
 
-async def update_status(db: aiosqlite.Connection, offer_id: str, status: str) -> Optional[Dict[str, Any]]:
+async def claim_for_resend(db: aiosqlite.Connection, offer_id: str, *, cooldown_seconds: int) -> bool:
+    """Mark an offer as sending again.
+
+    False if another request is sending it or delivered it within the cooldown.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=cooldown_seconds)).isoformat()
+    cursor = await db.execute(
+        """
+        UPDATE recruitment_offers SET status = 'sending', updated_at = ?
+        WHERE id = ? AND (status = 'failed' OR (status = 'sent' AND (sent_at IS NULL OR sent_at < ?)))
+        """,
+        (_utc_now_iso(), str(offer_id), cutoff),
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def expire_stale_sends(db: aiosqlite.Connection) -> None:
+    """Sends cut off mid-delivery (e.g. by a restart) stop blocking the offer."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=SENDING_TIMEOUT_SECONDS)).isoformat()
     await db.execute(
-        "UPDATE recruitment_offers SET status = ?, updated_at = ? WHERE id = ?",
+        """
+        UPDATE recruitment_offers
+        SET status = CASE WHEN sent_at IS NULL THEN 'failed' ELSE 'sent' END,
+            last_error = ?, updated_at = ?
+        WHERE status = 'sending' AND updated_at < ?
+        """,
+        (INTERRUPTED_ERROR, _utc_now_iso(), cutoff),
+    )
+    await db.commit()
+
+
+async def update_status(db: aiosqlite.Connection, offer_id: str, status: str) -> Optional[Dict[str, Any]]:
+    """Set the status by hand. None if the offer is being sent right now."""
+    cursor = await db.execute(
+        "UPDATE recruitment_offers SET status = ?, updated_at = ? WHERE id = ? AND status != 'sending'",
         (status, _utc_now_iso(), str(offer_id)),
     )
     await db.commit()
-    return await get_offer(db, offer_id)
+    return await get_offer(db, offer_id) if cursor.rowcount > 0 else None
 
 
 async def delete_offer(db: aiosqlite.Connection, offer_id: str) -> bool:
-    cursor = await db.execute("DELETE FROM recruitment_offers WHERE id = ?", (str(offer_id),))
+    """Delete an offer record unless it is being sent right now."""
+    cursor = await db.execute(
+        "DELETE FROM recruitment_offers WHERE id = ? AND status != 'sending'",
+        (str(offer_id),),
+    )
     await db.commit()
     return cursor.rowcount > 0
 

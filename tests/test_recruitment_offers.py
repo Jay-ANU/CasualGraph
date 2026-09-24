@@ -428,3 +428,143 @@ async def _insert_user(tmp_path, user_id: str, email: str, role: str) -> None:
             (user_id, email, email.split("@")[0], "x", role, "2026-01-01T00:00:00+00:00"),
         )
         await db.commit()
+
+
+def test_encoded_words_in_header_fields_are_rejected_before_anything_is_stored(tmp_path):
+    asyncio.run(_encoded_words_in_header_fields_are_rejected_before_anything_is_stored(tmp_path))
+
+
+async def _encoded_words_in_header_fields_are_rejected_before_anything_is_stored(tmp_path):
+    mailer = FakeMailer()
+    hostile = {
+        "candidate_name": "=?utf-8?b?QWRhDQpY?=",  # decodes to "Ada\r\nX"
+        "position": "=?utf-8?b?ZXZpbEBhdHRhY2tlci5jb20sIHg=?=",  # decodes to an extra address
+        "subject": "Offer =?utf-8?q?x?=",
+    }
+    with _backend(tmp_path, mailer=mailer):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            errors = {}
+            for field, value in hostile.items():
+                with pytest.raises(HTTPException) as exc:
+                    await api.send_recruitment_offer(_offer_request(**{field: value}), ADMIN, db)
+                errors[field] = exc.value
+            signed = await api.send_recruitment_offer(
+                _offer_request(subject="Offer from {{sender_name}}"),
+                {**ADMIN, "username": "=?utf-8?b?QWRhDQpY?="},
+                db,
+            )
+            listed = await api.list_recruitment_offers(200, ADMIN, db)
+
+    assert {field: error.status_code for field, error in errors.items()} == {
+        "candidate_name": 400,
+        "position": 400,
+        "subject": 400,
+    }
+    assert 'can\'t contain "=?"' in errors["candidate_name"].detail
+    assert signed["offer"]["subject"] == "Offer from = ?utf-8?b?QWRhDQpY?="
+    assert [offer["id"] for offer in listed["offers"]] == [signed["offer"]["id"]]
+    assert len(mailer.messages) == 1
+
+
+def test_unusable_headers_become_a_client_error():
+    with patch("app._MAIL_FROM", "offers@example.com"):
+        with pytest.raises(HTTPException) as exc:
+            api._build_recruitment_message(
+                subject="Offer",
+                text="Body",
+                html_body="<p>Body</p>",
+                candidate_name="=?utf-8?b?QWRhDQpY?=",
+                candidate_email="ada@example.org",
+                reply_to=None,
+                bcc=None,
+            )
+
+    assert exc.value.status_code == 400
+
+
+def test_a_failed_send_can_be_sent_again_straight_away(tmp_path):
+    asyncio.run(_a_failed_send_can_be_sent_again_straight_away(tmp_path))
+
+
+async def _a_failed_send_can_be_sent_again_straight_away(tmp_path):
+    with _backend(tmp_path, mailer=FakeMailer(error=TimeoutError("timed out"))):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            with pytest.raises(HTTPException) as exc:
+                await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+            with patch("app._send_mail_message", FakeMailer()):
+                again = await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+            listed = await api.list_recruitment_offers(200, ADMIN, db)
+
+    assert exc.value.status_code == 502
+    assert "did not respond in time" in exc.value.detail
+    assert again["offer"]["status"] == "sent"
+    assert sorted(offer["status"] for offer in listed["offers"]) == ["failed", "sent"]
+
+
+def test_an_offer_being_sent_is_locked_until_delivery_finishes_or_expires(tmp_path):
+    asyncio.run(_an_offer_being_sent_is_locked_until_delivery_finishes_or_expires(tmp_path))
+
+
+async def _an_offer_being_sent_is_locked_until_delivery_finishes_or_expires(tmp_path):
+    mailer = FakeMailer()
+    with _backend(tmp_path, mailer=mailer):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            with patch("app._send_mail_message", FakeMailer(error=TimeoutError())):
+                with pytest.raises(HTTPException):
+                    await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+            [failed] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
+
+            # Another request claims the retry first; everything else must wait for it.
+            assert await offers.claim_for_resend(db, failed["id"], cooldown_seconds=60) is True
+            assert await offers.claim_for_resend(db, failed["id"], cooldown_seconds=60) is False
+            [sending] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
+            blocked = []
+            for call in (
+                api.resend_recruitment_offer(failed["id"], ADMIN, db),
+                api.update_recruitment_offer_status(
+                    failed["id"], api.RecruitmentOfferStatusRequest(status="withdrawn"), ADMIN, db
+                ),
+                api.delete_recruitment_offer(failed["id"], ADMIN, db),
+            ):
+                with pytest.raises(HTTPException) as exc:
+                    await call
+                blocked.append(exc.value.status_code)
+
+            # A send cut off by a restart stops blocking the offer after the timeout.
+            await db.execute("UPDATE recruitment_offers SET updated_at = '2000-01-01T00:00:00+00:00'")
+            await db.commit()
+            [expired] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
+            retried = await api.resend_recruitment_offer(failed["id"], ADMIN, db)
+
+    assert failed["status"] == "failed"
+    assert sending["status"] == "sending"
+    assert blocked == [409, 409, 409]
+    assert expired["status"] == "failed"
+    assert expired["last_error"] == offers.INTERRUPTED_ERROR
+    assert retried["offer"]["status"] == "sent"
+    assert len(mailer.messages) == 1
+
+
+def test_a_failed_resend_of_a_delivered_offer_keeps_it_awaiting_reply(tmp_path):
+    asyncio.run(_a_failed_resend_of_a_delivered_offer_keeps_it_awaiting_reply(tmp_path))
+
+
+async def _a_failed_resend_of_a_delivered_offer_keeps_it_awaiting_reply(tmp_path):
+    with _backend(tmp_path):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            offer = (await api.send_recruitment_offer(_offer_request(), ADMIN, db))["offer"]
+            await db.execute("UPDATE recruitment_offers SET sent_at = '2000-01-01T00:00:00+00:00'")
+            await db.commit()
+            with patch("app._send_mail_message", FakeMailer(error=smtplib.SMTPServerDisconnected("gone"))):
+                with pytest.raises(HTTPException) as exc:
+                    await api.resend_recruitment_offer(offer["id"], ADMIN, db)
+            [after] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
+
+    assert exc.value.status_code == 502
+    assert after["status"] == "sent"
+    assert after["send_count"] == 1
+    assert after["last_error"] == "Email delivery failed (SMTPServerDisconnected)."

@@ -784,6 +784,11 @@ const Recruitment: React.FC = () => {
                               <div className="mt-0.5 max-w-[16rem] text-xs text-ink-4">{offer.last_error}</div>
                             )}
                           </>
+                        ) : offer.status === 'sending' ? (
+                          <span className="inline-flex items-center gap-2 whitespace-nowrap text-ink-3">
+                            <span className="cg-working" />
+                            {OFFER_STATUS_LABELS.sending}
+                          </span>
                         ) : (
                           <div className="flex items-center gap-2">
                             <span className={`status-dot ${OFFER_STATUS_DOT[offer.status] || 'bg-line-strong'}`} />
@@ -825,7 +830,7 @@ const Recruitment: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => deleteOffer(offer)}
-                            disabled={isBusy}
+                            disabled={isBusy || offer.status === 'sending'}
                             className="btn btn-ghost btn-sm hover:text-err"
                             aria-label={`Delete the offer to ${offer.candidate_name}`}
                             title="Delete"
