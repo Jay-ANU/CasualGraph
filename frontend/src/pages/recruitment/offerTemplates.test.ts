@@ -7,7 +7,9 @@ import {
   isTemplateUntouched,
   isValidEmail,
   joinWithAnd,
+  loadPayDefaults,
   loadStoredLetter,
+  savePayDefaults,
   saveStoredLetter,
 } from './offerTemplates';
 
@@ -75,5 +77,20 @@ describe('stored letter', () => {
   it('ignores unreadable stored values', () => {
     localStorage.setItem('causalgraph_recruitment_letter_v1', '{not json');
     expect(loadStoredLetter()).toBeNull();
+  });
+});
+
+describe('pay defaults', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('fall back to AUD per year, then remember the last choice', () => {
+    expect(loadPayDefaults(['AUD', 'CNY'], ['year', 'month'])).toEqual({ currency: 'AUD', period: 'year' });
+    savePayDefaults({ currency: 'CNY', period: 'month' });
+    expect(loadPayDefaults(['AUD', 'CNY'], ['year', 'month'])).toEqual({ currency: 'CNY', period: 'month' });
+  });
+
+  it('ignore values that are no longer offered', () => {
+    savePayDefaults({ currency: 'XYZ', period: 'fortnight' });
+    expect(loadPayDefaults(['AUD', 'CNY'], ['year', 'month'])).toEqual({ currency: 'AUD', period: 'year' });
   });
 });

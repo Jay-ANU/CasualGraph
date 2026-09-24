@@ -19,8 +19,10 @@ import {
   isTemplateUntouched,
   isValidEmail,
   joinWithAnd,
+  loadPayDefaults,
   loadStoredLetter,
   placeholderToken,
+  savePayDefaults,
   saveStoredLetter,
 } from './recruitment/offerTemplates';
 
@@ -135,8 +137,9 @@ const Recruitment: React.FC = () => {
   const [employmentType, setEmploymentType] = useState('full_time');
   const [reportsTo, setReportsTo] = useState('');
   const [salaryAmount, setSalaryAmount] = useState('');
-  const [salaryCurrency, setSalaryCurrency] = useState('AUD');
-  const [salaryPeriod, setSalaryPeriod] = useState('year');
+  const [payDefaults] = useState(() => loadPayDefaults(CURRENCIES, SALARY_PERIODS.map((period) => period.value)));
+  const [salaryCurrency, setSalaryCurrency] = useState(payDefaults.currency);
+  const [salaryPeriod, setSalaryPeriod] = useState(payDefaults.period);
   const [extraCompensation, setExtraCompensation] = useState('');
   const [benefitsText, setBenefitsText] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -203,6 +206,10 @@ const Recruitment: React.FC = () => {
   useEffect(() => {
     saveStoredLetter(language, subject, letter);
   }, [language, subject, letter]);
+
+  useEffect(() => {
+    savePayDefaults({ currency: salaryCurrency, period: salaryPeriod });
+  }, [salaryCurrency, salaryPeriod]);
 
   const draft = useMemo(
     () => ({
@@ -646,7 +653,7 @@ const Recruitment: React.FC = () => {
                   onChange={(event) => setLocation(event.target.value)}
                   className="input"
                   maxLength={120}
-                  placeholder="e.g. Canberra or Remote"
+                  placeholder="e.g. Remote, or the office city"
                 />
               </div>
               <div>

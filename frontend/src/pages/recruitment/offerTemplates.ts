@@ -162,3 +162,32 @@ export const saveStoredLetter = (language: OfferLanguage, subject: string, lette
     // Storage can be unavailable (private mode); the draft simply isn't remembered.
   }
 };
+
+const PAY_DEFAULTS_KEY = 'causalgraph_recruitment_pay_defaults_v1';
+
+export interface PayDefaults {
+  currency: string;
+  period: string;
+}
+
+/** The currency and pay period the admin used last, so a team outside Australia sets them once. */
+export const loadPayDefaults = (currencies: string[], periods: string[]): PayDefaults => {
+  const fallback = { currency: 'AUD', period: 'year' };
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PAY_DEFAULTS_KEY) || 'null');
+    return {
+      currency: currencies.indexOf(parsed?.currency) >= 0 ? parsed.currency : fallback.currency,
+      period: periods.indexOf(parsed?.period) >= 0 ? parsed.period : fallback.period,
+    };
+  } catch {
+    return fallback;
+  }
+};
+
+export const savePayDefaults = (value: PayDefaults) => {
+  try {
+    localStorage.setItem(PAY_DEFAULTS_KEY, JSON.stringify(value));
+  } catch {
+    // Storage can be unavailable (private mode); the defaults simply aren't remembered.
+  }
+};
