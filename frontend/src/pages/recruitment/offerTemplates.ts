@@ -11,6 +11,9 @@ export interface OfferTemplate {
 export const OFFER_PLACEHOLDERS: Array<{ key: string; label: string }> = [
   { key: 'candidate_name', label: 'Candidate name' },
   { key: 'position', label: 'Position' },
+  { key: 'team', label: 'Team' },
+  { key: 'location', label: 'Location' },
+  { key: 'salary', label: 'Salary' },
   { key: 'start_date', label: 'Start date' },
   { key: 'respond_by', label: 'Reply date' },
   { key: 'sender_name', label: 'Your name' },
@@ -26,7 +29,7 @@ export const OFFER_TEMPLATES: Record<OfferLanguage, OfferTemplate> = {
       '',
       'We enjoyed getting to know you during the selection process and believe your skills will make a real contribution to our work on evidence-based ESG research.',
       '',
-      'Your start date would be {{start_date}}. Please reply to this email by {{respond_by}} to let us know whether you accept this offer. If you have any questions in the meantime, just reply and we will be glad to help.',
+      'Your personal offer page sets out the full details, including your compensation and benefits. Your start date would be {{start_date}}. Please review the offer and let us know your decision by {{respond_by}} using the buttons on that page. If you have any questions in the meantime, just reply to this email.',
       '',
       'We look forward to working with you.',
       '',
@@ -44,7 +47,7 @@ export const OFFER_TEMPLATES: Record<OfferLanguage, OfferTemplate> = {
       '',
       '在招募过程中，我们对您的能力与经历印象深刻，相信您将为我们基于证据的 ESG 研究工作带来重要贡献。',
       '',
-      '您的入职日期为{{start_date}}。请于{{respond_by}}前回复本邮件，告知我们您是否接受此录用。如有任何疑问，欢迎随时回复本邮件与我们联系。',
+      '您的专属录用页面列出了完整的录用详情，包括薪酬与福利。您的入职日期为{{start_date}}。请于{{respond_by}}前在该页面上确认是否接受此录用。如有任何疑问，欢迎直接回复本邮件。',
       '',
       '期待与您共事！',
       '',
@@ -81,6 +84,9 @@ export const MANUAL_OFFER_STATUSES: OfferStatus[] = ['sent', 'accepted', 'declin
 const MISSING_HINTS: Record<string, string> = {
   candidate_name: "Add the candidate's name",
   position: 'Add the position',
+  team: 'Add the team',
+  location: 'Add a location',
+  salary: 'Add a salary',
   start_date: 'Add a start date',
   respond_by: 'Add a reply date',
 };

@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, RotateCcw, Send, Trash2 } from 'lucide-react';
+import { Eye, RefreshCw, RotateCcw, Send, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import AdminTabs from '../components/AdminTabs';
 import useDocumentTitle from '../utils/useDocumentTitle';
+import OfferExperience from './offer/OfferExperience';
+import { CURRENCIES, EMPLOYMENT_TYPES, OfferSalary, PublicOffer, SALARY_PERIODS } from './offer/offerContent';
 import {
   MANUAL_OFFER_STATUSES,
   OFFER_PLACEHOLDERS,
@@ -43,6 +45,18 @@ interface RecruitmentOffer {
   created_at: string;
   sent_at?: string | null;
   updated_at: string;
+  team?: string | null;
+  location?: string | null;
+  employment_type?: string | null;
+  reports_to?: string | null;
+  salary?: OfferSalary | null;
+  extra_compensation?: string | null;
+  benefits: string[];
+  offer_url?: string | null;
+  viewed_at?: string | null;
+  view_count: number;
+  responded_at?: string | null;
+  response_note?: string | null;
 }
 
 interface MailStatus {
@@ -61,6 +75,8 @@ interface OfferPreview {
   missing: string[];
   unknown: string[];
   warnings: string[];
+  hero_cid: string;
+  page: PublicOffer;
 }
 
 const apiBase = () => {
@@ -114,6 +130,15 @@ const Recruitment: React.FC = () => {
   const [candidateName, setCandidateName] = useState('');
   const [candidateEmail, setCandidateEmail] = useState('');
   const [position, setPosition] = useState('');
+  const [team, setTeam] = useState('');
+  const [location, setLocation] = useState('');
+  const [employmentType, setEmploymentType] = useState('full_time');
+  const [reportsTo, setReportsTo] = useState('');
+  const [salaryAmount, setSalaryAmount] = useState('');
+  const [salaryCurrency, setSalaryCurrency] = useState('AUD');
+  const [salaryPeriod, setSalaryPeriod] = useState('year');
+  const [extraCompensation, setExtraCompensation] = useState('');
+  const [benefitsText, setBenefitsText] = useState('');
   const [startDate, setStartDate] = useState('');
   const [respondBy, setRespondBy] = useState('');
   const [language, setLanguage] = useState<OfferLanguage>(initialLetter.language);
@@ -131,6 +156,7 @@ const Recruitment: React.FC = () => {
   const [previewError, setPreviewError] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewHeight, setPreviewHeight] = useState(560);
+  const [showPagePreview, setShowPagePreview] = useState(false);
 
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
@@ -183,6 +209,18 @@ const Recruitment: React.FC = () => {
       candidate_name: candidateName,
       candidate_email: candidateEmail.trim(),
       position,
+      team,
+      location,
+      employment_type: employmentType,
+      reports_to: reportsTo,
+      salary_amount: salaryAmount.trim(),
+      salary_currency: salaryCurrency,
+      salary_period: salaryPeriod,
+      extra_compensation: extraCompensation,
+      benefits: benefitsText
+        .split('\n')
+        .map((item) => item.trim())
+        .filter(Boolean),
       start_date: startDate,
       respond_by: respondBy,
       language,
@@ -191,7 +229,27 @@ const Recruitment: React.FC = () => {
       reply_to_sender: replyToSender,
       copy_to_sender: copyToSender,
     }),
-    [candidateName, candidateEmail, position, startDate, respondBy, language, subject, letter, replyToSender, copyToSender]
+    [
+      candidateName,
+      candidateEmail,
+      position,
+      team,
+      location,
+      employmentType,
+      reportsTo,
+      salaryAmount,
+      salaryCurrency,
+      salaryPeriod,
+      extraCompensation,
+      benefitsText,
+      startDate,
+      respondBy,
+      language,
+      subject,
+      letter,
+      replyToSender,
+      copyToSender,
+    ]
   );
 
   // Render the email on the server as the admin types, so the preview is exactly what gets sent.
@@ -233,6 +291,25 @@ const Recruitment: React.FC = () => {
     window.addEventListener('resize', measurePreview);
     return () => window.removeEventListener('resize', measurePreview);
   }, [measurePreview]);
+
+  useEffect(() => {
+    if (!showPagePreview) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowPagePreview(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [showPagePreview]);
+
+  // The email embeds its banner as an attachment; the preview loads the same file from the API.
+  const previewHtml = preview
+    ? preview.html.split(`cid:${preview.hero_cid}`).join(`${base}/recruitment-assets/offer-hero.gif`)
+    : '';
 
   const templateUntouched = isTemplateUntouched(language, subject, letter);
 
@@ -380,6 +457,16 @@ const Recruitment: React.FC = () => {
     }
   };
 
+  const copyOfferLink = async (offer: RecruitmentOffer) => {
+    if (!offer.offer_url) return;
+    try {
+      await navigator.clipboard.writeText(offer.offer_url);
+      setListMessage(`Link to ${offer.candidate_name}'s offer page copied.`);
+    } catch {
+      window.prompt('Copy the offer link:', offer.offer_url);
+    }
+  };
+
   const deleteOffer = async (offer: RecruitmentOffer) => {
     if (!window.confirm(`Delete the record of the offer to ${offer.candidate_name}? An email that was already sent is not recalled.`)) {
       return;
@@ -523,6 +610,60 @@ const Recruitment: React.FC = () => {
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div>
+                <label htmlFor="offer-team" className="field-label">
+                  Team <span className="font-normal text-ink-4">(optional)</span>
+                </label>
+                <input
+                  id="offer-team"
+                  value={team}
+                  onChange={(event) => setTeam(event.target.value)}
+                  className="input"
+                  maxLength={120}
+                  placeholder="e.g. Research & Engineering"
+                />
+              </div>
+              <div>
+                <label htmlFor="offer-employment-type" className="field-label">Employment type</label>
+                <select
+                  id="offer-employment-type"
+                  value={employmentType}
+                  onChange={(event) => setEmploymentType(event.target.value)}
+                  className="input"
+                >
+                  <option value="">Not specified</option>
+                  {EMPLOYMENT_TYPES.map((type) => (
+                    <option key={type.value} value={type.value}>{type.en}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="offer-location" className="field-label">
+                  Location <span className="font-normal text-ink-4">(optional)</span>
+                </label>
+                <input
+                  id="offer-location"
+                  value={location}
+                  onChange={(event) => setLocation(event.target.value)}
+                  className="input"
+                  maxLength={120}
+                  placeholder="e.g. Canberra or Remote"
+                />
+              </div>
+              <div>
+                <label htmlFor="offer-reports-to" className="field-label">
+                  Reports to <span className="font-normal text-ink-4">(optional)</span>
+                </label>
+                <input
+                  id="offer-reports-to"
+                  value={reportsTo}
+                  onChange={(event) => setReportsTo(event.target.value)}
+                  className="input"
+                  maxLength={120}
+                />
+              </div>
+            </div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
                 <label htmlFor="offer-start-date" className="field-label">
                   Start date <span className="font-normal text-ink-4">(optional)</span>
                 </label>
@@ -546,6 +687,79 @@ const Recruitment: React.FC = () => {
                   className="input"
                 />
               </div>
+            </div>
+          </fieldset>
+
+          <fieldset className="mt-6">
+            <legend className="section-label">Compensation</legend>
+            <p className="field-hint mt-1">Shown on the candidate's offer page, not in the email itself.</p>
+            <div className="mt-3 grid gap-4 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,1fr)]">
+              <div>
+                <label htmlFor="offer-salary" className="field-label">
+                  Salary <span className="font-normal text-ink-4">(optional)</span>
+                </label>
+                <input
+                  id="offer-salary"
+                  value={salaryAmount}
+                  onChange={(event) => setSalaryAmount(event.target.value)}
+                  className="input"
+                  inputMode="decimal"
+                  maxLength={16}
+                  placeholder="e.g. 95000"
+                />
+              </div>
+              <div>
+                <label htmlFor="offer-currency" className="field-label">Currency</label>
+                <select
+                  id="offer-currency"
+                  value={salaryCurrency}
+                  onChange={(event) => setSalaryCurrency(event.target.value)}
+                  className="input"
+                >
+                  {CURRENCIES.map((currency) => (
+                    <option key={currency} value={currency}>{currency}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="offer-period" className="field-label">Paid</label>
+                <select
+                  id="offer-period"
+                  value={salaryPeriod}
+                  onChange={(event) => setSalaryPeriod(event.target.value)}
+                  className="input"
+                >
+                  {SALARY_PERIODS.map((period) => (
+                    <option key={period.value} value={period.value}>{period.en}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="mt-4">
+              <label htmlFor="offer-extra" className="field-label">
+                Also included <span className="font-normal text-ink-4">(optional)</span>
+              </label>
+              <input
+                id="offer-extra"
+                value={extraCompensation}
+                onChange={(event) => setExtraCompensation(event.target.value)}
+                className="input"
+                maxLength={200}
+                placeholder="e.g. 10% annual bonus and equity"
+              />
+            </div>
+            <div className="mt-4">
+              <label htmlFor="offer-benefits" className="field-label">
+                Benefits <span className="font-normal text-ink-4">(one per line, optional)</span>
+              </label>
+              <textarea
+                id="offer-benefits"
+                value={benefitsText}
+                onChange={(event) => setBenefitsText(event.target.value)}
+                className="input text-[14px]"
+                rows={4}
+                placeholder={'Flexible working hours\nConference and learning budget\nLatest MacBook Pro'}
+              />
             </div>
           </fieldset>
 
@@ -673,7 +887,7 @@ const Recruitment: React.FC = () => {
                 ref={previewFrameRef}
                 title="Offer email preview"
                 sandbox="allow-same-origin"
-                srcDoc={preview.html}
+                srcDoc={previewHtml}
                 onLoad={measurePreview}
                 style={{ height: previewHeight }}
                 className="block w-full border-0 bg-paper"
@@ -703,6 +917,15 @@ const Recruitment: React.FC = () => {
 
           <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
             {sendHint && <p className="mr-auto text-xs text-ink-4">{sendHint}</p>}
+            <button
+              type="button"
+              onClick={() => setShowPagePreview(true)}
+              disabled={!preview?.page}
+              className="btn btn-secondary"
+            >
+              <Eye className="h-4 w-4" />
+              Preview offer page
+            </button>
             <button type="button" onClick={sendOffer} disabled={!canSend} className="btn btn-primary">
               <Send className="h-4 w-4" />
               {sending ? 'Sending…' : 'Send offer'}
@@ -806,6 +1029,15 @@ const Recruitment: React.FC = () => {
                           </div>
                         )}
                         {offer.delivery === 'log' && <div className="mt-1 text-xs text-warn">Test mode: not emailed</div>}
+                        {offer.responded_at ? (
+                          <div className="mt-1 text-xs text-ink-4">Candidate replied {formatDateTime(offer.responded_at)}</div>
+                        ) : offer.view_count > 0 ? (
+                          <div className="mt-1 text-xs text-ink-4" title={`First opened ${formatDateTime(offer.viewed_at)}`}>
+                            Opened {offer.view_count === 1 ? 'once' : `${offer.view_count} times`}
+                          </div>
+                        ) : (
+                          offer.sent_at && offer.status === 'sent' && <div className="mt-1 text-xs text-ink-4">Not opened yet</div>
+                        )}
                       </td>
                       <td className="py-3 text-right">
                         <div className="flex justify-end gap-1">
@@ -817,6 +1049,11 @@ const Recruitment: React.FC = () => {
                           >
                             {isExpanded ? 'Hide' : 'View'}
                           </button>
+                          {offer.offer_url && offer.sent_at && (
+                            <button type="button" onClick={() => copyOfferLink(offer)} className="btn btn-ghost btn-sm">
+                              Copy link
+                            </button>
+                          )}
                           {(offer.status === 'sent' || offer.status === 'failed') && (
                             <button
                               type="button"
@@ -846,6 +1083,30 @@ const Recruitment: React.FC = () => {
                           <div className="rounded-lg border border-line bg-white px-4 py-3">
                             <p className="text-xs text-ink-4">Subject</p>
                             <p className="mt-0.5 font-medium text-ink">{offer.subject}</p>
+                            {offer.response_note && (
+                              <div className="mt-3 rounded-md border border-line bg-paper-sunken px-3 py-2 text-sm text-ink-2">
+                                <span className="text-xs text-ink-4">Message from the candidate</span>
+                                <p className="mt-0.5 whitespace-pre-wrap">{offer.response_note}</p>
+                              </div>
+                            )}
+                            <dl className="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+                              {[
+                                ['Salary', offer.salary?.formatted],
+                                ['Also included', offer.extra_compensation],
+                                ['Team', offer.team],
+                                ['Location', offer.location],
+                                ['Employment', EMPLOYMENT_TYPES.find((type) => type.value === offer.employment_type)?.en],
+                                ['Reports to', offer.reports_to],
+                                ['Benefits', offer.benefits.join(' · ')],
+                              ]
+                                .filter(([, value]) => value)
+                                .map(([label, value]) => (
+                                  <div key={label} className="flex gap-2">
+                                    <dt className="text-ink-4">{label}</dt>
+                                    <dd className="text-ink-2">{value}</dd>
+                                  </div>
+                                ))}
+                            </dl>
                             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-2">{offer.letter}</p>
                             <p className="mt-3 text-xs text-ink-4">
                               Start date {formatIsoDate(offer.start_date)} · Replies go to{' '}
@@ -870,6 +1131,12 @@ const Recruitment: React.FC = () => {
           </table>
         </div>
       </section>
+
+      {showPagePreview && preview?.page && (
+        <div className="fixed inset-0 z-[70] overflow-y-auto" role="dialog" aria-modal="true" aria-label="Offer page preview">
+          <OfferExperience offer={preview.page} preview onClosePreview={() => setShowPagePreview(false)} />
+        </div>
+      )}
     </div>
   );
 };

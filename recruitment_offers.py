@@ -1,19 +1,27 @@
 """Offer letters that admins send to recruitment candidates by email.
 
 The admin recruitment page writes a letter template containing
-``{{placeholders}}``. This module validates the draft, fills the placeholders
+``{{placeholders}}`` and fills in the offer details (position, salary,
+benefits and so on). This module validates the draft, fills the placeholders
 for one candidate, renders the plain-text and HTML versions of the email and
-stores every offer in the auth database so the page can track replies.
+stores every offer in the auth database. Each offer gets a private link to
+its offer page, where the candidate sees the full details and can accept or
+decline; the admin page tracks views and replies.
 SMTP delivery itself lives in ``app.py`` next to the other mail settings.
 """
 
 from __future__ import annotations
 
 import html
+import json
 import re
+import secrets
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import aiosqlite
@@ -25,19 +33,38 @@ OFFER_STATUSES = ("sending", "sent", "failed", "accepted", "declined", "withdraw
 # Statuses an admin can set by hand once the offer has been delivered.
 MANUAL_STATUSES = ("sent", "accepted", "declined", "withdrawn")
 RESENDABLE_STATUSES = ("sent", "failed")
+# What the candidate can do on the offer page, and the status each choice records.
+CANDIDATE_DECISIONS = {"accept": "accepted", "decline": "declined"}
 # A send still marked "sending" after this long was cut off (e.g. by a restart).
 SENDING_TIMEOUT_SECONDS = 180
 INTERRUPTED_ERROR = "Delivery was interrupted, so the email may or may not have reached the candidate."
 
+# Animated banner embedded in every offer email (see scripts/generate_offer_assets.py).
+HERO_IMAGE_PATH = Path(__file__).resolve().parent / "assets" / "recruitment" / "offer-hero.gif"
+HERO_CID = "offer-hero@causalgraph.ai"
+
 MAX_NAME_CHARS = 120
 MAX_EMAIL_CHARS = 254
 MAX_POSITION_CHARS = 160
+MAX_DETAIL_CHARS = 120
+MAX_EXTRA_COMPENSATION_CHARS = 200
+MAX_BENEFITS = 12
+MAX_BENEFIT_CHARS = 120
 MAX_SUBJECT_CHARS = 200
 MAX_LETTER_CHARS = 10_000
+MAX_NOTE_CHARS = 1_000
+MAX_SALARY = Decimal("10000000000")
+
+CURRENCIES = ("AUD", "USD", "CNY", "EUR", "GBP", "HKD", "SGD", "NZD", "CAD", "JPY")
+SALARY_PERIODS = ("year", "month", "week", "day", "hour")
+EMPLOYMENT_TYPES = ("full_time", "part_time", "internship", "contract", "casual")
 
 PLACEHOLDER_LABELS: Dict[str, str] = {
     "candidate_name": "candidate name",
     "position": "position",
+    "team": "team",
+    "location": "location",
+    "salary": "salary",
     "start_date": "start date",
     "respond_by": "reply date",
     "sender_name": "sender name",
@@ -52,6 +79,7 @@ _EMAIL_PATTERN = re.compile(
 )
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
+_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 _EN_MONTHS = (
     "January", "February", "March", "April", "May", "June",
@@ -60,22 +88,54 @@ _EN_MONTHS = (
 _EN_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _ZH_WEEKDAYS = ("一", "二", "三", "四", "五", "六", "日")
 
-_COPY: Dict[str, Dict[str, str]] = {
+_COPY: Dict[str, Dict[str, Any]] = {
     "en": {
         "heading": "Offer letter",
+        "confidential": "Confidential",
+        "prepared_for": "Prepared for {name}",
         "position": "Position",
+        "team": "Team",
+        "employment_type": "Employment",
+        "location": "Location",
         "start_date": "Start date",
         "respond_by": "Please reply by",
+        "cta": "View your offer",
+        "link_hint": "Button not working? Open this link:",
+        "text_link": "View your offer, including compensation and benefits:",
         "separator": ": ",
-        "footer": "Sent by {sender} on behalf of {organisation}. Reply to this email to respond to the offer.",
+        "footer": "Sent by {sender} on behalf of {organisation}. Reply to this email with any questions.",
+        "employment_types": {
+            "full_time": "Full-time",
+            "part_time": "Part-time",
+            "internship": "Internship",
+            "contract": "Contract",
+            "casual": "Casual",
+        },
+        "periods": {"year": "per year", "month": "per month", "week": "per week", "day": "per day", "hour": "per hour"},
     },
     "zh": {
         "heading": "录用通知",
+        "confidential": "机密",
+        "prepared_for": "致 {name}",
         "position": "职位",
+        "team": "团队",
+        "employment_type": "用工类型",
+        "location": "工作地点",
         "start_date": "入职日期",
         "respond_by": "回复截止日期",
+        "cta": "查看录用详情",
+        "link_hint": "按钮无法打开？请访问：",
+        "text_link": "查看完整录用详情（含薪酬与福利）：",
         "separator": "：",
-        "footer": "本邮件由 {sender} 代表 {organisation} 发送。如需答复，请直接回复本邮件。",
+        "footer": "本邮件由 {sender} 代表 {organisation} 发送。如有疑问，请直接回复本邮件。",
+        "employment_types": {
+            "full_time": "全职",
+            "part_time": "兼职",
+            "internship": "实习",
+            "contract": "合同制",
+            "casual": "临时",
+        },
+        "periods": {"year": "年", "month": "月", "week": "周", "day": "日", "hour": "小时"},
     },
 }
 
@@ -84,8 +144,9 @@ _FONT_SANS = (
     "'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif"
 )
 _FONT_SERIF = "Georgia,'Times New Roman','Songti SC',serif"
+_FONT_MONO = "'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace"
 _PARAGRAPH_STYLE = (
-    "margin:0 0 16px;font-size:15px;line-height:1.65;color:#1A1915;"
+    "margin:0 0 16px;font-size:15px;line-height:1.7;color:#1F2937;"
     "word-wrap:break-word;overflow-wrap:break-word;"
 )
 _MISSING_STYLE = "background-color:#FAF1DC;color:#8A5A00;border-radius:4px;padding:1px 4px;"
@@ -109,6 +170,15 @@ class OfferDraft:
     subject: str
     letter: str
     sender_name: str
+    team: str = ""
+    location: str = ""
+    employment_type: str = ""
+    reports_to: str = ""
+    salary_amount: str = ""
+    salary_currency: str = "AUD"
+    salary_period: str = "year"
+    extra_compensation: str = ""
+    benefits: Tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -154,6 +224,58 @@ def format_offer_date(iso_value: str, language: str) -> str:
     return f"{_EN_WEEKDAYS[day.weekday()]} {day.day} {_EN_MONTHS[day.month - 1]} {day.year}"
 
 
+def parse_salary_amount(value: Any) -> str:
+    """A plain decimal string such as "95000" or "42.5", or "" when no salary is given."""
+    text = str(value if value is not None else "").strip().replace(",", "").replace(" ", "")
+    if not text:
+        return ""
+    try:
+        amount = Decimal(text)
+    except InvalidOperation as exc:
+        raise OfferValidationError("Salary must be a number.") from exc
+    if not amount.is_finite() or amount < 0 or amount >= MAX_SALARY:
+        raise OfferValidationError("Salary must be a positive number.")
+    return format(amount.quantize(Decimal("0.01")).normalize(), "f")
+
+
+def format_salary(amount: str, currency: str, period: str, language: str) -> str:
+    if not amount:
+        return ""
+    value = Decimal(amount)
+    number = f"{value:,.0f}" if value == value.to_integral_value() else f"{value:,.2f}"
+    periods = _COPY.get(language, _COPY["en"])["periods"]
+    if language == "zh":
+        return f"{currency} {number} / {periods.get(period, period)}"
+    return f"{currency} {number} {periods.get(period, period)}"
+
+
+def clean_benefits(values: Any) -> Tuple[str, ...]:
+    raw = values.split("\n") if isinstance(values, str) else list(values or [])
+    items = tuple(item for item in (clean_line(value) for value in raw) if item)
+    if len(items) > MAX_BENEFITS:
+        raise OfferValidationError(f"List at most {MAX_BENEFITS} benefits.")
+    for item in items:
+        if len(item) > MAX_BENEFIT_CHARS:
+            raise OfferValidationError(f"Each benefit must be {MAX_BENEFIT_CHARS} characters or fewer.")
+    return items
+
+
+def new_offer_token() -> str:
+    return secrets.token_urlsafe(24)
+
+
+def is_offer_token(value: str) -> bool:
+    return bool(_TOKEN_PATTERN.match(str(value or "")))
+
+
+@lru_cache(maxsize=1)
+def hero_image_bytes() -> Optional[bytes]:
+    try:
+        return HERO_IMAGE_PATH.read_bytes()
+    except OSError:
+        return None
+
+
 def build_draft(
     *,
     candidate_name: Any,
@@ -166,6 +288,15 @@ def build_draft(
     letter: Any,
     sender_name: Any,
     strict: bool,
+    team: Any = "",
+    location: Any = "",
+    employment_type: Any = "",
+    reports_to: Any = "",
+    salary_amount: Any = "",
+    salary_currency: Any = "AUD",
+    salary_period: Any = "year",
+    extra_compensation: Any = "",
+    benefits: Any = (),
 ) -> OfferDraft:
     """Normalise a draft. ``strict`` also requires everything needed to send it."""
     draft = OfferDraft(
@@ -179,15 +310,33 @@ def build_draft(
         letter=clean_letter(letter),
         # The sender's name can end up in the subject; keep it from reading as an encoded word.
         sender_name=clean_line(sender_name).replace("=?", "= ?"),
+        team=clean_line(team),
+        location=clean_line(location),
+        employment_type=clean_line(employment_type).lower(),
+        reports_to=clean_line(reports_to),
+        salary_amount=parse_salary_amount(salary_amount),
+        salary_currency=clean_line(salary_currency).upper() or "AUD",
+        salary_period=clean_line(salary_period).lower() or "year",
+        extra_compensation=clean_line(extra_compensation),
+        benefits=clean_benefits(benefits),
     )
     if draft.language not in LANGUAGES:
         raise OfferValidationError("Language must be English (en) or Chinese (zh).")
-    # These values go into email headers, where "=?...?=" is decoded as an RFC 2047 encoded word
-    # and could smuggle in line breaks or extra addresses.
+    if draft.salary_currency not in CURRENCIES:
+        raise OfferValidationError(f"Currency must be one of {', '.join(CURRENCIES)}.")
+    if draft.salary_period not in SALARY_PERIODS:
+        raise OfferValidationError("Salary period must be year, month, week, day or hour.")
+    if draft.employment_type and draft.employment_type not in EMPLOYMENT_TYPES:
+        raise OfferValidationError("Employment type is not recognised.")
+    # These values can reach email headers (directly or through a placeholder in the subject),
+    # where "=?...?=" is decoded as an RFC 2047 encoded word and could smuggle in line breaks
+    # or extra addresses.
     for label, value in (
         ("Candidate name", draft.candidate_name),
         ("Position", draft.position),
         ("Subject", draft.subject),
+        ("Team", draft.team),
+        ("Location", draft.location),
     ):
         if "=?" in value:
             raise OfferValidationError(f'{label} can\'t contain "=?".')
@@ -195,6 +344,10 @@ def build_draft(
         ("Candidate name", draft.candidate_name, MAX_NAME_CHARS),
         ("Candidate email", draft.candidate_email, MAX_EMAIL_CHARS),
         ("Position", draft.position, MAX_POSITION_CHARS),
+        ("Team", draft.team, MAX_DETAIL_CHARS),
+        ("Location", draft.location, MAX_DETAIL_CHARS),
+        ("Reports to", draft.reports_to, MAX_DETAIL_CHARS),
+        ("Extra compensation", draft.extra_compensation, MAX_EXTRA_COMPENSATION_CHARS),
         ("Subject", draft.subject, MAX_SUBJECT_CHARS),
         ("Letter", draft.letter, MAX_LETTER_CHARS),
     ):
@@ -218,6 +371,9 @@ def placeholder_values(draft: OfferDraft) -> Dict[str, str]:
     return {
         "candidate_name": draft.candidate_name,
         "position": draft.position,
+        "team": draft.team,
+        "location": draft.location,
+        "salary": format_salary(draft.salary_amount, draft.salary_currency, draft.salary_period, draft.language),
         "start_date": format_offer_date(draft.start_date, draft.language),
         "respond_by": format_offer_date(draft.respond_by, draft.language),
         "sender_name": draft.sender_name,
@@ -256,7 +412,7 @@ def segments_to_text(segments: Sequence[Segment]) -> str:
     return "".join(text if kind == "text" else f"[{text}]" for kind, text in segments)
 
 
-def render_offer(draft: OfferDraft) -> RenderedOffer:
+def render_offer(draft: OfferDraft, *, offer_url: str) -> RenderedOffer:
     values = placeholder_values(draft)
     subject_segments, subject_missing, subject_unknown = fill_placeholders(draft.subject, values)
     letter_segments, letter_missing, letter_unknown = fill_placeholders(draft.letter, values)
@@ -264,12 +420,16 @@ def render_offer(draft: OfferDraft) -> RenderedOffer:
     text, html_body = compose_email_bodies(
         candidate_name=draft.candidate_name,
         position=draft.position,
+        team=draft.team,
+        location=draft.location,
+        employment_type=draft.employment_type,
         start_date=draft.start_date,
         respond_by=draft.respond_by,
         language=draft.language,
         sender_name=draft.sender_name,
         subject=subject,
         letter_segments=letter_segments,
+        offer_url=offer_url,
     )
     return RenderedOffer(
         subject=subject,
@@ -291,36 +451,56 @@ def compose_email_bodies(
     sender_name: str,
     subject: str,
     letter_segments: Sequence[Segment],
+    offer_url: str,
+    team: str = "",
+    location: str = "",
+    employment_type: str = "",
 ) -> Tuple[str, str]:
-    """Build the plain-text and HTML bodies around an already filled letter."""
+    """Build the plain-text and HTML bodies around an already filled letter.
+
+    The HTML shows the animated banner from the ``cid:`` part that ``app.py`` attaches,
+    and a button to the candidate's offer page. Compensation is left to that page.
+    """
     copy = _COPY.get(language, _COPY["en"])
     details = [
+        (copy["team"], team),
+        (copy["employment_type"], copy["employment_types"].get(employment_type, "")),
+        (copy["location"], location),
         (copy["start_date"], format_offer_date(start_date, language)),
         (copy["respond_by"], format_offer_date(respond_by, language)),
     ]
     details = [(label, value) for label, value in details if value]
     footer = copy["footer"].format(sender=sender_name or ORGANISATION_NAME, organisation=ORGANISATION_NAME)
 
-    text_lines = [segments_to_text(letter_segments).strip(), "", "----"]
+    text_lines = [segments_to_text(letter_segments).strip(), "", copy["text_link"], offer_url, "", "----"]
     text_lines.append(f"{copy['position']}{copy['separator']}{position or '[position]'}")
     text_lines.extend(f"{label}{copy['separator']}{value}" for label, value in details)
     text_lines.extend(["", footer])
     text = "\n".join(text_lines) + "\n"
 
     position_html = html.escape(position) if position else _missing_html(PLACEHOLDER_LABELS["position"])
+    prepared_for = copy["prepared_for"].format(name=candidate_name) if candidate_name else ""
     detail_rows = "".join(
         "<tr>"
-        f'<td style="padding:10px 16px 10px 0;border-top:1px solid #EFEDE8;font-size:13px;color:#87837A;'
+        f'<td style="padding:11px 16px 11px 0;border-top:1px solid #EEF0F5;font-size:13px;color:#6B7280;'
         f'white-space:nowrap;vertical-align:top;">{html.escape(label)}</td>'
-        f'<td style="padding:10px 0;border-top:1px solid #EFEDE8;font-size:14px;color:#1A1915;'
+        f'<td style="padding:11px 0;border-top:1px solid #EEF0F5;font-size:14px;color:#111827;'
         f'vertical-align:top;">{html.escape(value)}</td>'
         "</tr>"
         for label, value in details
     )
     details_html = (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="margin:0 0 24px;border-bottom:1px solid #EFEDE8;">{detail_rows}</table>'
+        f'style="margin:0 0 26px;border-bottom:1px solid #EEF0F5;">{detail_rows}</table>'
         if detail_rows
+        else ""
+    )
+    safe_url = html.escape(offer_url, quote=True)
+    hero_html = (
+        f'<tr><td style="padding:0;line-height:0;font-size:0;background-color:#060812;border-radius:16px 16px 0 0;">'
+        f'<img src="cid:{HERO_CID}" width="600" alt="" '
+        'style="display:block;width:100%;max-width:600px;height:auto;border:0;border-radius:16px 16px 0 0;"></td></tr>'
+        if hero_image_bytes()
         else ""
     )
     html_body = f"""<!DOCTYPE html>
@@ -328,26 +508,58 @@ def compose_email_bodies(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>{html.escape(subject)}</title>
+<style>
+@keyframes cg-cta-glow {{
+  0%, 100% {{ box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }}
+  50% {{ box-shadow: 0 0 26px 2px rgba(99, 102, 241, 0.45); }}
+}}
+.cg-cta {{ animation: cg-cta-glow 2.6s ease-in-out infinite; }}
+@media (prefers-reduced-motion: reduce) {{ .cg-cta {{ animation: none; }} }}
+</style>
 </head>
-<body style="margin:0;padding:0;background-color:#FBFAF8;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FBFAF8;">
+<body style="margin:0;padding:0;background-color:#070A12;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#070A12;">
 <tr>
-<td align="center" style="padding:32px 16px;">
+<td align="center" style="padding:32px 12px 40px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;font-family:{_FONT_SANS};">
 <tr>
-<td style="padding:0 4px 14px;font-size:14px;font-weight:600;color:#1A1915;">{ORGANISATION_NAME}</td>
-</tr>
+<td style="padding:0 4px 16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr>
-<td style="background-color:#FFFFFF;border:1px solid #E7E4DD;border-radius:12px;padding:32px 32px 16px;">
-<p style="margin:0 0 6px;font-size:13px;color:#87837A;">{html.escape(copy['heading'])}</p>
-<h1 style="margin:0 0 20px;font-family:{_FONT_SERIF};font-size:26px;font-weight:400;line-height:1.25;color:#1A1915;">{position_html}</h1>
-{details_html}
-{_letter_html(letter_segments)}
+<td style="font-size:15px;font-weight:600;color:#F8FAFC;">{ORGANISATION_NAME}</td>
+<td align="right" style="font-family:{_FONT_MONO};font-size:11px;letter-spacing:2px;color:#67E8F9;text-transform:uppercase;">{html.escape(copy['confidential'])}</td>
+</tr>
+</table>
 </td>
 </tr>
 <tr>
-<td style="padding:16px 4px 0;font-size:12px;line-height:1.6;color:#87837A;">{html.escape(footer)}</td>
+<td style="background-color:#FFFFFF;border-radius:16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+{hero_html}
+<tr>
+<td style="padding:30px 32px 10px;">
+<p style="margin:0 0 8px;font-family:{_FONT_MONO};font-size:12px;letter-spacing:2px;color:#0891B2;text-transform:uppercase;">{html.escape(copy['heading'])}</p>
+<h1 style="margin:0 0 6px;font-family:{_FONT_SERIF};font-size:28px;font-weight:400;line-height:1.2;color:#0B1020;">{position_html}</h1>
+<p style="margin:0 0 22px;font-size:13px;color:#6B7280;">{html.escape(prepared_for)}</p>
+{details_html}
+{_letter_html(letter_segments)}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:10px 0 18px;">
+<tr>
+<td class="cg-cta" align="center" bgcolor="#4F46E5" style="border-radius:10px;background-color:#4F46E5;background-image:linear-gradient(120deg,#06B6D4 0%,#6366F1 55%,#8B5CF6 100%);">
+<a href="{safe_url}" target="_blank" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;letter-spacing:0.2px;color:#FFFFFF;text-decoration:none;border-radius:10px;">{html.escape(copy['cta'])} &rarr;</a>
+</td>
+</tr>
+</table>
+<p style="margin:0 0 22px;font-size:12px;line-height:1.6;color:#6B7280;">{html.escape(copy['link_hint'])} <a href="{safe_url}" target="_blank" style="color:#4F46E5;word-break:break-all;">{html.escape(offer_url)}</a></p>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+<tr>
+<td style="padding:18px 4px 0;font-size:12px;line-height:1.6;color:#8B93A7;">{html.escape(footer)}</td>
 </tr>
 </table>
 </td>
@@ -423,8 +635,41 @@ _OFFER_COLUMNS = (
     "created_at",
     "sent_at",
     "updated_at",
+    "team",
+    "location",
+    "employment_type",
+    "reports_to",
+    "salary_amount",
+    "salary_currency",
+    "salary_period",
+    "extra_compensation",
+    "benefits",
+    "token",
+    "offer_url",
+    "viewed_at",
+    "view_count",
+    "responded_at",
+    "response_note",
 )
 _SELECT_OFFER = f"SELECT {', '.join(_OFFER_COLUMNS)} FROM recruitment_offers"
+# Columns added after the table first shipped; older databases get them on startup.
+_ADDED_COLUMNS = (
+    ("team", "TEXT"),
+    ("location", "TEXT"),
+    ("employment_type", "TEXT"),
+    ("reports_to", "TEXT"),
+    ("salary_amount", "TEXT"),
+    ("salary_currency", "TEXT"),
+    ("salary_period", "TEXT"),
+    ("extra_compensation", "TEXT"),
+    ("benefits", "TEXT"),
+    ("token", "TEXT"),
+    ("offer_url", "TEXT"),
+    ("viewed_at", "TEXT"),
+    ("view_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("responded_at", "TEXT"),
+    ("response_note", "TEXT"),
+)
 
 
 async def init_recruitment_db(db: aiosqlite.Connection) -> None:
@@ -453,18 +698,109 @@ async def init_recruitment_db(db: aiosqlite.Connection) -> None:
             updated_at TEXT NOT NULL
         )
     """)
+    cursor = await db.execute("PRAGMA table_info(recruitment_offers)")
+    existing = {str(row[1]) for row in await cursor.fetchall()}
+    for column, definition in _ADDED_COLUMNS:
+        if column not in existing:
+            await db.execute(f"ALTER TABLE recruitment_offers ADD COLUMN {column} {definition}")
     await db.execute("CREATE INDEX IF NOT EXISTS recruitment_offers_created_at_idx ON recruitment_offers(created_at)")
     await db.execute(
         "CREATE INDEX IF NOT EXISTS recruitment_offers_candidate_idx ON recruitment_offers(candidate_email, created_at)"
     )
+    await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS recruitment_offers_token_idx ON recruitment_offers(token)")
+
+
+def _benefits_list(raw: Any) -> List[str]:
+    try:
+        value = json.loads(raw) if raw else []
+    except (TypeError, ValueError):
+        return []
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def _salary_payload(record: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    amount = str(record.get("salary_amount") or "")
+    if not amount:
+        return None
+    currency = str(record.get("salary_currency") or "AUD")
+    period = str(record.get("salary_period") or "year")
+    return {
+        "amount": float(Decimal(amount)),
+        "currency": currency,
+        "period": period,
+        "formatted": format_salary(amount, currency, period, str(record.get("language") or "en")),
+    }
 
 
 def offer_payload(row: Sequence[Any]) -> Dict[str, Any]:
+    """What the admin page sees (everything except the internal user id and raw Bcc)."""
     record = dict(zip(_OFFER_COLUMNS, row))
     record["copy_to_sender"] = bool(record.pop("bcc"))
     record.pop("created_by_user_id", None)
+    record.pop("token", None)
     record["send_count"] = int(record.get("send_count") or 0)
+    record["view_count"] = int(record.get("view_count") or 0)
+    record["benefits"] = _benefits_list(record.get("benefits"))
+    record["salary"] = _salary_payload(record)
     return record
+
+
+def public_offer_payload(record: Mapping[str, Any]) -> Dict[str, Any]:
+    """What the candidate's offer page shows. No email addresses or internal fields."""
+    status = str(record.get("status") or "")
+    public_status = status if status in ("accepted", "declined", "withdrawn") else "open"
+    payload: Dict[str, Any] = {
+        "organisation": ORGANISATION_NAME,
+        "status": public_status,
+        "language": record.get("language") or "en",
+        "candidate_name": record.get("candidate_name") or "",
+        "position": record.get("position") or "",
+        "sender_name": record.get("sender_name") or "",
+        "responded_at": record.get("responded_at"),
+    }
+    if public_status == "withdrawn":
+        return payload
+    payload.update(
+        {
+            "team": record.get("team") or "",
+            "location": record.get("location") or "",
+            "employment_type": record.get("employment_type") or "",
+            "reports_to": record.get("reports_to") or "",
+            "salary": _salary_payload(record),
+            "extra_compensation": record.get("extra_compensation") or "",
+            "benefits": _benefits_list(record.get("benefits")),
+            "start_date": record.get("start_date") or "",
+            "respond_by": record.get("respond_by") or "",
+            "letter": record.get("letter") or "",
+            "sent_at": record.get("sent_at"),
+        }
+    )
+    return payload
+
+
+def draft_preview_record(draft: OfferDraft, rendered: RenderedOffer) -> Dict[str, Any]:
+    """The offer page's data for a draft, so admins can preview the page before sending."""
+    return public_offer_payload(
+        {
+            "status": "sent",
+            "language": draft.language,
+            "candidate_name": draft.candidate_name,
+            "position": draft.position,
+            "sender_name": draft.sender_name,
+            "team": draft.team,
+            "location": draft.location,
+            "employment_type": draft.employment_type,
+            "reports_to": draft.reports_to,
+            "salary_amount": draft.salary_amount,
+            "salary_currency": draft.salary_currency,
+            "salary_period": draft.salary_period,
+            "extra_compensation": draft.extra_compensation,
+            "benefits": json.dumps(list(draft.benefits), ensure_ascii=False),
+            "start_date": draft.start_date,
+            "respond_by": draft.respond_by,
+            "letter": rendered.letter,
+        }
+    )
 
 
 async def list_offers(db: aiosqlite.Connection, *, limit: int = 200) -> List[Dict[str, Any]]:
@@ -483,6 +819,14 @@ async def get_offer(db: aiosqlite.Connection, offer_id: str) -> Optional[Dict[st
     cursor = await db.execute(f"{_SELECT_OFFER} WHERE id = ?", (str(offer_id),))
     row = await cursor.fetchone()
     return offer_payload(row) if row else None
+
+
+async def get_offer_row_by_token(db: aiosqlite.Connection, token: str) -> Optional[Dict[str, Any]]:
+    if not is_offer_token(token):
+        return None
+    cursor = await db.execute(f"{_SELECT_OFFER} WHERE token = ?", (token,))
+    row = await cursor.fetchone()
+    return dict(zip(_OFFER_COLUMNS, row)) if row else None
 
 
 async def find_recent_duplicate(
@@ -511,6 +855,8 @@ async def insert_offer(
     *,
     draft: OfferDraft,
     rendered: RenderedOffer,
+    token: str,
+    offer_url: str,
     reply_to: Optional[str],
     bcc: Optional[str],
     created_by_user_id: str,
@@ -519,46 +865,63 @@ async def insert_offer(
     """Record the offer as "sending" before delivery starts."""
     offer_id = str(uuid.uuid4())
     now = _utc_now_iso()
+    values = {
+        "id": offer_id,
+        "candidate_name": draft.candidate_name,
+        "candidate_email": draft.candidate_email,
+        "position": draft.position,
+        "start_date": draft.start_date or None,
+        "respond_by": draft.respond_by or None,
+        "language": draft.language,
+        "subject": rendered.subject,
+        "letter": rendered.letter,
+        "sender_name": draft.sender_name,
+        "reply_to": reply_to,
+        "bcc": bcc,
+        "status": "sending",
+        "delivery": None,
+        "last_error": None,
+        "send_count": 0,
+        "created_by_user_id": created_by_user_id,
+        "created_by_email": created_by_email,
+        "created_at": now,
+        "sent_at": None,
+        "updated_at": now,
+        "team": draft.team or None,
+        "location": draft.location or None,
+        "employment_type": draft.employment_type or None,
+        "reports_to": draft.reports_to or None,
+        "salary_amount": draft.salary_amount or None,
+        "salary_currency": draft.salary_currency if draft.salary_amount else None,
+        "salary_period": draft.salary_period if draft.salary_amount else None,
+        "extra_compensation": draft.extra_compensation or None,
+        "benefits": json.dumps(list(draft.benefits), ensure_ascii=False),
+        "token": token,
+        "offer_url": offer_url,
+        "viewed_at": None,
+        "view_count": 0,
+        "responded_at": None,
+        "response_note": None,
+    }
     await db.execute(
         f"""
         INSERT INTO recruitment_offers ({', '.join(_OFFER_COLUMNS)})
         VALUES ({', '.join('?' for _ in _OFFER_COLUMNS)})
         """,
-        (
-            offer_id,
-            draft.candidate_name,
-            draft.candidate_email,
-            draft.position,
-            draft.start_date or None,
-            draft.respond_by or None,
-            draft.language,
-            rendered.subject,
-            rendered.letter,
-            draft.sender_name,
-            reply_to,
-            bcc,
-            "sending",
-            None,
-            None,
-            0,
-            created_by_user_id,
-            created_by_email,
-            now,
-            None,
-            now,
-        ),
+        tuple(values[column] for column in _OFFER_COLUMNS),
     )
     await db.commit()
     return await get_offer(db, offer_id)
 
 
 async def record_delivery(db: aiosqlite.Connection, offer_id: str, *, delivery: str) -> Dict[str, Any]:
+    """Mark a finished delivery. A reply the candidate sent meanwhile is kept."""
     now = _utc_now_iso()
     await db.execute(
         """
         UPDATE recruitment_offers
-        SET status = 'sent', delivery = ?, last_error = NULL, send_count = send_count + 1,
-            sent_at = ?, updated_at = ?
+        SET status = CASE WHEN status = 'sending' THEN 'sent' ELSE status END,
+            delivery = ?, last_error = NULL, send_count = send_count + 1, sent_at = ?, updated_at = ?
         WHERE id = ?
         """,
         (delivery, now, now, str(offer_id)),
@@ -572,7 +935,11 @@ async def record_failure(db: aiosqlite.Connection, offer_id: str, *, error: str)
     await db.execute(
         """
         UPDATE recruitment_offers
-        SET status = CASE WHEN sent_at IS NULL THEN 'failed' ELSE 'sent' END,
+        SET status = CASE
+                WHEN status != 'sending' THEN status
+                WHEN sent_at IS NULL THEN 'failed'
+                ELSE 'sent'
+            END,
             last_error = ?, updated_at = ?
         WHERE id = ?
         """,
@@ -615,13 +982,52 @@ async def expire_stale_sends(db: aiosqlite.Connection) -> None:
 
 
 async def update_status(db: aiosqlite.Connection, offer_id: str, status: str) -> Optional[Dict[str, Any]]:
-    """Set the status by hand. None if the offer is being sent right now."""
+    """Set the status by hand. None if the offer is being sent right now.
+
+    Setting it back to 'sent' reopens the offer, so the candidate can reply on the page again.
+    """
+    reopen = status == "sent"
     cursor = await db.execute(
-        "UPDATE recruitment_offers SET status = ?, updated_at = ? WHERE id = ? AND status != 'sending'",
-        (status, _utc_now_iso(), str(offer_id)),
+        """
+        UPDATE recruitment_offers
+        SET status = ?, updated_at = ?,
+            responded_at = CASE WHEN ? THEN NULL ELSE responded_at END,
+            response_note = CASE WHEN ? THEN NULL ELSE response_note END
+        WHERE id = ? AND status != 'sending'
+        """,
+        (status, _utc_now_iso(), reopen, reopen, str(offer_id)),
     )
     await db.commit()
     return await get_offer(db, offer_id) if cursor.rowcount > 0 else None
+
+
+async def record_view(db: aiosqlite.Connection, offer_id: str) -> None:
+    await db.execute(
+        "UPDATE recruitment_offers SET viewed_at = COALESCE(viewed_at, ?), view_count = view_count + 1 WHERE id = ?",
+        (_utc_now_iso(), str(offer_id)),
+    )
+    await db.commit()
+
+
+async def record_response(
+    db: aiosqlite.Connection,
+    offer_id: str,
+    *,
+    status: str,
+    note: str,
+) -> Optional[Dict[str, Any]]:
+    """Record the candidate's answer from the offer page. None unless the offer is still open."""
+    now = _utc_now_iso()
+    cursor = await db.execute(
+        """
+        UPDATE recruitment_offers
+        SET status = ?, responded_at = ?, response_note = ?, updated_at = ?
+        WHERE id = ? AND status IN ('sent', 'sending') AND sent_at IS NOT NULL
+        """,
+        (status, now, note or None, now, str(offer_id)),
+    )
+    await db.commit()
+    return await get_offer_row(db, offer_id) if cursor.rowcount > 0 else None
 
 
 async def delete_offer(db: aiosqlite.Connection, offer_id: str) -> bool:

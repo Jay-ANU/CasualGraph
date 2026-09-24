@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Home from './pages/Home';
@@ -8,10 +8,13 @@ import About from './pages/About';
 import EsgDemo from './pages/EsgDemo';
 import Login from './pages/Login';
 import Admin from './pages/Admin';
-import Recruitment from './pages/Recruitment';
 import DesktopDownload from './pages/DesktopDownload';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import useDocumentTitle from './utils/useDocumentTitle';
+
+// Loaded on demand: only admins and candidates with an offer link open these.
+const Recruitment = lazy(() => import('./pages/Recruitment'));
+const OfferView = lazy(() => import('./pages/OfferView'));
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
@@ -41,29 +44,34 @@ const NotFound: React.FC = () => {
   );
 };
 
-// The research desk is a full-height application with its own navigation,
-// so the marketing header is only rendered on the other routes.
+// The research desk is a full-height application with its own navigation, and a
+// candidate's offer page stands on its own, so the marketing header is only
+// rendered on the other routes.
 const Shell: React.FC = () => {
   const location = useLocation();
   const isWorkspace = location.pathname === '/agent';
+  const isOfferPage = location.pathname.startsWith('/offer/');
   return (
     <div className="min-h-screen bg-paper">
-      {!isWorkspace && <Navbar />}
+      {!isWorkspace && !isOfferPage && <Navbar />}
       <main>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/home" element={<Home />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/esg-demo" element={<EsgDemo />} />
-          <Route path="/causal-inference" element={<CausalInference />} />
-          <Route path="/desktop" element={<DesktopDownload />} />
-          <Route path="/download" element={<DesktopDownload />} />
-          <Route path="/agent" element={<ProtectedRoute><Agent /></ProtectedRoute>} />
-          <Route path="/admin" element={<AdminRoute><Admin /></AdminRoute>} />
-          <Route path="/admin/recruitment" element={<AdminRoute><Recruitment /></AdminRoute>} />
-          <Route path="/about" element={<About />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <Suspense fallback={isOfferPage ? <div className="min-h-screen" style={{ background: '#04050a' }} /> : null}>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/home" element={<Home />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/esg-demo" element={<EsgDemo />} />
+            <Route path="/causal-inference" element={<CausalInference />} />
+            <Route path="/desktop" element={<DesktopDownload />} />
+            <Route path="/download" element={<DesktopDownload />} />
+            <Route path="/agent" element={<ProtectedRoute><Agent /></ProtectedRoute>} />
+            <Route path="/admin" element={<AdminRoute><Admin /></AdminRoute>} />
+            <Route path="/admin/recruitment" element={<AdminRoute><Recruitment /></AdminRoute>} />
+            <Route path="/offer/:token" element={<OfferView />} />
+            <Route path="/about" element={<About />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
       </main>
     </div>
   );

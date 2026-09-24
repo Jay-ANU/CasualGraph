@@ -26,14 +26,14 @@ from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 from urllib.parse import unquote
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from dotenv import load_dotenv
 from docx import Document as DocxDocument
 
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Depends, Query, Request
+from fastapi import BackgroundTasks, FastAPI, File, Form, Header, UploadFile, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -1048,6 +1048,10 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.mount("/kg-static", StaticFiles(directory=str(_KG_VIEW_STATIC)), name="kg-static")
+_RECRUITMENT_ASSETS = _APP_ROOT / "assets" / "recruitment"
+if _RECRUITMENT_ASSETS.exists():
+    # The offer email's banner, for the admin preview (emails embed their own copy).
+    app.mount("/recruitment-assets", StaticFiles(directory=str(_RECRUITMENT_ASSETS)), name="recruitment-assets")
 if _TEXT_KG_VIEW_STATIC.exists():
     app.mount("/static", StaticFiles(directory=str(_TEXT_KG_VIEW_STATIC)), name="text_to_kg_static")
 
@@ -1270,6 +1274,8 @@ async def delete_rag_unlimited_user(
 
 # ── Recruitment offers ───────────────────────────────────────────────────────
 _RECRUITMENT_RESEND_COOLDOWN_SECONDS = 60
+# Where candidates open their offer page. Defaults to the admin console's own origin.
+_RECRUITMENT_PUBLIC_URL = os.getenv("RECRUITMENT_PUBLIC_URL", "").strip().rstrip("/")
 
 
 class RecruitmentOfferRequest(BaseModel):
@@ -1283,10 +1289,41 @@ class RecruitmentOfferRequest(BaseModel):
     letter: str = ""
     reply_to_sender: bool = True
     copy_to_sender: bool = False
+    team: str = ""
+    location: str = ""
+    employment_type: str = ""
+    reports_to: str = ""
+    salary_amount: Optional[Union[str, float, int]] = ""
+    salary_currency: str = "AUD"
+    salary_period: str = "year"
+    extra_compensation: str = ""
+    benefits: List[str] = Field(default_factory=list)
 
 
 class RecruitmentOfferStatusRequest(BaseModel):
     status: str
+
+
+class OfferResponseRequest(BaseModel):
+    decision: str
+    note: Optional[str] = ""
+
+
+def _recruitment_public_base(origin: Optional[str]) -> str:
+    """Base URL of the frontend that serves /offer/<token>.
+
+    RECRUITMENT_PUBLIC_URL wins; otherwise the origin of the admin console that sent the
+    request, as long as it is an allowed CORS origin, so links match the site in use.
+    """
+    if _RECRUITMENT_PUBLIC_URL:
+        return _RECRUITMENT_PUBLIC_URL
+    candidate = origin.strip().rstrip("/") if isinstance(origin, str) else ""
+    if candidate and (
+        candidate in _CORS_ALLOW_ORIGINS
+        or (_CORS_ALLOW_ORIGIN_REGEX and re.fullmatch(_CORS_ALLOW_ORIGIN_REGEX, candidate))
+    ):
+        return candidate
+    return _CORS_ALLOW_ORIGINS[0].rstrip("/")
 
 
 def _recruitment_mail_status() -> Dict[str, Any]:
@@ -1338,6 +1375,15 @@ def _recruitment_draft(
             letter=request.letter,
             sender_name=_recruitment_sender_name(current_user),
             strict=strict,
+            team=request.team,
+            location=request.location,
+            employment_type=request.employment_type,
+            reports_to=request.reports_to,
+            salary_amount=request.salary_amount,
+            salary_currency=request.salary_currency,
+            salary_period=request.salary_period,
+            extra_compensation=request.extra_compensation,
+            benefits=request.benefits,
         )
     except recruitment_offers.OfferValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1382,6 +1428,17 @@ def _build_recruitment_message(
     message["Message-ID"] = make_msgid(domain=_MAIL_FROM.rpartition("@")[2] or None)
     message.set_content(text)
     message.add_alternative(html_body, subtype="html")
+    hero = recruitment_offers.hero_image_bytes()
+    if hero:
+        # multipart/related keeps the banner inside the email, so it shows without loading remote images.
+        message.get_payload()[1].add_related(
+            hero,
+            maintype="image",
+            subtype="gif",
+            cid=f"<{recruitment_offers.HERO_CID}>",
+            filename="offer-hero.gif",
+            disposition="inline",
+        )
     return message
 
 
@@ -1448,9 +1505,11 @@ async def list_recruitment_offers(
 async def preview_recruitment_offer(
     request: RecruitmentOfferRequest,
     current_user: dict = Depends(require_admin),
+    origin: Optional[str] = Header(default=None),
 ):
     draft = _recruitment_draft(request, current_user, strict=False)
-    rendered = recruitment_offers.render_offer(draft)
+    offer_url = f"{_recruitment_public_base(origin)}/offer/preview"
+    rendered = recruitment_offers.render_offer(draft, offer_url=offer_url)
     reply_to, bcc = _recruitment_reply_addresses(request, current_user)
     recipient = draft.candidate_email
     if recipient and draft.candidate_name:
@@ -1466,6 +1525,8 @@ async def preview_recruitment_offer(
         "missing": rendered.missing,
         "unknown": rendered.unknown,
         "warnings": recruitment_offers.date_warnings(draft),
+        "hero_cid": recruitment_offers.HERO_CID,
+        "page": recruitment_offers.draft_preview_record(draft, rendered),
     }
 
 
@@ -1474,9 +1535,12 @@ async def send_recruitment_offer(
     request: RecruitmentOfferRequest,
     current_user: dict = Depends(require_admin),
     db: aiosqlite.Connection = Depends(_get_db),
+    origin: Optional[str] = Header(default=None),
 ):
     draft = _recruitment_draft(request, current_user, strict=True)
-    rendered = recruitment_offers.render_offer(draft)
+    token = recruitment_offers.new_offer_token()
+    offer_url = f"{_recruitment_public_base(origin)}/offer/{token}"
+    rendered = recruitment_offers.render_offer(draft, offer_url=offer_url)
     problems = recruitment_offers.missing_placeholder_messages(rendered)
     if problems:
         raise HTTPException(status_code=400, detail=" ".join(problems))
@@ -1505,6 +1569,8 @@ async def send_recruitment_offer(
         db,
         draft=draft,
         rendered=rendered,
+        token=token,
+        offer_url=offer_url,
         reply_to=reply_to,
         bcc=bcc,
         created_by_user_id=str(current_user.get("id") or ""),
@@ -1544,12 +1610,16 @@ async def resend_recruitment_offer(
     text, html_body = recruitment_offers.compose_email_bodies(
         candidate_name=stored["candidate_name"],
         position=stored["position"],
+        team=stored["team"] or "",
+        location=stored["location"] or "",
+        employment_type=stored["employment_type"] or "",
         start_date=stored["start_date"] or "",
         respond_by=stored["respond_by"] or "",
         language=stored["language"],
         sender_name=stored["sender_name"],
         subject=stored["subject"],
         letter_segments=[("text", stored["letter"])],
+        offer_url=stored["offer_url"] or "",
     )
     message = _build_recruitment_message(
         subject=stored["subject"],
@@ -1615,6 +1685,93 @@ async def delete_recruitment_offer(
     if offer["status"] == "sending" or not await recruitment_offers.delete_offer(db, offer_id):
         raise HTTPException(status_code=409, detail="This offer is being sent right now.")
     return {"deleted": True, "id": offer_id}
+
+
+def _offer_response_notification(offer: Dict[str, Any]) -> Optional[EmailMessage]:
+    recipients: List[str] = []
+    for address in (offer.get("created_by_email"), offer.get("reply_to")):
+        email = _normalize_email(str(address or ""))
+        if recruitment_offers.is_valid_email(email) and email not in recipients:
+            recipients.append(email)
+    if not recipients:
+        return None
+    verb = "accepted" if offer.get("status") == "accepted" else "declined"
+    lines = [f"{offer['candidate_name']} ({offer['candidate_email']}) {verb} the offer for {offer['position']}.", ""]
+    if offer.get("response_note"):
+        lines += ["Their message:", str(offer["response_note"]), ""]
+    offer_url = str(offer.get("offer_url") or "")
+    if "/offer/" in offer_url:
+        lines += [f"Recruitment page: {offer_url.split('/offer/')[0]}/admin/recruitment", ""]
+    lines.append("Sent automatically by CausalGraph AI.")
+    message = EmailMessage()
+    try:
+        message["Subject"] = f"{offer['candidate_name']} {verb} the offer for {offer['position']}"
+        message["From"] = formataddr((_MAIL_FROM_NAME, _MAIL_FROM))
+        message["To"] = ", ".join(recipients)
+    except ValueError:
+        return None
+    message["Date"] = formatdate(usegmt=True)
+    message["Message-ID"] = make_msgid(domain=_MAIL_FROM.rpartition("@")[2] or None)
+    message.set_content("\n".join(lines) + "\n")
+    return message
+
+
+async def _notify_offer_response(offer: Dict[str, Any]) -> None:
+    """Best effort: tell the admin who sent the offer that the candidate replied."""
+    message = _offer_response_notification(offer)
+    if message is None:
+        return
+    mode = _recruitment_mail_status()["mode"]
+    try:
+        if mode == "smtp":
+            await asyncio.to_thread(_send_mail_message, message)
+        elif mode == "log":
+            print(f"[recruitment] MAIL_ENABLED=false; reply notification not emailed:\n{message.get_content()}")
+    except (smtplib.SMTPException, OSError) as exc:
+        print(f"[recruitment] reply notification for offer {offer.get('id')} failed: {type(exc).__name__}: {exc}")
+
+
+# Public: the candidate's offer page. The unguessable token in the link is the only credential.
+@app.get("/offers/{token}")
+async def view_recruitment_offer(token: str, db: aiosqlite.Connection = Depends(_get_db)):
+    offer = await recruitment_offers.get_offer_row_by_token(db, token)
+    if offer is None or not offer.get("sent_at"):
+        raise HTTPException(status_code=404, detail="This offer link isn't valid.")
+    await recruitment_offers.record_view(db, offer["id"])
+    return recruitment_offers.public_offer_payload(offer)
+
+
+@app.post("/offers/{token}/respond")
+async def respond_to_recruitment_offer(
+    token: str,
+    request: OfferResponseRequest,
+    background_tasks: BackgroundTasks,
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    status = recruitment_offers.CANDIDATE_DECISIONS.get(str(request.decision or "").strip().lower())
+    if status is None:
+        raise HTTPException(status_code=400, detail="Choose to accept or decline the offer.")
+    note = recruitment_offers.clean_letter(request.note)
+    if len(note) > recruitment_offers.MAX_NOTE_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Keep the message to {recruitment_offers.MAX_NOTE_CHARS:,} characters or fewer.",
+        )
+    offer = await recruitment_offers.get_offer_row_by_token(db, token)
+    if offer is None or not offer.get("sent_at"):
+        raise HTTPException(status_code=404, detail="This offer link isn't valid.")
+    updated = await recruitment_offers.record_response(db, offer["id"], status=status, note=note)
+    if updated is None:
+        current = await recruitment_offers.get_offer_row(db, offer["id"]) or offer
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "This offer is no longer open for a reply.",
+                "offer": recruitment_offers.public_offer_payload(current),
+            },
+        )
+    background_tasks.add_task(_notify_offer_response, updated)
+    return recruitment_offers.public_offer_payload(updated)
 
 
 class AdminUploadUpdateRequest(BaseModel):

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import aiosqlite
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
 
 import app as api
@@ -17,6 +17,8 @@ import recruitment_offers as offers
 
 
 ADMIN = {"id": "admin-1", "email": "Hiring@Example.com", "username": "Jay", "role": "admin"}
+ORIGIN = "http://localhost:3000"  # an allowed CORS origin by default
+OFFER_URL = "https://app.example.com/offer/abc"
 LETTER = (
     "Dear {{candidate_name}},\n\n"
     "We are pleased to offer you the position of {{position}}.\n"
@@ -89,7 +91,7 @@ def _draft(**overrides) -> offers.OfferDraft:
 
 def test_render_fills_placeholders_and_escapes_html():
     rendered = offers.render_offer(
-        _draft(candidate_name="Ada <script>alert(1)</script>", respond_by="2026-09-28")
+        offer_url=OFFER_URL, draft=_draft(candidate_name="Ada <script>alert(1)</script>", respond_by="2026-09-28")
     )
 
     assert rendered.subject == "Offer: Research assistant"
@@ -104,7 +106,7 @@ def test_render_fills_placeholders_and_escapes_html():
 
 def test_chinese_offer_uses_chinese_dates_and_labels():
     rendered = offers.render_offer(
-        _draft(language="zh", letter="{{candidate_name}}，您好：\n\n请于{{respond_by}}前回复。", respond_by="2026-10-01")
+        offer_url=OFFER_URL, draft=_draft(language="zh", letter="{{candidate_name}}，您好：\n\n请于{{respond_by}}前回复。", respond_by="2026-10-01")
     )
 
     assert "请于2026年10月1日（星期四）前回复。" in rendered.letter
@@ -115,15 +117,17 @@ def test_chinese_offer_uses_chinese_dates_and_labels():
 
 def test_render_reports_missing_and_unknown_placeholders():
     rendered = offers.render_offer(
-        _draft(start_date="", letter="Hi {{candidate_name}}, you start {{ start_date }}. Pay: {{salary}}.")
+        offer_url=OFFER_URL,
+        draft=_draft(start_date="", letter="Hi {{candidate_name}}, you start {{ start_date }}. Bonus: {{bonus}}. Pay: {{salary}}."),
     )
 
-    assert rendered.missing == ["start_date"]
-    assert rendered.unknown == ["{{salary}}"]
-    assert "you start [start date]. Pay: {{salary}}." in rendered.letter
+    assert rendered.missing == ["start_date", "salary"]
+    assert rendered.unknown == ["{{bonus}}"]
+    assert "you start [start date]. Bonus: {{bonus}}. Pay: [salary]." in rendered.letter
     assert offers.missing_placeholder_messages(rendered) == [
         "Add the start date or remove {{start_date}} from the email.",
-        "{{salary}} is not a placeholder this page can fill.",
+        "Add the salary or remove {{salary}} from the email.",
+        "{{bonus}} is not a placeholder this page can fill.",
     ]
 
 
@@ -166,7 +170,7 @@ async def _send_offer_delivers_multipart_email_and_records_it(tmp_path):
     with _backend(tmp_path, mailer=mailer):
         await api._init_auth_db()
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
-            result = await api.send_recruitment_offer(_offer_request(copy_to_sender=True), ADMIN, db)
+            result = await api.send_recruitment_offer(_offer_request(copy_to_sender=True), ADMIN, db, ORIGIN)
             listed = await api.list_recruitment_offers(200, ADMIN, db)
 
     offer = result["offer"]
@@ -206,7 +210,7 @@ async def _failed_delivery_is_recorded_and_can_be_retried(tmp_path):
         await api._init_auth_db()
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
             with pytest.raises(HTTPException) as exc:
-                await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+                await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN)
             [failed] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
 
             with pytest.raises(HTTPException) as accept_exc:
@@ -245,7 +249,7 @@ async def _refused_candidate_is_a_failure_even_when_the_bcc_copy_is_accepted(tmp
         await api._init_auth_db()
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
             with pytest.raises(HTTPException) as exc:
-                await api.send_recruitment_offer(_offer_request(copy_to_sender=True), ADMIN, db)
+                await api.send_recruitment_offer(_offer_request(copy_to_sender=True), ADMIN, db, ORIGIN)
             [offer] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
 
     assert exc.value.status_code == 502
@@ -263,9 +267,9 @@ async def _offer_with_unfilled_placeholders_is_not_sent(tmp_path):
         await api._init_auth_db()
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
             with pytest.raises(HTTPException) as exc:
-                await api.send_recruitment_offer(_offer_request(respond_by=""), ADMIN, db)
+                await api.send_recruitment_offer(_offer_request(respond_by=""), ADMIN, db, ORIGIN)
             with pytest.raises(HTTPException) as invalid:
-                await api.send_recruitment_offer(_offer_request(candidate_email="ada@"), ADMIN, db)
+                await api.send_recruitment_offer(_offer_request(candidate_email="ada@"), ADMIN, db, ORIGIN)
             listed = await api.list_recruitment_offers(200, ADMIN, db)
 
     assert exc.value.status_code == 400
@@ -284,10 +288,10 @@ async def _double_submit_is_rejected(tmp_path):
     with _backend(tmp_path, mailer=mailer):
         await api._init_auth_db()
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
-            await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+            await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN)
             with pytest.raises(HTTPException) as exc:
-                await api.send_recruitment_offer(_offer_request(position="research ASSISTANT"), ADMIN, db)
-            other_role = await api.send_recruitment_offer(_offer_request(position="Data engineer"), ADMIN, db)
+                await api.send_recruitment_offer(_offer_request(position="research ASSISTANT"), ADMIN, db, ORIGIN)
+            other_role = await api.send_recruitment_offer(_offer_request(position="Data engineer"), ADMIN, db, ORIGIN)
 
     assert exc.value.status_code == 409
     assert other_role["offer"]["status"] == "sent"
@@ -304,7 +308,7 @@ async def _production_without_mail_refuses_to_send(tmp_path):
         await api._init_auth_db()
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
             with pytest.raises(HTTPException) as exc:
-                await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+                await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN)
             listed = await api.list_recruitment_offers(200, ADMIN, db)
 
     assert exc.value.status_code == 503
@@ -323,7 +327,7 @@ async def _development_without_mail_logs_the_offer(tmp_path):
     with _backend(tmp_path, mailer=mailer, mail_enabled=False, app_env="development"):
         await api._init_auth_db()
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
-            result = await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+            result = await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN)
             listed = await api.list_recruitment_offers(200, ADMIN, db)
 
     assert result["delivery"] == "log"
@@ -340,7 +344,7 @@ async def _status_updates_resend_rules_and_delete(tmp_path):
     with _backend(tmp_path):
         await api._init_auth_db()
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
-            offer = (await api.send_recruitment_offer(_offer_request(), ADMIN, db))["offer"]
+            offer = (await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN))["offer"]
 
             with pytest.raises(HTTPException) as cooldown:
                 await api.resend_recruitment_offer(offer["id"], ADMIN, db)
@@ -376,6 +380,7 @@ async def _preview_shows_the_email_without_sending(tmp_path):
         preview = await api.preview_recruitment_offer(
             _offer_request(candidate_name="", candidate_email="", respond_by="", start_date="2000-01-03"),
             ADMIN,
+            ORIGIN,
         )
 
     assert preview["subject"] == "Offer: Research assistant at CausalGraph AI"
@@ -447,12 +452,13 @@ async def _encoded_words_in_header_fields_are_rejected_before_anything_is_stored
             errors = {}
             for field, value in hostile.items():
                 with pytest.raises(HTTPException) as exc:
-                    await api.send_recruitment_offer(_offer_request(**{field: value}), ADMIN, db)
+                    await api.send_recruitment_offer(_offer_request(**{field: value}), ADMIN, db, ORIGIN)
                 errors[field] = exc.value
             signed = await api.send_recruitment_offer(
                 _offer_request(subject="Offer from {{sender_name}}"),
                 {**ADMIN, "username": "=?utf-8?b?QWRhDQpY?="},
                 db,
+                ORIGIN,
             )
             listed = await api.list_recruitment_offers(200, ADMIN, db)
 
@@ -492,9 +498,9 @@ async def _a_failed_send_can_be_sent_again_straight_away(tmp_path):
         await api._init_auth_db()
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
             with pytest.raises(HTTPException) as exc:
-                await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+                await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN)
             with patch("app._send_mail_message", FakeMailer()):
-                again = await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+                again = await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN)
             listed = await api.list_recruitment_offers(200, ADMIN, db)
 
     assert exc.value.status_code == 502
@@ -514,7 +520,7 @@ async def _an_offer_being_sent_is_locked_until_delivery_finishes_or_expires(tmp_
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
             with patch("app._send_mail_message", FakeMailer(error=TimeoutError())):
                 with pytest.raises(HTTPException):
-                    await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+                    await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN)
             [failed] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
 
             # Another request claims the retry first; everything else must wait for it.
@@ -556,7 +562,7 @@ async def _a_failed_resend_of_a_delivered_offer_keeps_it_awaiting_reply(tmp_path
     with _backend(tmp_path):
         await api._init_auth_db()
         async with aiosqlite.connect(tmp_path / "auth.db") as db:
-            offer = (await api.send_recruitment_offer(_offer_request(), ADMIN, db))["offer"]
+            offer = (await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN))["offer"]
             await db.execute("UPDATE recruitment_offers SET sent_at = '2000-01-01T00:00:00+00:00'")
             await db.commit()
             with patch("app._send_mail_message", FakeMailer(error=smtplib.SMTPServerDisconnected("gone"))):
@@ -568,3 +574,290 @@ async def _a_failed_resend_of_a_delivered_offer_keeps_it_awaiting_reply(tmp_path
     assert after["status"] == "sent"
     assert after["send_count"] == 1
     assert after["last_error"] == "Email delivery failed (SMTPServerDisconnected)."
+
+
+RICH_OFFER = {
+    "team": "Research & Engineering",
+    "location": "Canberra, ACT",
+    "employment_type": "full_time",
+    "reports_to": "Dr Grace Hopper",
+    "salary_amount": "95,000",
+    "salary_currency": "AUD",
+    "salary_period": "year",
+    "extra_compensation": "10% annual bonus",
+    "benefits": ["Flexible hours", "  ", "Conference budget"],
+}
+
+
+def _token_of(offer: dict) -> str:
+    return offer["offer_url"].rsplit("/", 1)[1]
+
+
+def test_salary_parsing_and_formatting():
+    assert offers.parse_salary_amount("95,000") == "95000"
+    assert offers.parse_salary_amount(42.5) == "42.5"
+    assert offers.parse_salary_amount("") == ""
+    for bad in ("abc", "-1", "1e12", "NaN"):
+        with pytest.raises(offers.OfferValidationError):
+            offers.parse_salary_amount(bad)
+    assert offers.format_salary("95000", "AUD", "year", "en") == "AUD 95,000 per year"
+    assert offers.format_salary("42.5", "USD", "hour", "en") == "USD 42.50 per hour"
+    assert offers.format_salary("25000", "CNY", "month", "zh") == "CNY 25,000 / 月"
+    with pytest.raises(offers.OfferValidationError, match="Currency"):
+        _draft(salary_amount="1", salary_currency="XYZ")
+    with pytest.raises(offers.OfferValidationError, match="Employment type"):
+        _draft(employment_type="forever")
+    with pytest.raises(offers.OfferValidationError, match="benefits"):
+        _draft(benefits=[f"Perk {n}" for n in range(13)])
+    with pytest.raises(offers.OfferValidationError, match="Team"):
+        _draft(team="=?utf-8?q?x?=")
+
+
+def test_offer_email_embeds_the_banner_and_links_to_the_offer_page(tmp_path):
+    asyncio.run(_offer_email_embeds_the_banner_and_links_to_the_offer_page(tmp_path))
+
+
+async def _offer_email_embeds_the_banner_and_links_to_the_offer_page(tmp_path):
+    mailer = FakeMailer()
+    letter = LETTER + "\n\nYour salary: {{salary}} in {{team}}, {{location}}."
+    with _backend(tmp_path, mailer=mailer):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            result = await api.send_recruitment_offer(_offer_request(letter=letter, **RICH_OFFER), ADMIN, db, ORIGIN)
+
+    offer = result["offer"]
+    assert offer["offer_url"].startswith("http://localhost:3000/offer/")
+    assert offers.is_offer_token(_token_of(offer))
+    assert "token" not in offer
+    assert offer["salary"] == {"amount": 95000.0, "currency": "AUD", "period": "year", "formatted": "AUD 95,000 per year"}
+    assert offer["benefits"] == ["Flexible hours", "Conference budget"]
+    assert "Your salary: AUD 95,000 per year in Research & Engineering, Canberra, ACT." in offer["letter"]
+
+    message = mailer.messages[0]
+    html_part = message.get_body(("html",))
+    html = html_part.get_content()
+    assert f'src="cid:{offers.HERO_CID}"' in html
+    assert f'href="{offer["offer_url"]}"' in html
+    assert "Research &amp; Engineering" in html and "Full-time" in html
+    assert "Flexible hours" not in html  # benefits live on the offer page
+    [image] = [part for part in message.walk() if part.get_content_type() == "image/gif"]
+    assert image["Content-ID"] == f"<{offers.HERO_CID}>"
+    assert image.get_content() == offers.hero_image_bytes()
+    assert offer["offer_url"] in message.get_body(("plain",)).get_content()
+
+
+def test_offer_page_shows_the_details_without_private_fields_and_counts_views(tmp_path):
+    asyncio.run(_offer_page_shows_the_details_without_private_fields_and_counts_views(tmp_path))
+
+
+async def _offer_page_shows_the_details_without_private_fields_and_counts_views(tmp_path):
+    with _backend(tmp_path):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            offer = (await api.send_recruitment_offer(_offer_request(**RICH_OFFER), ADMIN, db, ORIGIN))["offer"]
+            page = await api.view_recruitment_offer(_token_of(offer), db)
+            await api.view_recruitment_offer(_token_of(offer), db)
+            [listed] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
+            missing = []
+            for token in ("x" * 32, "../../etc/passwd", ""):
+                with pytest.raises(HTTPException) as exc:
+                    await api.view_recruitment_offer(token, db)
+                missing.append(exc.value.status_code)
+
+    assert page["status"] == "open"
+    assert page["candidate_name"] == "Ada Lovelace"
+    assert page["position"] == "Research assistant"
+    assert page["team"] == "Research & Engineering"
+    assert page["employment_type"] == "full_time"
+    assert page["reports_to"] == "Dr Grace Hopper"
+    assert page["salary"]["formatted"] == "AUD 95,000 per year"
+    assert page["extra_compensation"] == "10% annual bonus"
+    assert page["benefits"] == ["Flexible hours", "Conference budget"]
+    assert page["respond_by"] == "2099-09-28"
+    assert page["letter"].startswith("Dear Ada Lovelace,")
+    serialized = str(page)
+    assert "ada@example.org" not in serialized and "hiring@example.com" not in serialized
+    assert listed["view_count"] == 2 and listed["viewed_at"]
+    assert missing == [404, 404, 404]
+
+
+def test_candidate_accepts_once_and_the_sender_is_told(tmp_path):
+    asyncio.run(_candidate_accepts_once_and_the_sender_is_told(tmp_path))
+
+
+async def _candidate_accepts_once_and_the_sender_is_told(tmp_path):
+    mailer = FakeMailer()
+    with _backend(tmp_path, mailer=mailer):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            offer = (await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN))["offer"]
+            tasks = BackgroundTasks()
+            page = await api.respond_to_recruitment_offer(
+                _token_of(offer), api.OfferResponseRequest(decision="Accept", note="Thrilled to join!"), tasks, db
+            )
+            await tasks()
+            with pytest.raises(HTTPException) as again:
+                await api.respond_to_recruitment_offer(
+                    _token_of(offer), api.OfferResponseRequest(decision="decline"), BackgroundTasks(), db
+                )
+            with pytest.raises(HTTPException) as invalid:
+                await api.respond_to_recruitment_offer(
+                    _token_of(offer), api.OfferResponseRequest(decision="maybe"), BackgroundTasks(), db
+                )
+            [listed] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
+            reopened = await api.update_recruitment_offer_status(
+                offer["id"], api.RecruitmentOfferStatusRequest(status="sent"), ADMIN, db
+            )
+
+    assert page["status"] == "accepted" and page["responded_at"]
+    assert listed["status"] == "accepted"
+    assert listed["response_note"] == "Thrilled to join!"
+    assert again.value.status_code == 409
+    assert again.value.detail["offer"]["status"] == "accepted"
+    assert invalid.value.status_code == 400
+    assert reopened["offer"]["responded_at"] is None and reopened["offer"]["response_note"] is None
+
+    [offer_email, notification] = mailer.messages
+    assert notification["To"] == "hiring@example.com"
+    assert notification["Subject"] == "Ada Lovelace accepted the offer for Research assistant"
+    body = notification.get_content()
+    assert "Thrilled to join!" in body
+    assert "http://localhost:3000/admin/recruitment" in body
+
+
+def test_declines_withdrawn_and_undelivered_offers(tmp_path):
+    asyncio.run(_declines_withdrawn_and_undelivered_offers(tmp_path))
+
+
+async def _declines_withdrawn_and_undelivered_offers(tmp_path):
+    with _backend(tmp_path):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            declined = (await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN))["offer"]
+            page = await api.respond_to_recruitment_offer(
+                _token_of(declined), api.OfferResponseRequest(decision="decline"), BackgroundTasks(), db
+            )
+
+            withdrawn = (
+                await api.send_recruitment_offer(_offer_request(**RICH_OFFER, position="Data engineer"), ADMIN, db, ORIGIN)
+            )["offer"]
+            await api.update_recruitment_offer_status(
+                withdrawn["id"], api.RecruitmentOfferStatusRequest(status="withdrawn"), ADMIN, db
+            )
+            withdrawn_page = await api.view_recruitment_offer(_token_of(withdrawn), db)
+            with pytest.raises(HTTPException) as closed:
+                await api.respond_to_recruitment_offer(
+                    _token_of(withdrawn), api.OfferResponseRequest(decision="accept"), BackgroundTasks(), db
+                )
+
+            with patch("app._send_mail_message", FakeMailer(error=TimeoutError())):
+                with pytest.raises(HTTPException):
+                    await api.send_recruitment_offer(_offer_request(position="Designer"), ADMIN, db, ORIGIN)
+            undelivered = [
+                item for item in (await api.list_recruitment_offers(200, ADMIN, db))["offers"] if item["status"] == "failed"
+            ][0]
+            with pytest.raises(HTTPException) as not_valid:
+                await api.view_recruitment_offer(_token_of(undelivered), db)
+
+    assert page["status"] == "declined"
+    assert withdrawn_page == {
+        "organisation": "CausalGraph AI",
+        "status": "withdrawn",
+        "language": "en",
+        "candidate_name": "Ada Lovelace",
+        "position": "Data engineer",
+        "sender_name": "Jay",
+        "responded_at": None,
+    }
+    assert closed.value.status_code == 409
+    assert not_valid.value.status_code == 404
+
+
+def test_a_reply_during_a_resend_is_kept(tmp_path):
+    asyncio.run(_a_reply_during_a_resend_is_kept(tmp_path))
+
+
+async def _a_reply_during_a_resend_is_kept(tmp_path):
+    with _backend(tmp_path):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            offer = (await api.send_recruitment_offer(_offer_request(), ADMIN, db, ORIGIN))["offer"]
+            await db.execute("UPDATE recruitment_offers SET sent_at = '2000-01-01T00:00:00+00:00'")
+            await db.commit()
+            assert await offers.claim_for_resend(db, offer["id"], cooldown_seconds=60)
+            await api.respond_to_recruitment_offer(
+                _token_of(offer), api.OfferResponseRequest(decision="accept"), BackgroundTasks(), db
+            )
+            after_delivery = await offers.record_delivery(db, offer["id"], delivery="smtp")
+
+    assert after_delivery["status"] == "accepted"
+    assert after_delivery["send_count"] == 2
+
+
+def test_offer_links_use_the_configured_or_requesting_site():
+    with patch("app._RECRUITMENT_PUBLIC_URL", ""), patch(
+        "app._CORS_ALLOW_ORIGINS", ["https://casualgraphai.vercel.app", "https://preview.vercel.app"]
+    ), patch("app._CORS_ALLOW_ORIGIN_REGEX", r"https://.*\.ngrok\.app"):
+        assert api._recruitment_public_base("https://preview.vercel.app/") == "https://preview.vercel.app"
+        assert api._recruitment_public_base("https://demo.ngrok.app") == "https://demo.ngrok.app"
+        assert api._recruitment_public_base("https://evil.example") == "https://casualgraphai.vercel.app"
+        assert api._recruitment_public_base(None) == "https://casualgraphai.vercel.app"
+    with patch("app._RECRUITMENT_PUBLIC_URL", "https://jobs.example.org"):
+        assert api._recruitment_public_base("https://preview.vercel.app") == "https://jobs.example.org"
+
+
+def test_tables_from_the_first_release_gain_the_new_columns(tmp_path):
+    asyncio.run(_tables_from_the_first_release_gain_the_new_columns(tmp_path))
+
+
+async def _tables_from_the_first_release_gain_the_new_columns(tmp_path):
+    async with aiosqlite.connect(tmp_path / "auth.db") as db:
+        await db.execute(
+            "CREATE TABLE recruitment_offers (id TEXT PRIMARY KEY, candidate_name TEXT NOT NULL, "
+            "candidate_email TEXT NOT NULL, position TEXT NOT NULL, start_date TEXT, respond_by TEXT, "
+            "language TEXT NOT NULL DEFAULT 'en', subject TEXT NOT NULL, letter TEXT NOT NULL, "
+            "sender_name TEXT NOT NULL, reply_to TEXT, bcc TEXT, status TEXT NOT NULL, delivery TEXT, "
+            "last_error TEXT, send_count INTEGER NOT NULL DEFAULT 0, created_by_user_id TEXT NOT NULL, "
+            "created_by_email TEXT NOT NULL, created_at TEXT NOT NULL, sent_at TEXT, updated_at TEXT NOT NULL)"
+        )
+        await db.execute(
+            "INSERT INTO recruitment_offers (id, candidate_name, candidate_email, position, subject, letter, "
+            "sender_name, status, created_by_user_id, created_by_email, created_at, updated_at) "
+            "VALUES ('old', 'Ada', 'ada@example.org', 'Analyst', 'Offer', 'Hi', 'Jay', 'sent', 'a', 'a@example.com', "
+            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"
+        )
+        await db.commit()
+        await offers.init_recruitment_db(db)
+        [old] = await offers.list_offers(db)
+
+    assert old["view_count"] == 0 and old["benefits"] == [] and old["salary"] is None and old["offer_url"] is None
+
+
+def test_http_offer_page_round_trip(tmp_path):
+    mailer = FakeMailer()
+    with _backend(tmp_path, mailer=mailer):
+        asyncio.run(api._init_auth_db())
+        asyncio.run(_insert_user(tmp_path, "admin-1", "hiring@example.com", "admin"))
+        client = TestClient(api.app)
+        admin_headers = {
+            "Authorization": f"Bearer {api._make_token('admin-1', 'hiring@example.com')}",
+            "Origin": "http://localhost:3000",
+        }
+        sent = client.post("/admin/recruitment/offers", json=_offer_request(**RICH_OFFER).model_dump(), headers=admin_headers)
+        token = sent.json()["offer"]["offer_url"].rsplit("/", 1)[1]
+        page = client.get(f"/offers/{token}")
+        answer = client.post(f"/offers/{token}/respond", json={"decision": "accept", "note": "Yes!"})
+        repeat = client.post(f"/offers/{token}/respond", json={"decision": "decline"})
+        hero = client.get("/recruitment-assets/offer-hero.gif")
+        preview = client.post(
+            "/admin/recruitment/offers/preview", json=_offer_request(**RICH_OFFER).model_dump(), headers=admin_headers
+        )
+
+    assert sent.status_code == 200, sent.text
+    assert page.status_code == 200 and page.json()["salary"]["formatted"] == "AUD 95,000 per year"
+    assert answer.status_code == 200 and answer.json()["status"] == "accepted"
+    assert repeat.status_code == 409 and repeat.json()["detail"]["offer"]["status"] == "accepted"
+    assert len(mailer.messages) == 2  # the offer, then the reply notification
+    assert hero.status_code == 200 and hero.headers["content-type"] == "image/gif"
+    assert preview.json()["page"]["benefits"] == ["Flexible hours", "Conference budget"]
+    assert "http://localhost:3000/offer/preview" in preview.json()["html"]
