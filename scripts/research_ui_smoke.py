@@ -95,7 +95,7 @@ try:
         page = context.new_page()
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
-        check('Home heading', page.get_by_role('heading', name='From disclosures to clearer decisions.').count() == 1)
+        check('Home heading', page.get_by_role('heading', name='Answers from sustainability reports, with the page they came from.').count() == 1)
         check('Home action empty disabled', page.get_by_role('button', name='Start research', exact=True).is_disabled())
         no_overflow(page, 'Desktop homepage no horizontal overflow')
         page.screenshot(path=str(OUT / 'home-desktop.png'), full_page=True)
@@ -133,6 +133,8 @@ try:
         sent = [r for r in requests if r['path'] == '/rag/ask/stream']
         check('Deep mode included in request', bool(sent) and json.loads(sent[-1]['body']).get('reasoning_mode') == 'deep')
         check('Final answer persisted', any(m.get('role') == 'assistant' and m.get('content') == ANSWER for m in state['messages']))
+        page.get_by_role('button', name='Source 1', exact=True).first.click()
+        check('Citation opens the cited passage', page.get_by_text('Synthetic browser fixture', exact=False).first.is_visible())
         page.screenshot(path=str(OUT / 'workspace-answer.png'), full_page=True)
         for mode in ['missing', 'error']:
             state['model'] = mode

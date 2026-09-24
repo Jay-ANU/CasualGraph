@@ -1,235 +1,185 @@
-import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { ChevronDown, LogOut, Menu, ShieldCheck, UserCircle, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
+import { ChevronDown, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import BrandLogo from './BrandLogo';
 
-// MiniMax-style navigation:
-//   white canvas + hairline bottom border, ~64px tall.
-//   Left: wordmark.   Center: horizontal text-link list (no chrome).
-//   Right: outline-pill secondary + black-pill primary CTA.
+const NAV_LINKS = [
+  { name: 'Research', href: '/agent' },
+  { name: 'Graph', href: '/causal-inference' },
+  { name: 'Desktop', href: '/desktop' },
+  { name: 'Company', href: '/about' },
+];
+
+export const initialOf = (value?: string | null) =>
+  String(value || '?').trim().charAt(0).toUpperCase() || '?';
+
 const Navbar: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const { isAuthenticated, logout, user } = useAuth();
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
-  const isMoonRoute = ['/causal-inference', '/desktop', '/download', '/about'].includes(location.pathname);
-
-  const navigation = [
-    { name: 'Home', href: '/' },
-    { name: 'Research', href: '/agent' },
-    { name: 'Graph', href: '/causal-inference' },
-    { name: 'Desktop', href: '/desktop' },
-    { name: 'Company', href: '/about' },
-  ];
-
-  const isActive = (path: string) =>
-    path === '/' ? location.pathname === '/' : location.pathname === path;
   const userLabel = user?.username || user?.email || 'Account';
 
+  useEffect(() => {
+    setIsOpen(false);
+    setIsAccountOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isAccountOpen) return;
+    const close = (event: MouseEvent) => {
+      if (!accountRef.current?.contains(event.target as Node)) setIsAccountOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsAccountOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [isAccountOpen]);
+
   const handleLogout = () => {
-    setIsUserMenuOpen(false);
+    setIsAccountOpen(false);
     setIsOpen(false);
     logout();
   };
 
+  const linkClass = ({ isActive }: { isActive: boolean }) =>
+    `rounded-md px-3 py-1.5 text-sm transition-colors ${
+      isActive ? 'font-medium text-ink' : 'text-ink-3 hover:text-ink'
+    }`;
+
   return (
-    <nav
-      className={`sticky top-0 z-50 border-b backdrop-blur-xl ${
-        isMoonRoute ? 'border-white/10 bg-[rgba(3,3,3,0.92)]' : 'bg-canvas'
-      }`}
-      style={isMoonRoute ? undefined : { borderColor: 'var(--cg-hairline-soft)' }}
-    >
-      <div
-        className="mx-auto grid h-16 max-w-page grid-cols-[auto_1fr_auto] items-center gap-8 px-4 sm:px-6 lg:h-[72px] lg:max-w-page-wide lg:px-8 xl:h-20 xl:max-w-page-xl xl:px-12 2xl:max-w-page-2xl 2xl:px-16"
-      >
-        {/* Wordmark — scales with viewport so it doesn't look tiny on 2K+ displays. */}
-        <Link to="/" className="flex items-center gap-3 lg:gap-3.5 xl:gap-4" aria-label="CausalGraph home">
-          <BrandLogo size="nav" tone={isMoonRoute ? 'dark' : 'light'} />
+    <header className="sticky top-0 z-40 border-b border-line bg-paper">
+      <div className="mx-auto flex h-[60px] max-w-content items-center gap-6 px-5 sm:px-8">
+        <Link to="/" className="shrink-0 rounded-md" aria-label="CausalGraph home">
+          <BrandLogo size="md" />
         </Link>
 
-        {/* Center nav — plain text links (MiniMax-style) */}
-        <div className="hidden min-w-0 items-center justify-center xl:flex">
-          <div className="flex items-center gap-1 xl:gap-2">
-            {navigation.map((item) => {
-              const active = isActive(item.href);
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  aria-current={active ? 'page' : undefined}
-                  className={`relative px-4 py-2 text-body-sm font-medium transition xl:px-5 xl:text-body-md ${
-                    active
-                      ? isMoonRoute ? 'text-white' : 'text-ink'
-                      : isMoonRoute ? 'text-white/[0.55] hover:text-white' : 'text-ink-steel hover:text-ink'
-                  }`}
-                >
-                  {item.name}
-                  {active && (
-                    <motion.span
-                      layoutId="nav-underline"
-                      className={`absolute inset-x-3 -bottom-[19px] h-[2px] xl:-bottom-[23px] ${
-                        isMoonRoute ? 'bg-white' : 'bg-ink'
-                      }`}
-                    />
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-        </div>
+        <nav className="hidden items-center gap-0.5 md:flex" aria-label="Primary">
+          {NAV_LINKS.map((item) => (
+            <NavLink key={item.href} to={item.href} className={linkClass}>
+              {item.name}
+            </NavLink>
+          ))}
+        </nav>
 
-        {/* Right CTAs */}
-        <div className="hidden items-center gap-2 justify-self-end xl:flex">
+        <div className="ml-auto hidden items-center gap-2 md:flex">
           {isAuthenticated ? (
             <>
-              <Link to="/agent" className={isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'}>
-                Open Research Desk
+              <Link to="/agent" className="btn btn-primary btn-sm">
+                Open research desk
               </Link>
-              <div className="relative">
+              <div className="relative" ref={accountRef}>
                 <button
                   type="button"
-                  onClick={() => setIsUserMenuOpen((prev) => !prev)}
-                  className={`${isMoonRoute ? 'moon-nav-secondary' : 'cg-btn-tertiary'} max-w-[150px] px-3`}
-                  aria-expanded={isUserMenuOpen}
+                  onClick={() => setIsAccountOpen((prev) => !prev)}
+                  className="flex h-8 items-center gap-1.5 rounded-md pl-1 pr-1.5 text-ink-3 transition-colors hover:bg-paper-hover hover:text-ink"
+                  aria-expanded={isAccountOpen}
                   aria-haspopup="menu"
+                  aria-label="Account menu"
                 >
-                  <UserCircle className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{userLabel}</span>
-                  <ChevronDown className={`h-4 w-4 shrink-0 transition ${isUserMenuOpen ? 'rotate-180' : ''}`} />
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink text-[11px] font-medium text-white">
+                    {initialOf(userLabel)}
+                  </span>
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isAccountOpen ? 'rotate-180' : ''}`} />
                 </button>
 
-                {isUserMenuOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.14 }}
-                    className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-hairline bg-white p-2 shadow-card"
-                    role="menu"
-                  >
-                    <div className="border-b border-hairline px-3 py-2">
-                      <div className="truncate text-sm font-semibold text-ink">{userLabel}</div>
-                      <div className="mt-0.5 truncate text-xs text-ink-steel">{user?.email}</div>
+                {isAccountOpen && (
+                  <div className="menu absolute right-0 top-full z-50 mt-2 w-64" role="menu">
+                    <div className="px-2.5 pb-2 pt-1.5">
+                      <div className="truncate text-sm font-medium text-ink">{userLabel}</div>
+                      {user?.email && <div className="truncate text-xs text-ink-4">{user.email}</div>}
                     </div>
+                    <div className="menu-sep" />
                     {isAdmin && (
-                      <Link
-                        to="/admin"
-                        onClick={() => setIsUserMenuOpen(false)}
-                        className="mt-2 flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-charcoal transition hover:bg-surface-soft hover:text-ink"
-                        role="menuitem"
-                      >
-                        <ShieldCheck className="h-4 w-4 text-ink-steel" />
+                      <Link to="/admin" className="menu-item" role="menuitem">
+                        <ShieldCheck className="h-4 w-4 text-ink-4" />
                         Admin console
                       </Link>
                     )}
-                    <button
-                      type="button"
-                      onClick={handleLogout}
-                      className="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-ink-charcoal transition hover:bg-surface-soft hover:text-ink"
-                      role="menuitem"
-                    >
-                      <LogOut className="h-4 w-4 text-ink-steel" />
+                    <button type="button" onClick={handleLogout} className="menu-item" role="menuitem">
+                      <LogOut className="h-4 w-4 text-ink-4" />
                       Sign out
                     </button>
-                  </motion.div>
+                  </div>
                 )}
               </div>
             </>
           ) : (
             <>
-              <Link to="/login" className={isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'}>
-                Sign in
+              {location.pathname !== '/login' && (
+                <Link to="/login" className="btn btn-ghost btn-sm">
+                  Sign in
+                </Link>
+              )}
+              <Link to="/agent" className="btn btn-primary btn-sm">
+                Open research desk
               </Link>
             </>
           )}
         </div>
 
-        {/* Mobile menu trigger */}
         <button
-          onClick={() => setIsOpen(!isOpen)}
-          className={`cg-btn-icon justify-self-end xl:hidden ${
-            isMoonRoute ? '!border-white/[0.15] !bg-white/5 !text-white hover:!border-white/40' : ''
-          }`}
+          type="button"
+          onClick={() => setIsOpen((prev) => !prev)}
+          className="icon-btn ml-auto md:hidden"
           aria-label={isOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={isOpen}
         >
-          {isOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+          {isOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
       </div>
 
-      {/* Mobile drawer */}
       {isOpen && (
-        <motion.div
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          className={`border-t px-4 pb-4 pt-3 xl:hidden ${
-            isMoonRoute ? 'border-white/10 bg-[#030303]' : 'bg-canvas'
-          }`}
-          style={isMoonRoute ? undefined : { borderColor: 'var(--cg-hairline-soft)' }}
-        >
-          <div className="space-y-1">
-            {navigation.map((item) => {
-              const active = isActive(item.href);
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  onClick={() => setIsOpen(false)}
-                  className={`block rounded-lg px-3 py-3 text-body-sm font-medium ${
-                    active
-                      ? isMoonRoute ? 'bg-white/10 text-white' : 'bg-surface text-ink'
-                      : isMoonRoute ? 'text-white/[0.62] hover:bg-white/[0.08] hover:text-white' : 'text-ink-steel hover:bg-surface hover:text-ink'
-                  }`}
-                >
-                  {item.name}
-                </Link>
-              );
-            })}
-          </div>
-          <div className="mt-4 border-t pt-4" style={isMoonRoute ? { borderColor: 'rgba(255,255,255,0.1)' } : { borderColor: 'var(--cg-hairline-soft)' }}>
+        <div className="border-t border-line bg-paper px-5 pb-6 pt-2 md:hidden">
+          <nav className="flex flex-col" aria-label="Mobile">
+            {NAV_LINKS.map((item) => (
+              <NavLink
+                key={item.href}
+                to={item.href}
+                className={({ isActive }) =>
+                  `border-b border-line-soft py-3.5 text-[17px] ${isActive ? 'font-medium text-ink' : 'text-ink-2'}`
+                }
+              >
+                {item.name}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="mt-5">
             {isAuthenticated ? (
               <div className="space-y-3">
-                <Link to="/agent" onClick={() => setIsOpen(false)} className={`${isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'} w-full`}>
-                  Open Research Desk
-                </Link>
-                <div className="rounded-xl border border-hairline bg-surface-soft p-2">
-                  <div className="px-2 py-2">
-                    <div className="truncate text-sm font-semibold text-ink">{userLabel}</div>
-                    <div className="mt-0.5 truncate text-xs text-ink-steel">{user?.email}</div>
+                <div className="flex items-center gap-3">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-xs font-medium text-white">
+                    {initialOf(userLabel)}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-ink">{userLabel}</div>
+                    {user?.email && <div className="truncate text-xs text-ink-4">{user.email}</div>}
                   </div>
-                  {isAdmin && (
-                    <Link
-                      to="/admin"
-                      onClick={() => setIsOpen(false)}
-                      className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium text-ink-charcoal hover:bg-white hover:text-ink"
-                    >
-                      <ShieldCheck className="h-4 w-4 text-ink-steel" />
-                      Admin console
-                    </Link>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleLogout}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium text-ink-charcoal hover:bg-white hover:text-ink"
-                  >
-                    <LogOut className="h-4 w-4 text-ink-steel" />
-                    Sign out
-                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Link to="/agent" className="btn btn-primary">Open research desk</Link>
+                  {isAdmin && <Link to="/admin" className="btn btn-secondary">Admin console</Link>}
+                  <button type="button" onClick={handleLogout} className="btn btn-secondary">Sign out</button>
                 </div>
               </div>
             ) : (
-              <div>
-                <Link to="/login" onClick={() => setIsOpen(false)} className={`${isMoonRoute ? 'moon-nav-primary' : 'cg-btn-primary'} w-full`}>
-                  Sign in
-                </Link>
+              <div className="flex gap-2">
+                <Link to="/agent" className="btn btn-primary flex-1">Open research desk</Link>
+                <Link to="/login" className="btn btn-secondary flex-1">Sign in</Link>
               </div>
             )}
           </div>
-        </motion.div>
+        </div>
       )}
-    </nav>
+    </header>
   );
 };
 

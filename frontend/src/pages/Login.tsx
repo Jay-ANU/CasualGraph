@@ -2,15 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import BrandLogo from '../components/BrandLogo';
+import useDocumentTitle from '../utils/useDocumentTitle';
 
 type Mode = 'login' | 'register';
 type RegisterRole = 'user' | 'admin';
 
-// MiniMax-style auth surface:
-//   white canvas, no glassy gradients. A single quiet card (16px radius)
-//   centered on the page. Inputs use the spec's text-input chrome with
-//   brand-blue-deep focus border. Primary CTA is a black pill.
 const Login: React.FC = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -30,6 +26,7 @@ const Login: React.FC = () => {
   const [emailCodeCooldown, setEmailCodeCooldown] = useState(0);
   const [registerRole, setRegisterRole] = useState<RegisterRole>('user');
   const [adminInviteCode, setAdminInviteCode] = useState('');
+  useDocumentTitle(mode === 'login' ? 'Sign in' : 'Create account');
 
   const host = window.location.hostname || '127.0.0.1';
   const localApiHost = host === 'localhost' || host === '127.0.0.1';
@@ -131,220 +128,186 @@ const Login: React.FC = () => {
     }
   };
 
-  // Local input style — reused so focus state is consistent across fields.
-  const inputClass =
-    'w-full rounded-md border bg-canvas px-4 py-2.5 text-body-md text-ink outline-none ' +
-    'transition focus:border-2 focus:border-brand-blue-deep';
+  const switchMode = () => {
+    setMode(mode === 'login' ? 'register' : 'login');
+    setRegisterRole('user');
+    setAdminInviteCode('');
+    setEmailCode('');
+    setEmailCodeSent(false);
+    setEmailCodeCooldown(0);
+    setError('');
+  };
 
   return (
-    <div className="min-h-screen bg-canvas">
-      <div className="mx-auto flex min-h-screen max-w-page items-center justify-center px-4 py-section sm:px-6 lg:px-8">
-        <div className="w-full max-w-[460px]">
-          {/* Brand mark */}
-          <div className="mb-10 flex items-center gap-3">
-            <BrandLogo size="md" />
+    <div className="px-5 pb-24 pt-14 sm:pt-20">
+      <div className="mx-auto w-full max-w-[400px]">
+        <h1 className="display text-display-sm sm:text-display-md">
+          {mode === 'login' ? 'Sign in to CausalGraph' : 'Create your account'}
+        </h1>
+        <p className="mt-3 text-ink-3">
+          {mode === 'login'
+            ? 'Continue with your reports and past research.'
+            : 'Your library and research history are private to your account.'}
+        </p>
+
+        <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+          {mode === 'register' && (
+            <div>
+              <span className="field-label" id="account-type-label">Account type</span>
+              <div className="segmented w-full" role="group" aria-labelledby="account-type-label">
+                {(['user', 'admin'] as const).map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => setRegisterRole(role)}
+                    aria-pressed={registerRole === role}
+                    className="flex-1 justify-center"
+                  >
+                    {role === 'user' ? 'Researcher' : 'Administrator'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="field-label" htmlFor="auth-email">Email</label>
+            <input
+              id="auth-email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="input"
+              placeholder="you@company.com"
+            />
           </div>
 
-          <h1
-            className="font-display text-heading-md font-semibold text-ink"
-            style={{ letterSpacing: 0, lineHeight: 1.20 }}
-          >
-            {mode === 'login' ? 'Sign in' : 'Create your account'}
-          </h1>
-          <p className="mt-3 text-body-md text-ink-steel">
-            {mode === 'login'
-              ? 'Welcome back. Continue your research workspace.'
-              : 'Set up your workspace to start querying reports.'}
-          </p>
-
-          <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+          {mode === 'register' && (
             <div>
-              <label className="mb-2 block text-caption font-semibold text-ink">Email</label>
+              <label className="field-label" htmlFor="auth-username">Name</label>
               <input
-                type="email"
+                id="auth-username"
+                type="text"
+                autoComplete="name"
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className={inputClass}
-                style={{ borderColor: 'var(--cg-hairline)' }}
-                placeholder="you@example.com"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="input"
+                placeholder="How your name appears in the workspace"
               />
             </div>
+          )}
 
-            {mode === 'register' && (
-              <div>
-                <label className="mb-2 block text-caption font-semibold text-ink">Account type</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setRegisterRole('user')}
-                    className={
-                      registerRole === 'user'
-                        ? 'cg-pill-tab cg-pill-tab--active'
-                        : 'cg-pill-tab'
-                    }
-                  >
-                    User
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRegisterRole('admin')}
-                    className={
-                      registerRole === 'admin'
-                        ? 'cg-pill-tab cg-pill-tab--active'
-                        : 'cg-pill-tab'
-                    }
-                  >
-                    Admin
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {mode === 'register' && (
-              <div>
-                <label className="mb-2 block text-caption font-semibold text-ink">Username</label>
-                <input
-                  type="text"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className={inputClass}
-                  style={{ borderColor: 'var(--cg-hairline)' }}
-                  placeholder="Your name"
-                />
-              </div>
-            )}
-
-            {mode === 'register' && registerRole === 'admin' && (
-              <div>
-                <label className="mb-2 block text-caption font-semibold text-ink">Admin invite code</label>
-                <input
-                  type="text"
-                  required
-                  value={adminInviteCode}
-                  onChange={(e) => setAdminInviteCode(e.target.value.toUpperCase())}
-                  className={inputClass}
-                  style={{ borderColor: 'var(--cg-hairline)' }}
-                  placeholder="ADM-XXXXXXXXXX"
-                />
-              </div>
-            )}
-
+          {mode === 'register' && registerRole === 'admin' && (
             <div>
-              <label className="mb-2 block text-caption font-semibold text-ink">Password</label>
+              <label className="field-label" htmlFor="auth-invite">Admin invite code</label>
               <input
-                type="password"
+                id="auth-invite"
+                type="text"
                 required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className={inputClass}
-                style={{ borderColor: 'var(--cg-hairline)' }}
-                placeholder="••••••••"
+                value={adminInviteCode}
+                onChange={(e) => setAdminInviteCode(e.target.value.toUpperCase())}
+                className="input font-mono"
+                placeholder="ADM-XXXXXXXXXX"
               />
+              <p className="field-hint">Ask an existing administrator to generate one. Codes expire after five minutes.</p>
             </div>
+          )}
 
-            {mode === 'register' && (
-              <div>
-                <label className="mb-2 block text-caption font-semibold text-ink">Image captcha</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    required
-                    inputMode="numeric"
-                    maxLength={4}
-                    value={captchaCode}
-                    onChange={(e) => setCaptchaCode(e.target.value.replace(/\D/g, ''))}
-                    className={`${inputClass} flex-1`}
-                    style={{ borderColor: 'var(--cg-hairline)' }}
-                    placeholder="4 digits"
-                  />
-                  {captchaImage && (
-                    <img
-                      src={captchaImage}
-                      alt="captcha"
-                      onClick={fetchCaptcha}
-                      className="h-10 cursor-pointer rounded-md border bg-canvas"
-                      style={{ borderColor: 'var(--cg-hairline)' }}
-                      title="Click to refresh"
-                    />
-                  )}
+          <div>
+            <label className="field-label" htmlFor="auth-password">Password</label>
+            <input
+              id="auth-password"
+              type="password"
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="input"
+            />
+          </div>
+
+          {mode === 'register' && (
+            <div>
+              <label className="field-label" htmlFor="auth-captcha">Image code</label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="auth-captcha"
+                  type="text"
+                  required
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={captchaCode}
+                  onChange={(e) => setCaptchaCode(e.target.value.replace(/\D/g, ''))}
+                  className="input flex-1 font-mono tracking-[0.2em]"
+                  placeholder="0000"
+                />
+                {captchaImage && (
                   <button
                     type="button"
                     onClick={fetchCaptcha}
-                    className="cg-btn-icon"
-                    title="Refresh captcha"
+                    className="h-10 shrink-0 overflow-hidden rounded-lg border border-line-strong bg-white"
+                    title="Load a new image"
+                    aria-label="Load a new image code"
                   >
-                    <RefreshCw className="h-4 w-4" />
+                    <img src={captchaImage} alt="Verification digits" className="h-full" />
                   </button>
-                </div>
+                )}
+                <button type="button" onClick={fetchCaptcha} className="icon-btn h-10 w-10" title="Load a new image" aria-label="Refresh image code">
+                  <RefreshCw className="h-4 w-4" />
+                </button>
               </div>
-            )}
+            </div>
+          )}
 
-            {mode === 'register' && (
-              <div>
-                <label className="mb-2 block text-caption font-semibold text-ink">Email verification code</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    required
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={emailCode}
-                    onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
-                    className={`${inputClass} flex-1`}
-                    style={{ borderColor: 'var(--cg-hairline)' }}
-                    placeholder="6 digits"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSendEmailCode}
-                    disabled={emailCodeSending || emailCodeCooldown > 0}
-                    className="rounded-md border border-hairline bg-ink px-4 py-2.5 text-caption font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-ink-stone"
-                  >
-                    {emailCodeSending ? 'Sending' : emailCodeCooldown > 0 ? `${emailCodeCooldown}s` : emailCodeSent ? 'Resend' : 'Send code'}
-                  </button>
-                </div>
+          {mode === 'register' && (
+            <div>
+              <label className="field-label" htmlFor="auth-email-code">Email verification code</label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="auth-email-code"
+                  type="text"
+                  required
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  value={emailCode}
+                  onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
+                  className="input flex-1 font-mono tracking-[0.2em]"
+                  placeholder="000000"
+                />
+                <button
+                  type="button"
+                  onClick={handleSendEmailCode}
+                  disabled={emailCodeSending || emailCodeCooldown > 0}
+                  className="btn btn-secondary h-10 min-w-[120px] shrink-0 px-3 tabular-nums"
+                >
+                  {emailCodeSending ? 'Sending…' : emailCodeCooldown > 0 ? `Resend in ${emailCodeCooldown}s` : emailCodeSent ? 'Resend' : 'Send code'}
+                </button>
               </div>
-            )}
+              <p className="field-hint">Enter the image code first, then we will email you a six-digit code.</p>
+            </div>
+          )}
 
-            {error && (
-              <p
-                className="rounded-md px-3 py-2 text-body-sm"
-                style={{
-                  background: 'var(--cg-danger-bg)',
-                  color: 'var(--cg-danger)',
-                  border: '1px solid var(--cg-danger-border)',
-                }}
-              >
-                {error}
-              </p>
-            )}
+          {error && (
+            <p role="alert" className="rounded-lg border border-err-line bg-err-bg px-3 py-2.5 text-sm text-err">
+              {error}
+            </p>
+          )}
 
-            <button type="submit" disabled={loading} className="cg-btn-primary w-full">
-              {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
-            </button>
-          </form>
+          <button type="submit" disabled={loading} className="btn btn-primary btn-lg w-full">
+            {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
+          </button>
+        </form>
 
-          <p className="mt-6 text-center text-body-sm text-ink-steel">
-            {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-            <button
-              type="button"
-              onClick={() => {
-                setMode(mode === 'login' ? 'register' : 'login');
-                setRegisterRole('user');
-                setAdminInviteCode('');
-                setEmailCode('');
-                setEmailCodeSent(false);
-                setEmailCodeCooldown(0);
-                setError('');
-              }}
-              className="font-semibold text-ink underline-offset-2 hover:underline"
-            >
-              {mode === 'login' ? 'Sign up' : 'Sign in'}
-            </button>
-          </p>
-        </div>
+        <p className="mt-6 text-sm text-ink-3">
+          {mode === 'login' ? 'New to CausalGraph? ' : 'Already have an account? '}
+          <button type="button" onClick={switchMode} className="text-link font-medium text-ink">
+            {mode === 'login' ? 'Create an account' : 'Sign in'}
+          </button>
+        </p>
       </div>
     </div>
   );

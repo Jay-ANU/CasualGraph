@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { motion } from 'framer-motion';
-import { Database, FileText, Network, Search, Workflow } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import type { RagResponse, RagStreamEvent } from '../types/api';
+import useDocumentTitle from '../utils/useDocumentTitle';
 
 type HealthState = {
   label: string;
@@ -66,6 +66,7 @@ const EsgDemo: React.FC = () => {
   const [ragLoading, setRagLoading] = useState(false);
   const [ragResult, setRagResult] = useState<any>(null);
   const [activeDemoTab, setActiveDemoTab] = useState<'ask' | 'extract'>('ask');
+  useDocumentTitle('Pipeline check');
 
   const serviceTargets = useMemo(
     () => [
@@ -189,167 +190,130 @@ const EsgDemo: React.FC = () => {
     }
   };
 
+  const statusDot = (ok: boolean | null) => (ok === null ? 'bg-line-strong' : ok ? 'bg-ok' : 'bg-err');
+  const statusText = (ok: boolean | null) => (ok === null ? 'Checking' : ok ? 'Online' : 'Offline');
+
   return (
-    <div className="min-h-screen text-slate-950">
-      <section className="tech-hero app-grid">
-        <div className="mx-auto max-w-[1600px] px-4 py-16 sm:px-6 lg:px-8">
-          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45 }} className="max-w-4xl">
-            <h1 className="text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">
-              Inspect the pipeline from report text to cited answer.
-            </h1>
-            <p className="mt-5 max-w-3xl text-lg leading-8 text-slate-600">
-              Check service readiness, extract ESG entities and relationships, then query the active report index with
-              the returned evidence in view.
-            </p>
-          </motion.div>
-        </div>
+    <div className="mx-auto max-w-content px-5 pb-24 pt-10 sm:px-8 lg:pt-14">
+      <header className="max-w-2xl">
+        <h1 className="page-title">Pipeline check</h1>
+        <p className="mt-1 text-sm leading-6 text-ink-3">
+          Check that the services respond, extract entities and relationships from a passage, and run a cited query
+          against the active report index. Intended for development and demos.
+        </p>
+      </header>
+
+      <section className="mt-8">
+        <h2 className="text-base font-semibold text-ink">Services</h2>
+        <ul className="mt-3 divide-y divide-line border-y border-line">
+          {health.map((item) => (
+            <li key={item.label} className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 py-3 text-sm">
+              <div className="min-w-0">
+                <div className="font-medium text-ink">{item.label}</div>
+                <div className="truncate font-mono text-xs text-ink-4">{item.url}</div>
+              </div>
+              <span className="inline-flex items-center gap-1.5 text-ink-2">
+                <span className={`status-dot ${statusDot(item.ok)}`} />
+                {statusText(item.ok)}
+              </span>
+            </li>
+          ))}
+        </ul>
       </section>
 
-      <div className="mx-auto max-w-[1600px] space-y-8 px-4 py-10 sm:px-6 lg:px-8">
-        <section>
-          <div className="mb-4 flex items-center gap-3">
-            <Database className="h-5 w-5 text-slate-500" />
-            <h2 className="text-2xl font-semibold text-slate-950">System status</h2>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            {health.map((item) => (
-              <div key={item.label} className="app-panel p-5">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-950">{item.label}</div>
-                    <div className="mt-1 font-mono text-xs text-slate-500">{item.url}</div>
-                  </div>
-                  <div
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium ${
-                      item.ok === null
-                        ? 'bg-slate-100 text-slate-600'
-                        : item.ok
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-rose-50 text-rose-700'
-                    }`}
-                  >
-                    {item.ok === null ? 'Checking' : item.ok ? 'Online' : 'Offline'}
-                  </div>
-                </div>
-              </div>
+      <section className="mt-12">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h2 className="text-base font-semibold text-ink">Try the pipeline</h2>
+          <div className="segmented" role="tablist" aria-label="Pipeline step">
+            {[
+              { id: 'ask', label: 'Ask a question' },
+              { id: 'extract', label: 'Extract entities' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={activeDemoTab === tab.id}
+                onClick={() => setActiveDemoTab(tab.id as 'ask' | 'extract')}
+              >
+                {tab.label}
+              </button>
             ))}
           </div>
-        </section>
+        </div>
 
-        <section className="app-panel overflow-hidden">
-          <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-2xl font-semibold text-slate-950">Demo workflow</h2>
-              <p className="mt-1 text-sm text-slate-600">Run one step at a time.</p>
-            </div>
-            <div className="inline-flex rounded-full border border-slate-200 bg-white p-1">
-              {[
-                { id: 'ask', label: 'Ask' },
-                { id: 'extract', label: 'Extract' },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveDemoTab(tab.id as 'ask' | 'extract')}
-                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-                    activeDemoTab === tab.id ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  {tab.label}
+        <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+          {activeDemoTab === 'extract' ? (
+            <>
+              <div>
+                <label className="field-label" htmlFor="demo-extract-text">Passage</label>
+                <textarea
+                  id="demo-extract-text"
+                  value={extractText}
+                  onChange={(e) => setExtractText(e.target.value)}
+                  className="input min-h-[260px] resize-y text-sm"
+                />
+                <button type="button" onClick={runExtraction} disabled={extractLoading} className="btn btn-primary mt-4">
+                  {extractLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {extractLoading ? 'Extracting…' : 'Run extraction'}
                 </button>
-              ))}
-            </div>
-          </div>
-
-          <motion.div
-            key={activeDemoTab}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.24 }}
-            className="grid gap-6 p-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(320px,0.65fr)]"
-          >
-            {activeDemoTab === 'extract' ? (
-              <>
-                <div>
-                  <div className="mb-4 flex items-center gap-3">
-                    <Workflow className="h-5 w-5 text-slate-500" />
-                    <h3 className="text-xl font-semibold text-slate-950">ESG extraction</h3>
+              </div>
+              <div className="rounded-xl border border-line bg-white p-4">
+                <h3 className="text-sm font-medium text-ink">Result</h3>
+                <dl className="mt-3 grid grid-cols-2 gap-4">
+                  <div>
+                    <dt className="text-xs text-ink-4">Entities</dt>
+                    <dd className="mt-0.5 text-2xl font-medium tabular-nums text-ink">{extractResult?.entities?.length || 0}</dd>
                   </div>
-                  <textarea
-                    value={extractText}
-                    onChange={(e) => setExtractText(e.target.value)}
-                    className="min-h-[260px] w-full rounded-xl border border-slate-300 bg-white/70 p-4 text-sm text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                  />
-                  <button
-                    onClick={runExtraction}
-                    disabled={extractLoading}
-                    className="tech-button mt-4 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <FileText className="h-4 w-4" />
-                    {extractLoading ? 'Extracting...' : 'Run extraction'}
-                  </button>
-                </div>
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-sm font-semibold text-slate-950">Result</div>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div className="rounded-lg bg-white p-3">
-                      <div className="text-2xl font-semibold text-slate-950">{extractResult?.entities?.length || 0}</div>
-                      <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Entities</div>
-                    </div>
-                    <div className="rounded-lg bg-white p-3">
-                      <div className="text-2xl font-semibold text-slate-950">{extractResult?.relations?.length || 0}</div>
-                      <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Relations</div>
-                    </div>
+                  <div>
+                    <dt className="text-xs text-ink-4">Relationships</dt>
+                    <dd className="mt-0.5 text-2xl font-medium tabular-nums text-ink">{extractResult?.relations?.length || 0}</dd>
                   </div>
-                  <details className="mt-4">
-                    <summary className="cursor-pointer text-sm font-semibold text-slate-700">Raw JSON</summary>
-                    <pre className="mt-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-                      {extractResult ? JSON.stringify(extractResult, null, 2) : 'Run extraction to see raw output.'}
-                    </pre>
-                  </details>
+                </dl>
+                <details className="mt-4 border-t border-line pt-3">
+                  <summary className="cursor-pointer text-sm text-ink-3 hover:text-ink">Raw JSON</summary>
+                  <pre className="mt-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-lg bg-paper-sunken p-3 text-xs leading-5 text-ink-2">
+                    {extractResult ? JSON.stringify(extractResult, null, 2) : 'Run the extraction to see the raw output.'}
+                  </pre>
+                </details>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="field-label" htmlFor="demo-question">Question</label>
+                <textarea
+                  id="demo-question"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  className="input min-h-[140px] resize-y text-sm"
+                />
+                <button type="button" onClick={runRag} disabled={ragLoading} className="btn btn-primary mt-4">
+                  {ragLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {ragLoading ? 'Retrieving…' : 'Ask'}
+                </button>
+              </div>
+              <div className="rounded-xl border border-line bg-white p-4">
+                <div className="flex items-baseline justify-between gap-3">
+                  <h3 className="text-sm font-medium text-ink">Answer</h3>
+                  <span className="text-xs text-ink-4">
+                    {Array.isArray(ragResult?.sources) ? ragResult.sources.length : 0} sources
+                  </span>
                 </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <div className="mb-4 flex items-center gap-3">
-                    <Search className="h-5 w-5 text-slate-500" />
-                    <h3 className="text-xl font-semibold text-slate-950">Evidence-backed query</h3>
-                  </div>
-                  <textarea
-                    value={question}
-                    onChange={(e) => setQuestion(e.target.value)}
-                    className="min-h-[150px] w-full rounded-xl border border-slate-300 bg-white/70 p-4 text-sm text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                  />
-                  <button
-                    onClick={runRag}
-                    disabled={ragLoading}
-                    className="tech-button mt-4 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Network className="h-4 w-4" />
-                    {ragLoading ? 'Retrieving...' : 'Ask question'}
-                  </button>
-                </div>
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-sm font-semibold text-slate-950">Answer</div>
-                  <p className="mt-3 min-h-[120px] whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                    {ragResult?.message || ragResult?.answer || 'Ask the sample question to see the grounded answer.'}
-                  </p>
-                  <div className="mt-4 rounded-lg bg-white p-3 text-sm text-slate-600">
-                    Sources: {Array.isArray(ragResult?.sources) ? ragResult.sources.length : 0}
-                  </div>
-                  <details className="mt-4">
-                    <summary className="cursor-pointer text-sm font-semibold text-slate-700">Raw JSON</summary>
-                    <pre className="mt-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-                      {ragResult ? JSON.stringify(ragResult, null, 2) : 'Run a query to see raw output.'}
-                    </pre>
-                  </details>
-                </div>
-              </>
-            )}
-          </motion.div>
-        </section>
-      </div>
+                <p className="mt-3 min-h-[120px] whitespace-pre-wrap text-sm leading-6 text-ink-2">
+                  {ragResult?.message || ragResult?.answer || 'Ask the sample question to see a cited answer.'}
+                </p>
+                <details className="mt-4 border-t border-line pt-3">
+                  <summary className="cursor-pointer text-sm text-ink-3 hover:text-ink">Raw JSON</summary>
+                  <pre className="mt-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-lg bg-paper-sunken p-3 text-xs leading-5 text-ink-2">
+                    {ragResult ? JSON.stringify(ragResult, null, 2) : 'Run a query to see the raw output.'}
+                  </pre>
+                </details>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
     </div>
   );
 };

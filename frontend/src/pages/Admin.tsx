@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, CheckCircle2, Clock3, Database, Edit3, RefreshCw, Save, Shield, Ticket, Trash2, UploadCloud, UserCheck, UserPlus, X, XCircle } from 'lucide-react';
+import { RefreshCw, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import useDocumentTitle from '../utils/useDocumentTitle';
 
 interface UploadAudit {
   job_id: string;
@@ -69,23 +70,23 @@ const formatDateTime = (value?: string) => {
   return date.toLocaleString();
 };
 
-const statusClass = (status: string) => {
-  if (status === 'completed') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
-  if (status === 'failed') return 'bg-red-50 text-red-700 ring-red-200';
-  if (status === 'rejected') return 'bg-amber-50 text-amber-700 ring-amber-200';
-  if (status === 'deleted_with_warnings') return 'bg-amber-50 text-amber-700 ring-amber-200';
-  if (status === 'deleted') return 'bg-hairline text-ink-charcoal ring-hairline';
-  if (status === 'running') return 'bg-blue-50 text-blue-700 ring-blue-200';
-  return 'bg-surface-soft text-ink-charcoal ring-hairline';
+const statusDotClass = (status: string) => {
+  if (status === 'completed') return 'bg-ok';
+  if (status === 'failed') return 'bg-err';
+  if (status === 'rejected' || status === 'deleted_with_warnings') return 'bg-warn';
+  if (status === 'running' || status === 'queued') return 'bg-info';
+  if (status === 'deleted') return 'bg-ink-5';
+  return 'bg-line-strong';
 };
 
 const cleanupClass = (status?: string) => {
-  if (status === 'cleanup_completed') return 'text-emerald-700';
-  if (status === 'cleanup_failed') return 'text-amber-700';
-  if (status === 'cleanup_pending') return 'text-blue-700';
-  if (status === 'cleanup_skipped') return 'text-ink-steel';
-  return 'text-ink-stone';
+  if (status === 'cleanup_completed') return 'text-ok';
+  if (status === 'cleanup_failed') return 'text-warn';
+  if (status === 'cleanup_pending') return 'text-info';
+  return 'text-ink-4';
 };
+
+const humanize = (value?: string) => String(value || '').replace(/_/g, ' ');
 
 const domainOptions = [
   { value: 'general', label: 'General' },
@@ -127,6 +128,7 @@ const Admin: React.FC = () => {
   const [unlimitedNote, setUnlimitedNote] = useState('');
   const [savingUnlimitedUser, setSavingUnlimitedUser] = useState(false);
   const base = useMemo(apiBase, []);
+  useDocumentTitle('Admin');
 
   const loadAdminData = useCallback(async () => {
     setLoading(true);
@@ -299,265 +301,275 @@ const Admin: React.FC = () => {
     }
   };
 
+  const metrics: Array<{ label: string; value: number; tone?: 'err' | 'warn' }> = [
+    { label: 'Uploads', value: totals.uploads },
+    { label: 'Completed', value: totals.completed },
+    { label: 'In progress', value: totals.active },
+    { label: 'Failed', value: totals.failed, tone: 'err' },
+    { label: 'Rejected', value: totals.rejected || 0, tone: 'warn' },
+    { label: 'Deleted', value: totals.deleted || 0 },
+  ];
+
   return (
-    <div className="min-h-[calc(100vh-72px)] bg-surface px-5 py-6 text-ink lg:px-8">
-      <div className="mx-auto max-w-7xl">
-        <header className="mb-6 flex flex-col justify-between gap-4 border-b border-hairline pb-5 lg:flex-row lg:items-end">
-          <div>
-            <div className="cg-badge-success mb-3 inline-flex items-center gap-2">
-              <Shield className="h-3.5 w-3.5" />
-              <span className="uppercase tracking-[0.08em]">Admin</span>
-            </div>
-            <h1
-              className="font-display text-heading-md font-semibold text-ink"
-              style={{ letterSpacing: 0, lineHeight: 1.20 }}
+    <div className="mx-auto max-w-content px-5 pb-24 pt-10 sm:px-8 lg:pt-14">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="page-title">Document operations</h1>
+          <p className="mt-1 text-sm text-ink-3">Uploads, processing status and corpus growth across the workspace.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-sm text-ink-4">
+            Signed in as <span className="text-ink-2">{user?.email || 'unknown'}</span>
+          </span>
+          <button type="button" onClick={loadAdminData} disabled={loading} className="btn btn-secondary btn-sm">
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      {error && (
+        <div role="alert" className="mt-6 rounded-lg border border-err-line bg-err-bg px-4 py-3 text-sm text-err">
+          <p className="font-medium">Admin data unavailable</p>
+          <p className="mt-0.5">{error}</p>
+        </div>
+      )}
+
+      <dl className="mt-8 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3 lg:grid-cols-6">
+        {metrics.map((metric) => (
+          <div key={metric.label} className="bg-white px-4 py-4">
+            <dt className="text-xs text-ink-4">{metric.label}</dt>
+            <dd
+              className={`mt-1 text-2xl font-medium tabular-nums ${
+                metric.tone === 'err' && metric.value > 0
+                  ? 'text-err'
+                  : metric.tone === 'warn' && metric.value > 0
+                    ? 'text-warn'
+                    : 'text-ink'
+              }`}
             >
-              Document Operations
-            </h1>
-            <p className="mt-3 max-w-2xl text-body-md text-ink-steel">
-              Audit upload activity, processing status, and corpus growth from the local ESG workspace.
-            </p>
+              {metric.value.toLocaleString()}
+            </dd>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="rounded-full border border-hairline bg-canvas px-4 py-2 text-body-sm text-ink-charcoal">
-              Signed in as <span className="font-semibold text-ink">{user?.email || 'unknown'}</span>
-            </div>
-            <button onClick={loadAdminData} className="cg-btn-primary">
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </button>
+        ))}
+      </dl>
+
+      <div className="mt-12 grid gap-12 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+        <section>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-base font-semibold text-ink">Uploads per day</h2>
+            <span className="text-xs text-ink-4">Last 14 days</span>
           </div>
-        </header>
-
-        {error && (
-          <div className="mb-5 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            <AlertTriangle className="mt-0.5 h-5 w-5" />
-            <div>
-              <div className="font-semibold">Admin data unavailable</div>
-              <div>{error}</div>
-            </div>
-          </div>
-        )}
-
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-          <MetricCard icon={UploadCloud} label="Total uploads" value={totals.uploads} />
-          <MetricCard icon={CheckCircle2} label="Completed" value={totals.completed} />
-          <MetricCard icon={Clock3} label="Active jobs" value={totals.active} />
-          <MetricCard icon={XCircle} label="Failed" value={totals.failed} tone="red" />
-          <MetricCard icon={AlertTriangle} label="Rejected" value={totals.rejected || 0} tone="amber" />
-          <MetricCard icon={Trash2} label="Deleted" value={totals.deleted || 0} />
-        </section>
-
-        <section className="mt-4 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-2xl border border-hairline bg-white p-5 shadow-sm">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-ink">Daily document growth</h2>
-                <p className="text-sm text-ink-steel">New uploads over the last 14 days</p>
-              </div>
-              <BarChart3 className="h-5 w-5 text-ink-stone" />
-            </div>
-            <div className="flex h-56 items-end gap-2 border-b border-hairline px-1 pb-2">
-              {(overview?.daily || []).map(day => (
-                <div key={day.date} className="flex h-full flex-1 flex-col items-center justify-end gap-2">
-                  <span className={`text-[10px] font-semibold ${day.uploads > 0 ? 'text-ink-charcoal' : 'text-ink-stone'}`}>
-                    {day.uploads}
-                  </span>
-                  <div
-                    className={`w-full rounded-t-md transition-all ${day.uploads > 0 ? 'bg-emerald-500/85' : 'bg-hairline'}`}
-                    style={{ height: `${day.uploads > 0 ? Math.max(10, (day.uploads / maxDaily) * 180) : 4}px` }}
-                    title={`${day.date}: ${day.uploads}`}
-                  />
-                  <span className="text-[10px] text-ink-steel">{day.date.slice(5)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-hairline bg-white p-5 shadow-sm">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-ink">Corpus output</h2>
-                <p className="text-sm text-ink-steel">Generated artifacts across completed jobs</p>
-              </div>
-              <Database className="h-5 w-5 text-ink-stone" />
-            </div>
-            <div className="grid gap-3">
-              <StatLine label="Chunks" value={totals.chunks} />
-              <StatLine label="Entities" value={totals.entities} />
-              <StatLine label="Relationships" value={totals.relations} />
-            </div>
-          </div>
-        </section>
-
-        <section className="mt-4 rounded-2xl border border-hairline bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-ink">Access controls</h2>
-              <p className="text-sm text-ink-steel">Invite codes and Pro AI users are hidden until needed.</p>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <button
-                type="button"
-                onClick={() => setShowAccessControls(prev => !prev)}
-                className="inline-flex items-center justify-center gap-2 rounded-full border border-hairline bg-canvas px-4 py-2 text-sm font-semibold text-ink-charcoal transition hover:border-ink"
+          <div className="mt-5 flex h-48 items-end gap-1.5 border-b border-line">
+            {(overview?.daily || []).map(day => (
+              <div
+                key={day.date}
+                className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1"
+                title={`${day.date}: ${day.uploads} upload${day.uploads === 1 ? '' : 's'}`}
               >
-                {showAccessControls ? 'Hide controls' : 'Show controls'}
-              </button>
-              {showAccessControls && (
-                <button
-                  onClick={createInviteCode}
-                  disabled={creatingInvite}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink-charcoal disabled:opacity-50"
-                >
-                  <Ticket className="h-4 w-4" />
-                  {creatingInvite ? 'Generating…' : 'Generate code'}
-                </button>
-              )}
-            </div>
+                {day.uploads > 0 && (
+                  <span className="text-[10px] tabular-nums text-ink-3">{day.uploads}</span>
+                )}
+                <div
+                  className={`w-full rounded-t-sm ${day.uploads > 0 ? 'bg-ink' : 'bg-line'}`}
+                  style={{ height: `${day.uploads > 0 ? Math.max(8, (day.uploads / maxDaily) * 160) : 2}px` }}
+                />
+              </div>
+            ))}
           </div>
-          {showAccessControls && inviteCode && (
-            <div className="mt-4 rounded-xl border border-hairline bg-surface px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink-steel">Current code</p>
-              <p className="mt-1 font-mono text-base font-semibold text-ink">{inviteCode}</p>
-              <p className="mt-1 text-xs text-ink-steel">Expires at: {formatDateTime(inviteExpiresAt)}</p>
-            </div>
+          <div className="mt-1.5 flex gap-1.5">
+            {(overview?.daily || []).map(day => (
+              <span key={day.date} className="min-w-0 flex-1 text-center font-mono text-[10px] text-ink-4">
+                {day.date.slice(8)}
+              </span>
+            ))}
+          </div>
+          {!loading && (overview?.daily || []).length === 0 && (
+            <p className="mt-3 text-sm text-ink-4">No upload activity in this period.</p>
           )}
         </section>
 
+        <section>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-base font-semibold text-ink">Corpus</h2>
+            <span className="text-xs text-ink-4">From completed jobs</span>
+          </div>
+          <dl className="mt-5 divide-y divide-line border-y border-line">
+            {[
+              ['Passages', totals.chunks],
+              ['Entities', totals.entities],
+              ['Relationships', totals.relations],
+            ].map(([label, value]) => (
+              <div key={label} className="flex items-baseline justify-between py-3 text-sm">
+                <dt className="text-ink-3">{label}</dt>
+                <dd className="font-medium tabular-nums text-ink">{Number(value).toLocaleString()}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      </div>
+
+      <section className="mt-14">
+        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-line pb-3">
+          <div>
+            <h2 className="text-base font-semibold text-ink">Access</h2>
+            <p className="mt-0.5 text-sm text-ink-3">Admin invite codes and Pro accounts.</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAccessControls(prev => !prev)}
+              aria-expanded={showAccessControls}
+              className="btn btn-secondary btn-sm"
+            >
+              {showAccessControls ? 'Hide' : 'Show'}
+            </button>
+            {showAccessControls && (
+              <button type="button" onClick={createInviteCode} disabled={creatingInvite} className="btn btn-primary btn-sm">
+                {creatingInvite ? 'Generating…' : 'Generate invite code'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {showAccessControls && inviteCode && (
+          <div className="mt-4 rounded-lg border border-line bg-white px-4 py-3">
+            <p className="text-xs text-ink-4">Invite code</p>
+            <p className="mt-1 select-all font-mono text-base text-ink">{inviteCode}</p>
+            <p className="mt-1 text-xs text-ink-4">Valid until {formatDateTime(inviteExpiresAt)}, for one sign-up.</p>
+          </div>
+        )}
+
         {showAccessControls && (
-        <section className="mt-4 rounded-2xl border border-hairline bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-ink">Pro AI users</h2>
-              <p className="text-sm text-ink-steel">Accounts listed here receive 300 daily AI points without receiving Max/admin permissions.</p>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto] lg:min-w-[620px]">
+          <div className="mt-8">
+            <h3 className="text-sm font-semibold text-ink">Pro accounts</h3>
+            <p className="mt-0.5 text-sm text-ink-3">These accounts get 300 AI points a day. They do not get admin access.</p>
+            <form
+              className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (unlimitedEmail.trim()) addUnlimitedUser();
+              }}
+            >
               <input
                 value={unlimitedEmail}
                 onChange={event => setUnlimitedEmail(event.target.value)}
-                className="rounded-full border border-hairline bg-canvas px-4 py-2 text-sm text-ink outline-none transition focus:border-ink"
+                className="input h-9 text-sm"
                 placeholder="user@example.com"
                 type="email"
+                aria-label="Email"
               />
               <input
                 value={unlimitedNote}
                 onChange={event => setUnlimitedNote(event.target.value)}
-                className="rounded-full border border-hairline bg-canvas px-4 py-2 text-sm text-ink outline-none transition focus:border-ink"
-                placeholder="note"
+                className="input h-9 text-sm"
+                placeholder="Note (optional)"
+                aria-label="Note"
               />
               <button
-                onClick={addUnlimitedUser}
+                type="submit"
                 disabled={savingUnlimitedUser || !unlimitedEmail.trim()}
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink-charcoal disabled:opacity-50"
+                className="btn btn-primary btn-sm h-9"
               >
-                <UserPlus className="h-4 w-4" />
-                {savingUnlimitedUser ? 'Adding...' : 'Add'}
+                {savingUnlimitedUser ? 'Adding…' : 'Add Pro account'}
               </button>
+            </form>
+            <div className="relative mt-4 overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-line text-xs text-ink-4">
+                    <th className="py-2.5 pr-6 font-medium">Email</th>
+                    <th className="py-2.5 pr-6 font-medium">Note</th>
+                    <th className="py-2.5 pr-6 font-medium">Added</th>
+                    <th className="py-2.5 font-medium"><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {ragUnlimitedUsers.map(item => (
+                    <tr key={item.email}>
+                      <td className="py-3 pr-6 font-medium text-ink">{item.email}</td>
+                      <td className="py-3 pr-6 text-ink-3">{item.note || '—'}</td>
+                      <td className="whitespace-nowrap py-3 pr-6 text-ink-3">{formatDateTime(item.created_at)}</td>
+                      <td className="py-3 text-right">
+                        <button type="button" onClick={() => deleteUnlimitedUser(item.email)} className="btn btn-ghost btn-sm hover:text-err">
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!loading && ragUnlimitedUsers.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="py-8 text-center text-ink-4">No Pro accounts yet.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full divide-y divide-hairline-soft text-left text-sm">
-              <thead className="bg-surface text-xs uppercase tracking-[0.12em] text-ink-steel">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Email</th>
-                  <th className="px-4 py-3 font-semibold">Note</th>
-                  <th className="px-4 py-3 font-semibold">Added at</th>
-                  <th className="px-4 py-3 font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-hairline-soft">
-                {ragUnlimitedUsers.map(item => (
-                  <tr key={item.email} className="hover:bg-surface">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2 font-semibold text-ink">
-                        <UserCheck className="h-4 w-4 text-emerald-600" />
-                        {item.email}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-ink-charcoal">{item.note || '-'}</td>
-                    <td className="px-4 py-3 text-ink-charcoal">{formatDateTime(item.created_at)}</td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => deleteUnlimitedUser(item.email)}
-                        className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-canvas px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:border-red-400"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!loading && ragUnlimitedUsers.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-ink-steel">
-                      No Pro AI users yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
         )}
+      </section>
 
-        <section className="mt-4 rounded-2xl border border-hairline bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-hairline px-5 py-4">
-            <div>
-              <h2 className="text-lg font-semibold text-ink">Upload audit log</h2>
-              <p className="text-sm text-ink-steel">Who uploaded what, when, and how processing ended</p>
-            </div>
-            {loading && <span className="text-sm text-ink-steel">Loading...</span>}
+      <section className="mt-14">
+        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-line pb-3">
+          <div>
+            <h2 className="text-base font-semibold text-ink">Upload log</h2>
+            <p className="mt-0.5 text-sm text-ink-3">Who uploaded what, when, and how processing ended.</p>
           </div>
-          {actionMessage && (
-            <div className="border-b border-hairline bg-surface px-5 py-3 text-sm text-ink-charcoal">
-              {actionMessage}
-            </div>
-          )}
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-hairline-soft text-left text-sm">
-              <thead className="bg-surface text-xs uppercase tracking-[0.12em] text-ink-steel">
-                <tr>
-                  <th className="px-5 py-3 font-semibold">Document</th>
-                  <th className="px-5 py-3 font-semibold">Uploader</th>
-                  <th className="px-5 py-3 font-semibold">Uploaded at</th>
-                  <th className="px-5 py-3 font-semibold">Category</th>
-                  <th className="px-5 py-3 font-semibold">Status</th>
-                  <th className="px-5 py-3 font-semibold">Stats</th>
-                  <th className="px-5 py-3 font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-hairline-soft">
-                {uploads.map(upload => (
-                  <tr key={upload.job_id} className="align-top hover:bg-surface">
-                    <td className="max-w-sm px-5 py-4">
+          {loading && <span className="text-xs text-ink-4">Loading…</span>}
+        </div>
+        {actionMessage && (
+          <p role="status" className="mt-4 rounded-lg bg-paper-sunken px-3 py-2 text-sm text-ink-2">
+            {actionMessage}
+          </p>
+        )}
+        <div className="relative mt-1 overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-line text-xs text-ink-4">
+                <th className="py-2.5 pr-6 font-medium">Document</th>
+                <th className="py-2.5 pr-6 font-medium">Uploaded by</th>
+                <th className="py-2.5 pr-6 font-medium">Date</th>
+                <th className="py-2.5 pr-6 font-medium">Category</th>
+                <th className="py-2.5 pr-6 font-medium">Status</th>
+                <th className="py-2.5 pr-6 font-medium">Output</th>
+                <th className="py-2.5 font-medium"><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {uploads.map(upload => {
+                const isDeleted = upload.status === 'deleted' || upload.status === 'deleted_with_warnings';
+                return (
+                  <tr key={upload.job_id} className="align-top">
+                    <td className="max-w-sm py-3.5 pr-6">
                       {editingJobId === upload.job_id ? (
                         <input
                           value={editForm.title}
                           onChange={event => setEditForm(prev => ({ ...prev, title: event.target.value }))}
-                          className="w-full rounded-lg border border-hairline px-3 py-2 text-sm"
+                          className="input h-8 min-w-[220px] text-sm"
+                          aria-label="Title"
                         />
                       ) : (
-                        <div className="font-semibold text-ink">{upload.title}</div>
+                        <div className="font-medium text-ink">{upload.title}</div>
                       )}
-                      <div className="mt-1 text-xs text-ink-steel">{upload.filename || upload.document_id || upload.job_id}</div>
-                      {upload.error && <div className="mt-2 text-xs text-red-600">{upload.error}</div>}
+                      <div className="mt-0.5 truncate font-mono text-xs text-ink-4">{upload.filename || upload.document_id || upload.job_id}</div>
+                      {upload.error && <div className="mt-1.5 text-xs text-err">{upload.error}</div>}
                       {upload.duplicate_of_document_id && (
-                        <div className="mt-2 text-xs text-amber-700">Duplicate of {upload.duplicate_of_document_id}</div>
+                        <div className="mt-1.5 text-xs text-warn">Duplicate of {upload.duplicate_of_document_id}</div>
                       )}
                     </td>
-                    <td className="px-5 py-4">
-                      <div className="font-medium text-ink-charcoal">{upload.uploader?.username || '-'}</div>
-                      <div className="text-xs text-ink-steel">{upload.uploader?.email || '-'}</div>
+                    <td className="py-3.5 pr-6">
+                      <div className="text-ink-2">{upload.uploader?.username || '—'}</div>
+                      <div className="text-xs text-ink-4">{upload.uploader?.email || ''}</div>
                     </td>
-                    <td className="px-5 py-4 text-ink-charcoal">{formatDateTime(upload.created_at)}</td>
-                    <td className="px-5 py-4">
+                    <td className="whitespace-nowrap py-3.5 pr-6 text-ink-3">{formatDateTime(upload.created_at)}</td>
+                    <td className="py-3.5 pr-6">
                       {editingJobId === upload.job_id ? (
-                        <div className="grid gap-2">
+                        <div className="grid min-w-[200px] gap-2">
                           <select
                             value={editForm.domain}
                             onChange={event => setEditForm(prev => ({ ...prev, domain: event.target.value }))}
-                            className="rounded-lg border border-hairline px-3 py-2 text-sm"
+                            className="input h-8 text-sm"
+                            aria-label="Category"
                           >
                             {domainOptions.map(option => (
                               <option key={option.value} value={option.value}>{option.label}</option>
@@ -566,7 +578,8 @@ const Admin: React.FC = () => {
                           <select
                             value={editForm.source_type}
                             onChange={event => setEditForm(prev => ({ ...prev, source_type: event.target.value }))}
-                            className="rounded-lg border border-hairline px-3 py-2 text-sm"
+                            className="input h-8 text-sm"
+                            aria-label="Source type"
                           >
                             {sourceTypeOptions.map(option => (
                               <option key={option.value} value={option.value}>{option.label}</option>
@@ -575,144 +588,88 @@ const Admin: React.FC = () => {
                           <input
                             value={editForm.source}
                             onChange={event => setEditForm(prev => ({ ...prev, source: event.target.value }))}
-                            className="rounded-lg border border-hairline px-3 py-2 text-sm"
-                            placeholder="source"
+                            className="input h-8 text-sm"
+                            placeholder="Source"
+                            aria-label="Source"
                           />
                         </div>
                       ) : (
                         <>
-                          <div className="text-ink-charcoal">{upload.domain || 'general'}</div>
-                          <div className="text-xs text-ink-steel">{upload.source_type || 'auto'}</div>
-                          {upload.source && <div className="mt-1 max-w-[12rem] truncate text-xs text-ink-stone">{upload.source}</div>}
+                          <div className="text-ink-2">{humanize(upload.domain || 'general')}</div>
+                          <div className="text-xs text-ink-4">{humanize(upload.source_type) || 'auto'}</div>
+                          {upload.source && <div className="mt-0.5 max-w-[12rem] truncate text-xs text-ink-4">{upload.source}</div>}
                         </>
                       )}
                     </td>
-                    <td className="px-5 py-4">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${statusClass(upload.status)}`}>
-                        {upload.status}
+                    <td className="py-3.5 pr-6">
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-ink-2">
+                        <span className={`status-dot ${statusDotClass(upload.status)}`} />
+                        {humanize(upload.status)}
                       </span>
-                      <div className="mt-1 text-xs text-ink-steel">{upload.stage || '-'}</div>
+                      {upload.stage && <div className="mt-0.5 text-xs text-ink-4">{humanize(upload.stage)}</div>}
                       {upload.cleanup_status && (
-                        <div className={`mt-2 text-xs font-semibold ${cleanupClass(upload.cleanup_status)}`}>
-                          {upload.cleanup_status}
-                        </div>
+                        <div className={`mt-1 text-xs ${cleanupClass(upload.cleanup_status)}`}>{humanize(upload.cleanup_status)}</div>
                       )}
                       {upload.cleanup_detail && (
-                        <div className="mt-1 max-w-[14rem] truncate text-xs text-ink-steel" title={upload.cleanup_detail}>
+                        <div className="mt-0.5 max-w-[14rem] truncate text-xs text-ink-4" title={upload.cleanup_detail}>
                           {upload.cleanup_detail}
                         </div>
                       )}
                     </td>
-                    <td className="px-5 py-4 text-ink-charcoal">
-                      <div>{upload.stats?.chunks || 0} chunks</div>
+                    <td className="whitespace-nowrap py-3.5 pr-6 text-xs leading-5 text-ink-3 tabular-nums">
+                      <div>{upload.stats?.chunks || 0} passages</div>
                       <div>{upload.stats?.entities || 0} entities</div>
-                      <div>{upload.stats?.relations || 0} relations</div>
+                      <div>{upload.stats?.relations || 0} relationships</div>
                     </td>
-                    <td className="px-5 py-4">
+                    <td className="py-3 text-right">
                       {editingJobId === upload.job_id ? (
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => saveEdit(upload.job_id)}
-                            className="inline-flex items-center gap-1 rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-ink-charcoal"
-                          >
-                            <Save className="h-3.5 w-3.5" />
-                            Save
-                          </button>
-                          <button
-                            onClick={() => setEditingJobId(null)}
-                            className="inline-flex items-center gap-1 rounded-full border border-hairline bg-canvas px-3 py-1.5 text-xs font-semibold text-ink-charcoal transition hover:border-ink"
-                          >
-                            <X className="h-3.5 w-3.5" />
+                        <div className="flex justify-end gap-1">
+                          <button type="button" onClick={() => setEditingJobId(null)} className="btn btn-ghost btn-sm">
                             Cancel
+                          </button>
+                          <button type="button" onClick={() => saveEdit(upload.job_id)} className="btn btn-primary btn-sm">
+                            Save
                           </button>
                         </div>
                       ) : (
-                        <div className="flex gap-2">
+                        <div className="flex justify-end gap-1">
                           <button
+                            type="button"
                             onClick={() => startEdit(upload)}
-                            disabled={upload.status === 'deleted' || upload.status === 'deleted_with_warnings'}
-                            className="inline-flex items-center gap-1 rounded-full border border-hairline bg-canvas px-3 py-1.5 text-xs font-semibold text-ink-charcoal transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={isDeleted}
+                            className="btn btn-ghost btn-sm"
                           >
-                            <Edit3 className="h-3.5 w-3.5" />
-                            Organize
+                            Edit
                           </button>
                           <button
+                            type="button"
                             onClick={() => deleteUpload(upload)}
-                            disabled={
-                              upload.status === 'deleted' ||
-                              upload.status === 'deleted_with_warnings' ||
-                              upload.status === 'running' ||
-                              upload.status === 'queued'
-                            }
-                            className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-canvas px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:border-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={isDeleted || upload.status === 'running' || upload.status === 'queued'}
+                            className="btn btn-ghost btn-sm hover:text-err"
+                            aria-label={`Delete ${upload.title}`}
+                            title="Delete"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
-                            Delete
                           </button>
                         </div>
                       )}
                     </td>
                   </tr>
-                ))}
-                {!loading && uploads.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-5 py-10 text-center text-ink-steel">
-                      No upload records yet. New uploads will appear here after they are submitted.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
+                );
+              })}
+              {!loading && uploads.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-ink-4">
+                    No uploads yet. New uploads appear here as soon as they are submitted.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 };
-
-// MiniMax stat tile — flat white card, hairline border, heading-md numeral.
-const MetricCard = ({
-  icon: Icon,
-  label,
-  value,
-  tone = 'slate',
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: number;
-  tone?: 'slate' | 'red' | 'amber';
-}) => (
-  <div className="rounded-xl border border-hairline bg-canvas p-5">
-    <div className="flex items-start justify-between">
-      <div>
-        <div className="text-body-sm font-medium text-ink-steel">{label}</div>
-        <div
-          className="mt-3 font-display font-semibold text-ink"
-          style={{ fontSize: '32px', lineHeight: 1.25, letterSpacing: 0 }}
-        >
-          {value}
-        </div>
-      </div>
-      <div
-        className={`flex h-9 w-9 items-center justify-center rounded-full ${
-          tone === 'red'
-            ? 'bg-red-50 text-red-600'
-            : tone === 'amber'
-              ? 'bg-amber-50 text-amber-600'
-              : 'bg-surface-soft text-ink-charcoal'
-        }`}
-      >
-        <Icon className="h-4 w-4" />
-      </div>
-    </div>
-  </div>
-);
-
-const StatLine = ({ label, value }: { label: string; value: number }) => (
-  <div className="flex items-center justify-between rounded-lg border border-hairline-soft bg-surface px-4 py-3">
-    <span className="text-body-sm font-medium text-ink-charcoal">{label}</span>
-    <span className="text-card-title font-semibold text-ink">{value}</span>
-  </div>
-);
 
 export default Admin;

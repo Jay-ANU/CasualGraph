@@ -1,58 +1,35 @@
 import React from 'react';
 
-type BrandLogoSize = 'sm' | 'md' | 'lg' | 'nav';
+type BrandLogoSize = 'sm' | 'md' | 'lg';
 
 interface BrandLogoProps {
   className?: string;
   showText?: boolean;
   size?: BrandLogoSize;
-  tone?: 'light' | 'dark';
 }
 
-const sizeClasses: Record<BrandLogoSize, { mark: string; text: string; gap: string }> = {
-  sm: {
-    mark: 'h-8 w-8',
-    text: 'text-[18px]',
-    gap: 'gap-2.5',
-  },
-  md: {
-    mark: 'h-9 w-9',
-    text: 'text-card-title',
-    gap: 'gap-3',
-  },
-  lg: {
-    mark: 'h-10 w-10',
-    text: 'text-[24px]',
-    gap: 'gap-3.5',
-  },
-  nav: {
-    mark: 'h-8 w-8 lg:h-9 lg:w-9 xl:h-10 xl:w-10',
-    text: 'text-card-title lg:text-[22px] xl:text-[24px]',
-    gap: 'gap-3 lg:gap-3.5 xl:gap-4',
-  },
+const MARK_PX: Record<BrandLogoSize, number> = { sm: 20, md: 24, lg: 32 };
+const TEXT_CLASS: Record<BrandLogoSize, string> = {
+  sm: 'text-[15px]',
+  md: 'text-base',
+  lg: 'text-xl',
 };
 
-const BrandLogo: React.FC<BrandLogoProps> = ({ className = '', showText = true, size = 'md', tone = 'light' }) => {
-  const classes = sizeClasses[size];
-  const textToneClass = tone === 'dark' ? 'text-white' : 'text-ink';
-
+const BrandLogo: React.FC<BrandLogoProps> = ({ className = '', showText = true, size = 'md' }) => {
+  const px = MARK_PX[size];
   return (
-    <span className={`inline-flex items-center ${classes.gap} ${className}`}>
+    <span className={`inline-flex items-center gap-2 ${className}`}>
       <img
         src="/brand/logo-mark.svg"
         alt=""
         aria-hidden="true"
-        className={`${classes.mark} shrink-0`}
-        width={40}
-        height={40}
+        width={px}
+        height={px}
+        className="shrink-0"
+        style={{ width: px, height: px }}
       />
       {showText && (
-        <span
-          className={`font-display font-semibold ${textToneClass} ${classes.text}`}
-          style={{ letterSpacing: 0 }}
-        >
-          CausalGraph
-        </span>
+        <span className={`font-semibold tracking-[-0.01em] text-ink ${TEXT_CLASS[size]}`}>CausalGraph</span>
       )}
     </span>
   );

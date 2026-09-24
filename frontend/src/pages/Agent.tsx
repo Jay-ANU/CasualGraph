@@ -1,14 +1,48 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import { motion } from 'framer-motion';
-import { useSearchParams } from 'react-router-dom';
-import { Search, Download, Trash2, MessageSquare, Database, Loader2, Zap, BrainCircuit, Network, FolderOpen, FileUp, FileText, Plus, Paperclip, CheckCircle2, AlertCircle, Circle, ArrowUp, ThumbsUp, ThumbsDown, GitBranch, Eye, ShieldCheck, X } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import {
+  AlertCircle,
+  ArrowUp,
+  BrainCircuit,
+  Check,
+  CheckCircle2,
+  ChevronsUpDown,
+  Circle,
+  Copy,
+  Database,
+  Download,
+  Eye,
+  FileText,
+  FileUp,
+  FolderOpen,
+  GitBranch,
+  Home,
+  Library,
+  Loader2,
+  LogOut,
+  MessageSquare,
+  Network,
+  PanelLeft,
+  Paperclip,
+  PenSquare,
+  Search,
+  ShieldCheck,
+  ThumbsDown,
+  ThumbsUp,
+  Trash2,
+  X,
+  Zap,
+} from 'lucide-react';
 import { GraphVisualizer } from '../components';
+import BrandLogo from '../components/BrandLogo';
 import ModelStatus from '../components/ModelStatus';
 import WorkbenchWelcome from '../components/WorkbenchWelcome';
 import { useAuth } from '../contexts/AuthContext';
+import useDocumentTitle from '../utils/useDocumentTitle';
 import type { GraphData, GraphEdge, GraphHighlightPath, GraphNode } from '../types/graph';
 import type { AgentTraceStep, FeedbackPayload, FeedbackRating, FeedbackReasonTag, RagReasoningMode, RagResponse, RagSource } from '../types/api';
 import {
@@ -23,8 +57,8 @@ import {
 import { formatAccountPlanLabel } from './agent/accountPlan';
 import {
   formatSourceDocumentTitle,
-  formatSourceChipLabel,
   getLoadingSteps,
+  linkCitations,
   normalizeMathForMarkdown,
   normalizeStreamingMarkdown,
   readSseEvents,
@@ -150,6 +184,14 @@ const GRAPH_DOMAIN_LABELS: Record<string, string> = {
   governance: 'Governance',
   general: 'General',
   ai: 'AI',
+};
+
+const DOMAIN_DOT_CLASS: Record<string, string> = {
+  environmental: 'bg-domain-e',
+  social: 'bg-domain-s',
+  governance: 'bg-domain-g',
+  ai: 'bg-domain-ai',
+  general: 'bg-domain-general',
 };
 
 const QUERY_TOKEN_PATTERN = /[A-Za-z][A-Za-z0-9_-]{2,}|[\u4e00-\u9fff]{2,}/g;
@@ -581,7 +623,7 @@ const AnswerWarningBadge: React.FC<{
   if (!partial) return null;
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800"
+      className="tag border-warn-line bg-warn-bg text-warn"
       title={formatAgentPartialDescription(partialReason)}
     >
       <AlertCircle className="h-3.5 w-3.5" />
@@ -605,50 +647,46 @@ const formatTraceDuration = (step: AgentTraceStep) => {
   return `${seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(2)}s`;
 };
 
-const getEventVerb = (step: AgentTraceStep) => {
+// Short, human phrasing for each trace step: present tense while it runs,
+// past tense once it is done.
+const describeStep = (step: AgentTraceStep, running: string, done: string, failed?: string) => {
   const status = getTraceStatus(step);
-  if (status === 'running') return 'Ongoing';
-  if (status === 'failed') return 'Failed';
-  if (status === 'completed') return 'Completed';
-  if (status === 'planned' || status === 'pending') return 'Queued';
-  if (status) {
-    return status
-      .replace(/[_-]+/g, ' ')
-      .replace(/\b\w/g, char => char.toUpperCase());
-  }
-  return 'Completed';
+  if (status === 'running') return running;
+  if (status === 'failed') return failed || `${running} failed`;
+  if (status === 'planned' || status === 'pending') return `Queued: ${running.charAt(0).toLowerCase()}${running.slice(1)}`;
+  return done;
 };
 
-const formatMiniMaxEventTitle = (step: AgentTraceStep) => {
+const formatTraceEventTitle = (step: AgentTraceStep) => {
   const phase = String(step.phase || '').toLowerCase();
   const stage = String(step.stage || '').toLowerCase();
   const tool = String(step.tool || '').trim();
-  const verb = getEventVerb(step);
   const expectedEntity = getTraceMetaValue(step, 'expected_entity');
 
-  if (stage === 'routing') return `${verb} request routing`;
-  if (stage === 'context_ready') return `${verb} RAG context`;
-  if (stage === 'generating') return `${verb} answer generation`;
+  if (stage === 'routing') return describeStep(step, 'Reading the question', 'Read the question');
+  if (stage === 'context_ready') return describeStep(step, 'Gathering passages', 'Gathered passages');
+  if (stage === 'planning') return describeStep(step, 'Planning the search', 'Planned the search');
+  if (stage === 'generating') return describeStep(step, 'Writing the answer', 'Wrote the answer');
 
-  if (phase === 'plan') return 'Built evidence plan';
-  if (phase === 'thought' && tool === 'search_documents' && expectedEntity) return `Planned report search for ${expectedEntity}`;
-  if (phase === 'thought' && tool === 'search_documents') return 'Planned report search';
-  if (phase === 'thought' && (tool === 'get_graph_context' || tool === 'query_neo4j')) return 'Planned graph cross-check';
-  if (phase === 'thought' && tool === 'summarize_evidence') return 'Planned evidence synthesis';
-  if (phase === 'thought') return 'Chose next evidence step';
+  if (phase === 'plan') return 'Planned the search';
+  if (phase === 'thought' && tool === 'search_documents' && expectedEntity) return `Decided to search for ${expectedEntity}`;
+  if (phase === 'thought' && tool === 'search_documents') return 'Decided to search the reports';
+  if (phase === 'thought' && (tool === 'get_graph_context' || tool === 'query_neo4j')) return 'Decided to check the graph';
+  if (phase === 'thought' && tool === 'summarize_evidence') return 'Decided to summarise the evidence';
+  if (phase === 'thought') return 'Chose the next step';
 
-  if (tool === 'search_documents') return `${verb} report search`;
-  if (tool === 'read_chunks') return `${verb} Read Evidence`;
-  if (tool === 'get_graph_context' || tool === 'query_neo4j') return `${verb} Graph Context`;
-  if (tool === 'summarize_evidence') return `${verb} evidence synthesis`;
-  if (phase === 'reflexion') return 'Checked evidence coverage';
-  if (phase === 'replan') return 'Replanned missing evidence search';
-  if (phase === 'observation') return 'Evidence update';
-  if (phase === 'final') return 'Final answer';
+  if (tool === 'search_documents') return describeStep(step, 'Searching the reports', 'Searched the reports', 'Report search failed');
+  if (tool === 'read_chunks') return describeStep(step, 'Reading passages', 'Read passages', 'Reading passages failed');
+  if (tool === 'get_graph_context' || tool === 'query_neo4j') return describeStep(step, 'Checking the graph', 'Checked the graph', 'Graph check failed');
+  if (tool === 'summarize_evidence') return describeStep(step, 'Summarising the evidence', 'Summarised the evidence');
+  if (phase === 'reflexion') return 'Checked the evidence covers the question';
+  if (phase === 'replan') return 'Searched again for missing evidence';
+  if (phase === 'observation') return 'Noted what was found';
+  if (phase === 'final') return 'Finished the answer';
   return formatAgentStageLabel(step);
 };
 
-const getMiniMaxEventIcon = (step: AgentTraceStep) => {
+const getTraceEventIcon = (step: AgentTraceStep) => {
   const phase = String(step.phase || '').toLowerCase();
   const tool = String(step.tool || '').trim();
   if (tool === 'search_documents') return Search;
@@ -771,110 +809,115 @@ const buildPipelineTraceStep = (
   };
 };
 
-const MiniMaxTraceEvents: React.FC<{
+const TraceEvents: React.FC<{
   steps: AgentTraceStep[];
   compact?: boolean;
 }> = ({ steps, compact = false }) => {
-  const visibleSteps = getVisibleTraceSteps(steps, compact ? 8 : 16);
+  const visibleSteps = getVisibleTraceSteps(steps, compact ? 6 : 16);
   if (visibleSteps.length === 0) return null;
 
   return (
-    <div className={compact ? 'mt-3 space-y-2' : 'space-y-1.5'}>
+    <ol className={compact ? 'space-y-1.5' : ''}>
       {visibleSteps.map((step, traceIndex) => {
         const status = getTraceStatus(step);
-        const Icon = status === 'running' ? Loader2 : status === 'failed' ? AlertCircle : getMiniMaxEventIcon(step);
+        const running = status === 'running';
+        const failed = status === 'failed';
+        const Icon = running ? Loader2 : failed ? AlertCircle : getTraceEventIcon(step);
         const summary = formatAgentTraceSummary(step);
         const duration = formatTraceDuration(step);
-        const isThinking = ['plan', 'thought', 'reflexion'].includes(String(step.phase || '').toLowerCase());
-        const title = formatMiniMaxEventTitle(step);
+        const title = formatTraceEventTitle(step);
+        const key = `${step.step}-${traceIndex}-${title}`;
 
-        if (compact && isThinking) {
+        if (compact) {
           return (
-            <div key={`${step.step}-${traceIndex}-${title}`} className="flex min-w-0 items-center gap-2 text-[12px] text-ink-stone">
-              <span>{title}</span>
-              {duration && <span className="font-mono text-[11px]">{duration}</span>}
-              <span className="text-ink-faint">›</span>
-            </div>
+            <li key={key} className="flex min-w-0 items-center gap-2 text-[13px] text-ink-3">
+              <Icon className={`h-3.5 w-3.5 shrink-0 ${running ? 'animate-spin text-ink' : failed ? 'text-err' : 'text-ink-5'}`} />
+              <span className="truncate">{title}</span>
+              {duration && <span className="shrink-0 font-mono text-[11px] text-ink-5">{duration}</span>}
+            </li>
           );
         }
 
+        const isLast = traceIndex === visibleSteps.length - 1;
         return (
-          <div
-            key={`${step.step}-${traceIndex}-${title}`}
-            className={compact
-              ? 'flex w-fit max-w-full items-center gap-2 rounded-full border border-hairline bg-white px-3 py-1.5 text-[12px] text-ink-steel shadow-[0_1px_1px_rgba(0,0,0,0.02)]'
-              : 'flex min-w-0 items-start gap-3 rounded-lg px-2.5 py-2 transition hover:bg-surface-soft'
-            }
-          >
-            <span className={`inline-flex shrink-0 items-center justify-center rounded-md ${
-              compact ? 'h-4 w-4' : 'mt-0.5 h-7 w-7 border border-hairline bg-white'
-            } ${
-              status === 'running'
-                ? 'text-ink'
-                : status === 'failed'
-                  ? 'text-red-600'
-                  : 'text-ink-stone'
-            }`}>
-              <Icon className={`${compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} ${status === 'running' ? 'animate-spin' : ''}`} />
+          <li key={key} className="relative flex gap-3 pb-5 last:pb-0">
+            {!isLast && <span aria-hidden="true" className="absolute bottom-0 left-[11px] top-7 w-px bg-line" />}
+            <span
+              className={`relative mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-white ${
+                failed ? 'border-err-line text-err' : running ? 'border-ink-4 text-ink' : 'border-line text-ink-4'
+              }`}
+            >
+              <Icon className={`h-3 w-3 ${running ? 'animate-spin' : ''}`} />
             </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <span className={`truncate font-medium ${compact ? 'text-[12px] text-ink-steel' : 'text-[13px] text-ink-charcoal'}`}>
-                  {title}
-                </span>
-                {duration && (
-                  <span className="font-mono text-[11px] text-ink-stone">{duration}</span>
-                )}
+            <div className="min-w-0 flex-1 pt-0.5">
+              <div className="flex min-w-0 items-baseline gap-2">
+                <span className="truncate text-[13px] font-medium text-ink-2">{title}</span>
+                {duration && <span className="shrink-0 font-mono text-[11px] text-ink-4">{duration}</span>}
               </div>
-              {!compact && summary && (
-                <p className="mt-0.5 line-clamp-2 text-[12px] leading-5 text-ink-steel">
-                  {summary}
-                </p>
-              )}
-              {compact && summary && !isThinking && (
-                <span className="min-w-0 truncate font-mono text-[11px] text-ink-stone">
-                  {summary.replace(/^Searching report evidence for\s*/i, '').replace(/\.$/, '')}
-                </span>
-              )}
+              {summary && <p className="mt-0.5 line-clamp-2 text-[13px] leading-5 text-ink-3">{summary}</p>}
             </div>
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 };
 
+type NumberedSource = { source: RagSource; n: number };
+
+// Group cited passages by report while keeping the answer's citation numbers.
 const groupSourcesByDocument = (sources: RagSource[]) => {
-  const groups = new Map<string, { key: string; title: string; sources: RagSource[] }>();
+  const groups = new Map<string, { key: string; title: string; items: NumberedSource[] }>();
   sources.forEach((source, index) => {
     const title = formatSourceDocumentLabel(source);
     const key = String(source.document_id || source.document_title || title || index);
+    const item = { source, n: index + 1 };
     const existing = groups.get(key);
     if (existing) {
-      existing.sources.push(source);
+      existing.items.push(item);
       return;
     }
-    groups.set(key, { key, title, sources: [source] });
+    groups.set(key, { key, title, items: [item] });
   });
   return Array.from(groups.values());
 };
 
-const EvidenceRail: React.FC<{
+const SourceStrip: React.FC<{
   sources: RagSource[];
-  onOpenFiles?: () => void;
-}> = ({ sources, onOpenFiles }) => {
+  onOpen: (sourceNumber?: number) => void;
+}> = ({ sources, onOpen }) => {
   if (!sources.length) return null;
+  const shown = sources.slice(0, 4);
   return (
     <div className="mt-5">
-      <button
-        type="button"
-        onClick={onOpenFiles}
-        className="inline-flex items-center gap-2 rounded-lg border border-hairline bg-white px-4 py-3 text-[13px] font-medium text-ink-charcoal transition hover:border-ink hover:bg-surface-soft"
-      >
-        <FolderOpen className="h-4 w-4 text-ink-stone" />
-        <span>View all evidence</span>
-        <span className="font-mono text-[11px] text-ink-stone">{sources.length}</span>
-      </button>
+      <div className="section-label mb-2">Sources</div>
+      <div className="cg-scroll -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        {shown.map((source, index) => (
+          <button
+            key={`${source.chunk_id || 'source'}-${index}`}
+            type="button"
+            onClick={() => onOpen(index + 1)}
+            className="w-[200px] shrink-0 rounded-lg border border-line bg-white px-3 py-2 text-left transition-colors hover:border-line-strong hover:bg-paper-sunken"
+          >
+            <span className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-ink-4">
+              <span className="text-ink-2">{index + 1}</span>
+              <span className="truncate">{source.chunk_id || 'passage'}</span>
+            </span>
+            <span className="mt-0.5 line-clamp-2 block text-[13px] leading-snug text-ink-2">
+              {formatSourceDocumentLabel(source)}
+            </span>
+          </button>
+        ))}
+        {sources.length > shown.length && (
+          <button
+            type="button"
+            onClick={() => onOpen()}
+            className="shrink-0 rounded-lg border border-dashed border-line-strong px-3 text-[13px] text-ink-3 transition-colors hover:border-ink-5 hover:text-ink"
+          >
+            All {sources.length} sources
+          </button>
+        )}
+      </div>
     </div>
   );
 };
@@ -888,7 +931,15 @@ const AgentWorkspaceDrawer: React.FC<{
   sources: RagSource[];
   isLoading: boolean;
   currentLoadingStep: string;
-}> = ({ open, tab, onTabChange, onClose, steps, sources, isLoading, currentLoadingStep }) => {
+  highlightedSource: number | null;
+}> = ({ open, tab, onTabChange, onClose, steps, sources, isLoading, currentLoadingStep, highlightedSource }) => {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open || tab !== 'files' || !highlightedSource) return;
+    const target = bodyRef.current?.querySelector(`[data-source-number="${highlightedSource}"]`);
+    target?.scrollIntoView({ block: 'nearest' });
+  }, [open, tab, highlightedSource]);
+
   if (!open) return null;
   const currentStep = [...steps].reverse().find(step => getTraceStatus(step) === 'running') || [...steps].reverse()[0];
   const fileGroups = groupSourcesByDocument(sources);
@@ -896,134 +947,153 @@ const AgentWorkspaceDrawer: React.FC<{
 
   return (
     <>
-    <button
-      type="button"
-      aria-label="Close process drawer"
-      className="fixed inset-0 z-30 bg-black/20 xl:hidden"
-      onClick={onClose}
-    />
-    <aside className="fixed bottom-0 right-0 top-[72px] z-40 flex w-[min(92vw,430px)] min-h-0 shrink-0 flex-col border-l border-hairline bg-white shadow-2xl xl:static xl:z-auto xl:w-[44vw] xl:min-w-[420px] xl:max-w-[920px] xl:shadow-none">
-      <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
-        <div className="inline-flex rounded-lg bg-surface-soft p-1">
-          {([
-            ['process', 'Current Process'],
-            ['files', 'Files'],
-          ] as const).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => onTabChange(id)}
-              className={`rounded-md px-3 py-1.5 text-[13px] font-medium transition ${
-                tab === id ? 'bg-white text-ink shadow-sm' : 'text-ink-stone hover:text-ink'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+      <button
+        type="button"
+        aria-label="Close process drawer"
+        className="fixed inset-0 z-30 bg-ink/10 xl:hidden"
+        onClick={onClose}
+      />
+      <aside className="fixed inset-y-0 right-0 z-40 flex w-[min(92vw,400px)] min-h-0 shrink-0 flex-col border-l border-line bg-paper shadow-lg xl:static xl:z-auto xl:w-[400px] xl:shadow-none">
+        <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-line px-3">
+          <div className="segmented" role="tablist" aria-label="Answer details">
+            {([
+              ['process', 'Process'],
+              ['files', sources.length ? `Sources · ${sources.length}` : 'Sources'],
+            ] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                onClick={() => onTabChange(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={onClose} className="icon-btn" aria-label="Close process drawer" title="Close">
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-stone transition hover:bg-surface-soft hover:text-ink"
-          aria-label="Close process drawer"
-          title="Close"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {tab === 'process' ? (
-          <div className="space-y-4">
-            <div className="rounded-xl border border-hairline bg-white p-3">
-              <div className="flex items-center gap-3">
-                <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-hairline ${
-                  isLoading ? 'bg-white text-ink' : 'bg-success-bg text-success'
-                }`}>
-                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+        <div ref={bodyRef} className="cg-scroll min-h-0 flex-1 overflow-y-auto px-4 py-5">
+          {tab === 'process' ? (
+            <>
+              <div className="flex items-center gap-2.5">
+                {isLoading ? (
+                  <span className="cg-working" aria-hidden="true" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-ok" />
+                )}
+                <span className="min-w-0 truncate text-sm font-medium text-ink">
+                  {isLoading ? (currentStep ? formatTraceEventTitle(currentStep) : currentLoadingStep) : 'Finished'}
                 </span>
-                <div className="min-w-0">
-                  <div className="text-[13px] font-semibold text-ink-charcoal">
-                    {isLoading ? (currentStep ? formatMiniMaxEventTitle(currentStep) : currentLoadingStep) : 'Process complete'}
-                  </div>
-                  <div className="mt-0.5 text-[12px] text-ink-stone">
-                    {stepCount > 0 ? `${stepCount} recorded events` : 'Waiting for the first retrieval event'}
-                  </div>
+                {stepCount > 0 && <span className="ml-auto shrink-0 text-xs text-ink-4">{stepCount} steps</span>}
+              </div>
+
+              <div className="mt-5">
+                {steps.length > 0 ? (
+                  <TraceEvents steps={steps} />
+                ) : (
+                  <p className="text-sm text-ink-4">Searching, reading and checking steps will appear here.</p>
+                )}
+              </div>
+
+              {fileGroups.length > 0 && (
+                <div className="mt-6 border-t border-line pt-4">
+                  <div className="section-label mb-2">Reports used</div>
+                  <ul className="space-y-2">
+                    {fileGroups.map(group => (
+                      <li key={group.key}>
+                        <button
+                          type="button"
+                          onClick={() => onTabChange('files')}
+                          className="flex w-full min-w-0 items-baseline justify-between gap-3 text-left text-[13px] hover:text-ink"
+                        >
+                          <span className="truncate text-ink-2">{group.title}</span>
+                          <span className="shrink-0 font-mono text-[11px] text-ink-4">
+                            {group.items.length} {group.items.length === 1 ? 'passage' : 'passages'}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <span className={`ml-auto h-2 w-2 rounded-full ${isLoading ? 'bg-blue-500' : 'bg-success'}`} />
-              </div>
-            </div>
-
-            {steps.length > 0 ? (
-              <MiniMaxTraceEvents steps={steps} />
-            ) : (
-              <div className="rounded-xl border border-dashed border-hairline bg-surface-soft px-4 py-8 text-center text-[13px] text-ink-stone">
-                Search, reading, and verification events will appear here.
-              </div>
-            )}
-
-            {fileGroups.length > 0 && (
-              <div className="space-y-2 border-t border-hairline pt-4">
-                <div className="text-[12px] font-semibold text-ink-charcoal">Evidence used</div>
-                {fileGroups.map(group => (
-                  <div key={group.key} className="flex min-w-0 items-center gap-3 rounded-xl border border-hairline bg-white px-3 py-3">
-                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
-                      <FileText className="h-4 w-4" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-medium text-ink-charcoal">{group.title}</div>
-                      <div className="font-mono text-[11px] text-ink-stone">{group.sources.length} evidence chunks</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {sources.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-hairline bg-surface-soft px-4 py-10 text-center text-[13px] text-ink-stone">
-                No cited evidence yet.
-              </div>
-            ) : (
-              <>
-                {fileGroups.map(group => (
-                  <div key={group.key} className="rounded-xl border border-hairline bg-white">
-                    <div className="flex items-center gap-3 border-b border-hairline px-3 py-3">
-                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
-                        <FileText className="h-4 w-4" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[13px] font-semibold text-ink-charcoal">{group.title}</div>
-                        <div className="font-mono text-[11px] text-ink-stone">{group.sources.length} cited chunks</div>
-                      </div>
-                    </div>
-                    <div className="divide-y divide-hairline-soft">
-                      {group.sources.slice(0, 8).map((source, sourceIdx) => (
-                        <div key={`${group.key}-${source.chunk_id || sourceIdx}`} className="px-3 py-3">
-                          <div className="font-mono text-[11px] text-ink-stone">{formatSourceChipLabel(source)}</div>
-                          {source.text && (
-                            <p className="mt-1 line-clamp-3 text-[12px] leading-5 text-ink-steel">
-                              {source.text}
-                            </p>
-                          )}
+              )}
+            </>
+          ) : sources.length === 0 ? (
+            <p className="text-sm text-ink-4">No sources cited yet.</p>
+          ) : (
+            <div className="space-y-6">
+              {fileGroups.map(group => (
+                <section key={group.key}>
+                  <h3 className="flex items-start gap-2 text-[13px] font-medium leading-5 text-ink">
+                    <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-4" />
+                    <span>{group.title}</span>
+                  </h3>
+                  <ol className="mt-2 space-y-2">
+                    {group.items.map(({ source, n }) => (
+                      <li
+                        key={`${group.key}-${source.chunk_id || n}`}
+                        data-source-number={n}
+                        className={`rounded-lg border bg-white px-3 py-2.5 transition-colors ${
+                          highlightedSource === n ? 'border-ink-4' : 'border-line'
+                        }`}
+                      >
+                        <div className="flex min-w-0 items-center gap-2 font-mono text-[11px] text-ink-4">
+                          <span className="text-ink-2">{n}</span>
+                          <span className="truncate">{source.chunk_id || 'passage'}</span>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </aside>
+                        {source.text && (
+                          <p className="mt-1.5 line-clamp-6 text-[13px] leading-5 text-ink-2">{source.text}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              ))}
+            </div>
+          )}
+        </div>
+      </aside>
     </>
   );
 };
 
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS: NonNullable<React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']> = [
+  [rehypeKatex, { throwOnError: false, strict: 'ignore' }],
+];
+
+// Answer markdown: citation links become buttons, other links open in a new tab.
+const buildAnswerComponents = (onCite: (sourceNumber: number) => void): Components => ({
+  a: ({ href, children, node, ...rest }) => {
+    const citation = /^#cite-(\d+)$/.exec(href || '');
+    if (citation) {
+      const sourceNumber = Number(citation[1]);
+      return (
+        <button type="button" className="cg-cite" onClick={() => onCite(sourceNumber)} aria-label={`Source ${sourceNumber}`}>
+          {children}
+        </button>
+      );
+    }
+    return (
+      <a href={href} target="_blank" rel="noreferrer noopener" {...rest}>
+        {children}
+      </a>
+    );
+  },
+});
+
+// On narrow screens the process drawer covers the conversation, so it only
+// opens on its own where there is room to show it beside the answer.
+const drawerFitsBesideConversation = () =>
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(min-width: 1280px)').matches
+    : true;
+
 const Agent: React.FC = () => {
-  const { isAuthenticated, token, user } = useAuth();
+  const { isAuthenticated, token, user, logout } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
   const accountPlanLabel = formatAccountPlanLabel(user);
@@ -1045,9 +1115,14 @@ const Agent: React.FC = () => {
   const [activeAgentPath, setActiveAgentPath] = useState<'rag' | 'agent' | null>(null);
   const [pipelineTrace, setPipelineTrace] = useState<AgentTraceStep[]>([]);
   const [agentTrace, setAgentTrace] = useState<AgentTraceStep[]>([]);
-  const [agentDrawerOpen, setAgentDrawerOpen] = useState(true);
+  const [agentDrawerOpen, setAgentDrawerOpen] = useState(drawerFitsBesideConversation);
   const [agentDrawerTab, setAgentDrawerTab] = useState<AgentDrawerTab>('process');
   const [agentDrawerSourcesOverride, setAgentDrawerSourcesOverride] = useState<RagSource[] | null>(null);
+  const [highlightedSource, setHighlightedSource] = useState<number | null>(null);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [copiedMessageKey, setCopiedMessageKey] = useState<string | null>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
   // Fast disables thinking; Deep enables reasoning with layered retrieval and
   // graph context on the configured provider. URL accepts ?tier=deep; legacy
   // ?mode=predict is honored as Deep so old bookmarks still work.
@@ -1779,11 +1854,11 @@ const Agent: React.FC = () => {
     const openDocumentsOnComplete = submission?.openDocumentsOnComplete ?? true;
 
     if (!titleToUpload || (!contentToUpload && !fileToUpload)) {
-      addAgentMessage("Please provide a document title and either uploaded file content or manual text.", "error");
+      addAgentMessage("Add a title and a file or some text before indexing.", "error");
       return;
     }
     if (!isAuthenticated) {
-      addAgentMessage("Please log in to upload documents.", "error");
+      addAgentMessage("Sign in to upload reports.", "error");
       return;
     }
     setIsUploading(true);
@@ -1793,7 +1868,7 @@ const Agent: React.FC = () => {
     setUploadProgress(1);
     setUploadStage('queued');
     setUploadMessage('Queued for processing');
-    addAgentMessage(`Analyzing document: "${titleToUpload}" and rebuilding the active RAG index...`, "processing");
+    addAgentMessage(`Indexing “${titleToUpload}”. You can keep working while it is processed.`, "processing");
     try {
       const formData = new FormData();
       formData.append('title', titleToUpload);
@@ -1875,21 +1950,9 @@ const Agent: React.FC = () => {
       setUploadStatusResult(isDuplicate ? 'duplicate' : 'success');
       scheduleUploadStatusDismiss();
       const successMessage = isDuplicate
-        ? `This document is already in your library — opened existing entry "${completedDocument.title}" (matched by ${duplicateMatchedBy || 'content hash'}).`
-        : `Document "${completedDocument.title}" was processed successfully and added to the ESG knowledge corpus.`;
+        ? `“${completedDocument.title}” is already in your library (matched by ${duplicateMatchedBy || 'content hash'}), so the existing copy will be used.`
+        : `“${completedDocument.title}” is indexed and ready to search: ${finalStats?.chunk_count || 0} passages, ${completedDocument.graph?.metadata?.node_count || 0} entities and ${completedDocument.relationships?.length || 0} relationships.`;
       addAgentMessage(successMessage, "success");
-      const summaryHeader = isDuplicate ? 'Existing document reused:' : 'Key findings from the latest ingestion:';
-      const summaryMessage = `${summaryHeader}
-• Chunks: ${finalStats?.chunk_count || 0}
-• Graph nodes: ${completedDocument.graph?.metadata?.node_count || 0}
-• Relationships: ${completedDocument.relationships?.length || 0}
-${isDuplicate
-  ? 'No re-processing was needed — chat retrieval already covers this content.'
-  : `Corpus update:
-• This document is now searchable alongside the existing ESG/library documents
-• Extraction results were saved for later graph exploration
-• Chat retrieval now draws from the broader corpus unless a future filter is applied`}`;
-      addAgentMessage(summaryMessage, "success");
       if (openDocumentsOnComplete) {
         setActiveTab('documents');
       }
@@ -1906,8 +1969,8 @@ ${isDuplicate
         setUploadProgress(current => Math.max(current, 100));
         addAgentMessage(
           rejected
-            ? `Upload request was rejected: ${message}`
-            : `Document upload failed: ${message}. Please try again.`,
+            ? `The upload was rejected: ${message}`
+            : `The upload didn’t finish: ${message}`,
           "error"
         );
       } finally {
@@ -1937,7 +2000,7 @@ ${isDuplicate
     }
     const graphWindow = window.open('about:blank', '_blank');
     if (!graphWindow) {
-      addAgentMessage('The graph window was blocked by the browser. Please allow pop-ups and try again.', 'error');
+      addAgentMessage('Your browser blocked the graph window. Allow pop-ups for this site and try again.', 'error');
       return;
     }
     graphWindow.opener = null;
@@ -1960,7 +2023,7 @@ ${isDuplicate
       } catch (error) {
         console.error('Failed to create graph access ticket:', error);
         graphWindow.close();
-        addAgentMessage('Could not open the authenticated graph view. Please refresh and try again.', 'error');
+        addAgentMessage('The graph view couldn’t be opened. Refresh the page and try again.', 'error');
         return;
       }
     }
@@ -2231,8 +2294,8 @@ ${isDuplicate
     } catch (error) {
       console.error('RAG query error:', error);
       const content = error instanceof Error
-        ? `RAG request failed: ${error.message}`
-        : `I couldn't reach the RAG service at ${esgApiBase}. Make sure the ESG API is running on port 8000.`;
+        ? `Couldn’t finish the answer: ${error.message}`
+        : `Couldn’t reach the research service at ${esgApiBase || 'the configured API'}. Check that the API is running.`;
       if (sessionId) {
         await addAgentMessageToSession(sessionId, content, 'error');
       } else {
@@ -2255,9 +2318,10 @@ ${isDuplicate
     setActiveAgentPath(null);
     setPipelineTrace([]);
     setAgentTrace([]);
-    setAgentDrawerOpen(true);
+    setAgentDrawerOpen(drawerFitsBesideConversation());
     setAgentDrawerTab('process');
     setAgentDrawerSourcesOverride(null);
+    setHighlightedSource(null);
     try {
       let sessionId = currentSessionId;
       let sessionIdToActivateAfterFirstTurn = '';
@@ -2346,9 +2410,10 @@ ${isDuplicate
     setActiveAgentPath(null);
     setPipelineTrace([]);
     setAgentTrace([]);
-    setAgentDrawerOpen(true);
+    setAgentDrawerOpen(drawerFitsBesideConversation());
     setAgentDrawerTab('process');
     setAgentDrawerSourcesOverride(null);
+    setHighlightedSource(null);
     setActiveTab('chat');
   };
   const handleDeleteSession = async (id: string) => {
@@ -2373,7 +2438,7 @@ ${isDuplicate
     } catch (error) {
       console.error('Delete chat session failed:', error);
       addAgentMessage(
-        error instanceof Error ? `Chat delete failed: ${error.message}` : 'Chat delete failed.',
+        error instanceof Error ? `Couldn’t delete the conversation: ${error.message}` : 'Couldn’t delete the conversation.',
         'error'
       );
     }
@@ -2391,7 +2456,7 @@ ${isDuplicate
         setSelectedDocument(null);
         persistSelectedDocumentId('');
       }
-      addAgentMessage("Document deleted successfully. You can upload a new one anytime!");
+      addAgentMessage("Report deleted.");
       return;
     }
 
@@ -2415,11 +2480,11 @@ ${isDuplicate
           void selectDocument(nextSelected);
         }
       }
-      addAgentMessage("Document deleted successfully. You can upload a new one anytime!");
+      addAgentMessage("Report deleted.");
     } catch (error) {
       console.error('Delete document failed:', error);
       addAgentMessage(
-        error instanceof Error ? `Document delete failed: ${error.message}` : 'Document delete failed.',
+        error instanceof Error ? `Couldn’t delete the report: ${error.message}` : 'Couldn’t delete the report.',
         "error"
       );
     }
@@ -2433,7 +2498,7 @@ ${isDuplicate
     link.download = `${document.title}_graph.${format}`;
     link.click();
     URL.revokeObjectURL(url);
-    addAgentMessage(`Graph exported successfully as ${format.toUpperCase()}!`);
+    addAgentMessage(`Graph exported as ${format.toUpperCase()}.`);
   };
   const getFilteredRelationships = (relationships: CausalRelationship[]) => {
     return relationships.filter(rel => {
@@ -2450,7 +2515,7 @@ ${isDuplicate
     console.log('File upload triggered:', file.name, file.type, file.size);
     const maxSize = 50 * 1024 * 1024;
     if (file.size > maxSize) {
-      addAgentMessage(`[ERROR] File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum size is 50MB.`, "error");
+      addAgentMessage(`That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 50 MB.`, "error");
       return;
     }
 
@@ -2499,11 +2564,11 @@ ${isDuplicate
           openDocumentsOnComplete: false,
         });
       } else {
-        addAgentMessage(`[SUCCESS] File "${file.name}" is ready. Click "Index this report" to upload and process it.`, "success");
+        addAgentMessage(`“${file.name}” is ready. Select “Index this report” to process it.`, "success");
       }
     } catch (error) {
       console.error('File processing error:', error);
-      addAgentMessage(`[ERROR] Error processing file: ${error instanceof Error ? error.message : 'Unknown error'}. Please try a different file.`, "error");
+      addAgentMessage(`Couldn’t read that file: ${error instanceof Error ? error.message : 'unknown error'}. Try a different file.`, "error");
       setUploadedFile(null);
     } finally {
       setIsProcessingFile(false);
@@ -2512,7 +2577,7 @@ ${isDuplicate
 
   const handleUploadEntry = () => {
     if (!isAuthenticated) {
-      addAgentMessage("Please log in to upload documents.", "error");
+      addAgentMessage("Sign in to upload reports.", "error");
       return;
     }
     setActiveTab('upload');
@@ -2534,17 +2599,17 @@ ${isDuplicate
   const agentStarterCards: Array<{ title: string; prompt: string; tier: RagReasoningMode }> = [
     {
       title: 'Summarise',
-      prompt: 'Summarise the ESG strategy, targets, risks, and evidence from the most relevant reports.',
+      prompt: 'Summarise the strategy, targets and main risks in the most relevant reports, with citations.',
       tier: 'flash',
     },
     {
       title: 'Compare',
-      prompt: 'Compare the ESG strategy and climate targets across the uploaded reports.',
+      prompt: 'Compare the climate targets across my reports. Where do they differ, and what evidence backs each one?',
       tier: 'flash',
     },
     {
       title: 'Assess risk',
-      prompt: 'Predict how ESG strategy could affect business risk and share-price narrative using report evidence and graph context.',
+      prompt: 'Which ESG issues in these reports are most likely to become business risks, and how strong is the evidence for each?',
       tier: 'deep',
     },
   ];
@@ -2576,8 +2641,8 @@ ${isDuplicate
   const showLongWaitHint = isLoading && loadingElapsedMs >= 8000;
   const loadingHintText =
     loadingElapsedMs >= 15000
-      ? 'Still processing — larger corpora can take longer. The request is active.'
-      : 'Still working… retrieval and grounding can take a few more seconds.';
+      ? 'Still working. Large libraries can take a little longer.'
+      : 'Gathering evidence can take a few more seconds.';
   const filteredSelectedRelationships = getFilteredRelationships(selectedDocument?.relationships || []);
   const sortedTaskSessions = [...chatSessions].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   const normalizedTaskSearch = taskSearchTerm.trim().toLowerCase();
@@ -2594,20 +2659,6 @@ ${isDuplicate
     return [skill.name, skill.owner, skill.summary, skill.trigger]
       .some((value) => value.toLowerCase().includes(normalizedSkillSearch));
   });
-  const navItems: Array<{ id: string; label: string; icon: React.ComponentType<{ className?: string }>; action?: () => void }> = [
-    { id: 'chat', label: 'Chat', icon: MessageSquare },
-    { id: 'search', label: 'Search', icon: Search, action: () => setIsSearchPaletteOpen(true) },
-    { id: 'upload', label: 'Upload', icon: FileUp },
-    { id: 'documents', label: 'Library', icon: FolderOpen },
-    { id: 'skills', label: 'Skills', icon: Zap },
-  ];
-  // MiniMax-style pill tabs for the mobile section switcher.
-  const mobileTabButtonClass = (tab: string) =>
-    `inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
-      activeTab === tab
-        ? 'border-ink bg-ink text-white'
-        : 'border-hairline bg-canvas text-ink-steel hover:border-ink hover:text-ink'
-    }`;
   const uploadDisabled = isUploading || isProcessingFile || !uploadForm.title || (!uploadedFile && !fileContent && !uploadForm.content);
   const displayedConversation = conversation.filter(
     (message, index) => !(index === 0 && message.type === 'agent' && message.content.includes('CausalGraph'))
@@ -2761,7 +2812,6 @@ ${isDuplicate
   const graphTopNodes = getTopConnectedNodes(displayedGraph);
   const selectedGraphNode = displayedGraph?.nodes.find((node: GraphNode) => node.id === selectedGraphNodeId) || null;
   const selectedGraphEdge = displayedGraph?.edges.find((edge: GraphEdge) => getGraphEdgeId(edge) === selectedGraphEdgeId) || null;
-  const graphViewTitle = selectedDocument?.title || 'Focused report graph';
   const latestAgentMessage = [...displayedConversation].reverse().find((message) => (
     message.type === 'agent' &&
     (
@@ -2785,8 +2835,1589 @@ ${isDuplicate
     drawerTrace.length > 0 ||
     drawerSources.length > 0
   );
+  const isEmptyChat = displayedConversation.length === 0 && !showPipelineStatus;
+  const currentSession = chatSessions.find(session => session.id === currentSessionId);
+  const sessionTitle = currentSession?.title?.trim() || deriveSessionTitle(conversation);
+  const accountLabel = user?.username || user?.email || 'Account';
+  const accountInitial = String(accountLabel).trim().charAt(0).toUpperCase() || '?';
+  const mobileTitle =
+    activeTab === 'documents' ? 'Library'
+      : activeTab === 'upload' ? 'Upload'
+        : activeTab === 'skills' ? 'Skills'
+          : isEmptyChat ? 'New research' : sessionTitle;
+  useDocumentTitle(activeTab === 'chat' && isEmptyChat ? 'Research desk' : mobileTitle);
+  const searchShortcut =
+    typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent) ? '⌘K' : 'Ctrl K';
+
+  // Grow the composer with its content, up to a limit.
+  useEffect(() => {
+    const element = composerInputRef.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
+  }, [inputText, isEmptyChat, activeTab]);
+
+  // The composer is disabled while an answer streams; hand focus back afterwards
+  // on devices with a mouse so the next question can be typed straight away.
+  const wasLoadingRef = useRef(false);
+  useEffect(() => {
+    if (wasLoadingRef.current && !isLoading && activeTab === 'chat') {
+      const hasFinePointer = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: fine)').matches;
+      if (hasFinePointer && (!document.activeElement || document.activeElement === document.body)) {
+        composerInputRef.current?.focus({ preventScroll: true });
+      }
+    }
+    wasLoadingRef.current = isLoading;
+  }, [isLoading, activeTab]);
+
+  useEffect(() => {
+    if (!isMobileNavOpen && !isAccountMenuOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setIsMobileNavOpen(false);
+      setIsAccountMenuOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isMobileNavOpen, isAccountMenuOpen]);
+
+  const openSourcesDrawer = (sources: RagSource[], sourceNumber?: number) => {
+    setAgentDrawerSourcesOverride(sources);
+    setAgentDrawerTab('files');
+    setAgentDrawerOpen(true);
+    setHighlightedSource(sourceNumber ?? null);
+  };
+
+  const copyMessage = async (key: string, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageKey(key);
+      window.setTimeout(() => setCopiedMessageKey(current => (current === key ? null : current)), 1600);
+    } catch (error) {
+      console.error('Copy failed:', error);
+    }
+  };
+
+  const toggleDocumentInScope = (documentId: string) => {
+    setQueryScopeMode('selected');
+    setQueryDocumentIds(prev => {
+      if (prev.includes(documentId)) return prev.filter(id => id !== documentId);
+      if (prev.length >= 3) return prev;
+      return [...prev, documentId];
+    });
+  };
+
+  const askAboutDocument = (doc: Document) => {
+    setQueryScopeMode('selected');
+    setQueryDocumentIds(prev => [doc.id, ...prev.filter(id => id !== doc.id)].slice(0, 3));
+    setActiveTab('chat');
+    window.requestAnimationFrame(() => composerInputRef.current?.focus());
+  };
+
+  const closeMobileNav = () => setIsMobileNavOpen(false);
+  const showTab = (tab: string) => {
+    setActiveTab(tab);
+    closeMobileNav();
+  };
+
+  const renderSidebar = () => (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-14 shrink-0 items-center justify-between pl-4 pr-2">
+        <Link to="/" className="rounded-md" aria-label="CausalGraph home">
+          <BrandLogo size="sm" />
+        </Link>
+        <button type="button" onClick={closeMobileNav} className="icon-btn lg:hidden" aria-label="Close sidebar">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <nav className="space-y-0.5 px-2" aria-label="Workspace">
+        <button
+          type="button"
+          onClick={() => {
+            handleNewSession();
+            closeMobileNav();
+          }}
+          className="nav-item font-medium text-ink"
+        >
+          <PenSquare className="h-4 w-4" />
+          New research
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setIsSearchPaletteOpen(true);
+            closeMobileNav();
+          }}
+          className="nav-item"
+        >
+          <Search className="h-4 w-4" />
+          Search
+          <span className="kbd ml-auto hidden lg:inline-flex">{searchShortcut}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => showTab('documents')}
+          aria-current={activeTab === 'documents' ? 'page' : undefined}
+          className="nav-item"
+        >
+          <Library className="h-4 w-4" />
+          Library
+          <span className="ml-auto text-xs tabular-nums text-ink-4">{totalDocuments}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            handleUploadEntry();
+            closeMobileNav();
+          }}
+          aria-current={activeTab === 'upload' ? 'page' : undefined}
+          className="nav-item"
+        >
+          <FileUp className="h-4 w-4" />
+          Upload
+          {isUploading && <span className="ml-auto font-mono text-[11px] text-ink-4">{uploadProgress}%</span>}
+        </button>
+        <button
+          type="button"
+          onClick={() => showTab('skills')}
+          aria-current={activeTab === 'skills' ? 'page' : undefined}
+          className="nav-item"
+        >
+          <Zap className="h-4 w-4" />
+          Skills
+        </button>
+        <Link to="/causal-inference" className="nav-item">
+          <Network className="h-4 w-4" />
+          Graph
+        </Link>
+      </nav>
+
+      <div className="cg-scroll mt-6 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+        <div className="section-label px-2.5 pb-1.5">Recents</div>
+        {isChatSessionsLoading && chatSessions.length === 0 && (
+          <p className="px-2.5 py-1 text-[13px] text-ink-4">Loading…</p>
+        )}
+        {chatSessionsError && <p className="px-2.5 py-1 text-[13px] text-err">{chatSessionsError}</p>}
+        {!isChatSessionsLoading && !chatSessionsError && chatSessions.length === 0 && (
+          <p className="px-2.5 py-1 text-[13px] leading-5 text-ink-4">Your research sessions will appear here.</p>
+        )}
+        <ul className="space-y-px">
+          {sortedTaskSessions.map((session) => {
+            const isActive = session.id === currentSessionId && activeTab === 'chat';
+            const title = session.title || 'Untitled research';
+            return (
+              <li key={session.id} className="group/session relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSelectSession(session.id);
+                    closeMobileNav();
+                  }}
+                  aria-current={isActive ? 'page' : undefined}
+                  className="nav-item h-8 pr-8 text-[13px]"
+                  title={title}
+                >
+                  <span className="truncate">{title}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (window.confirm('Delete this conversation?')) {
+                      handleDeleteSession(session.id);
+                    }
+                  }}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-ink-4 opacity-0 transition hover:bg-paper-pressed hover:text-err focus:opacity-100 group-hover/session:opacity-100"
+                  title="Delete"
+                  aria-label={`Delete ${title}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      <div className="relative shrink-0 border-t border-line p-2">
+        {isAccountMenuOpen && (
+          <>
+            <button
+              type="button"
+              aria-label="Close account menu"
+              className="fixed inset-0 z-40 cursor-default"
+              onClick={() => setIsAccountMenuOpen(false)}
+            />
+            <div className="menu absolute bottom-full left-2 right-2 z-50 mb-2" role="menu">
+              <div className="px-2.5 pb-2 pt-1.5">
+                <div className="truncate text-sm font-medium text-ink">{accountLabel}</div>
+                {user?.email && <div className="truncate text-xs text-ink-4">{user.email}</div>}
+              </div>
+              <div className="menu-sep" />
+              <Link to="/" className="menu-item" role="menuitem">
+                <Home className="h-4 w-4 text-ink-4" />
+                Home
+              </Link>
+              <Link to="/desktop" className="menu-item" role="menuitem">
+                <Download className="h-4 w-4 text-ink-4" />
+                Desktop app
+              </Link>
+              {isAdmin && (
+                <Link to="/admin" className="menu-item" role="menuitem">
+                  <ShieldCheck className="h-4 w-4 text-ink-4" />
+                  Admin console
+                </Link>
+              )}
+              <div className="menu-sep" />
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAccountMenuOpen(false);
+                  logout();
+                }}
+                className="menu-item"
+                role="menuitem"
+              >
+                <LogOut className="h-4 w-4 text-ink-4" />
+                Sign out
+              </button>
+            </div>
+          </>
+        )}
+        <button
+          type="button"
+          onClick={() => setIsAccountMenuOpen(prev => !prev)}
+          aria-haspopup="menu"
+          aria-expanded={isAccountMenuOpen}
+          className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-paper-hover"
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-xs font-medium text-white">
+            {accountInitial}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13px] font-medium text-ink">{accountLabel}</span>
+            <span className="block text-xs text-ink-4">{accountPlanLabel} plan</span>
+          </span>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-ink-4" />
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderSearchPalette = () => (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-ink/10 px-4 pt-[12vh]"
+      onMouseDown={() => setIsSearchPaletteOpen(false)}
+      role="presentation"
+    >
+      <div
+        className="w-full max-w-[560px] overflow-hidden rounded-xl border border-line bg-white shadow-lg"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search research"
+      >
+        <div className="flex items-center gap-3 border-b border-line px-4">
+          <Search className="h-4 w-4 shrink-0 text-ink-4" />
+          <input
+            ref={taskSearchInputRef}
+            value={taskSearchTerm}
+            onChange={(event) => setTaskSearchTerm(event.target.value)}
+            placeholder="Search your research"
+            aria-label="Search your research"
+            className="h-12 min-w-0 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-ink-5"
+          />
+          <span className="kbd">Esc</span>
+        </div>
+        <div className="cg-scroll max-h-[400px] overflow-y-auto p-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              setIsSearchPaletteOpen(false);
+              setTaskSearchTerm('');
+              handleNewSession();
+            }}
+            className="menu-item font-medium text-ink"
+          >
+            <PenSquare className="h-4 w-4 text-ink-4" />
+            New research
+          </button>
+          {isChatSessionsLoading && chatSessions.length === 0 ? (
+            <p className="px-3 py-6 text-center text-sm text-ink-4">Loading…</p>
+          ) : filteredTaskSessions.length === 0 ? (
+            <p className="px-3 py-6 text-center text-sm text-ink-4">
+              {normalizedTaskSearch ? 'Nothing matches that search.' : 'No research sessions yet.'}
+            </p>
+          ) : (
+            <>
+              <div className="section-label px-2.5 pb-1 pt-3">{normalizedTaskSearch ? 'Results' : 'Recent'}</div>
+              {filteredTaskSessions.map((session) => (
+                <button
+                  key={session.id}
+                  type="button"
+                  onClick={() => {
+                    setIsSearchPaletteOpen(false);
+                    setTaskSearchTerm('');
+                    handleSelectSession(session.id);
+                  }}
+                  className="menu-item"
+                >
+                  <MessageSquare className="h-4 w-4 shrink-0 text-ink-4" />
+                  <span className="min-w-0 flex-1 truncate">{session.title || 'Untitled research'}</span>
+                  <span className="shrink-0 text-xs text-ink-4">{formatRelativeTime(session.updatedAt)}</span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderComposer = () => (
+    <div className="w-full">
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-2xl border border-line-strong bg-white shadow-sm transition-[border-color,box-shadow] focus-within:border-ink-4 focus-within:shadow-md"
+      >
+        {queryScopeMode !== 'all' && (
+          <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3">
+            {effectiveQueryDocumentIds.slice(0, 3).map((docId) => {
+              const doc = documents.find(item => item.id === docId);
+              if (!doc) return null;
+              const removable = queryDocumentIds.includes(docId);
+              return (
+                <span key={docId} className="tag max-w-[240px]">
+                  <FileText className="h-3 w-3 shrink-0 text-ink-4" />
+                  <span className="truncate">{doc.title}</span>
+                  {removable && (
+                    <button
+                      type="button"
+                      onClick={() => setQueryDocumentIds((prev) => prev.filter((id) => id !== docId))}
+                      className="-mr-1 rounded p-0.5 text-ink-4 transition-colors hover:text-ink"
+                      title="Remove from scope"
+                      aria-label={`Remove ${doc.title} from scope`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => setActiveTab('documents')}
+              className="px-1 text-xs font-medium text-ink-3 underline decoration-line-strong underline-offset-2 transition-colors hover:text-ink"
+            >
+              {effectiveQueryDocumentIds.length ? 'Change' : 'Choose reports'}
+            </button>
+          </div>
+        )}
+        <textarea
+          ref={composerInputRef}
+          id="research-question"
+          aria-label="Research question"
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          onKeyDown={(e) => {
+            // Skip Enter-to-send while an IME composition session is
+            // active — Chinese/Japanese/Korean users press Enter to
+            // confirm candidates or commit Pinyin, not to submit.
+            // `nativeEvent.isComposing` and the legacy keyCode 229
+            // both flag this state.
+            if (
+              e.key === 'Enter' &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing &&
+              e.keyCode !== 229
+            ) {
+              e.preventDefault();
+              handleSubmit(e as unknown as React.FormEvent);
+            }
+          }}
+          placeholder={
+            tier === 'deep'
+              ? 'Ask something that needs several reports, a comparison or a chain of reasoning…'
+              : 'Ask about emissions, targets, suppliers, governance…'
+          }
+          rows={1}
+          className="block max-h-[200px] min-h-[52px] w-full resize-none bg-transparent px-4 pb-2 pt-3.5 text-[15.5px] leading-6 text-ink outline-none placeholder:text-ink-5 disabled:cursor-not-allowed"
+          disabled={isLoading}
+        />
+        <div className="flex items-center gap-1 px-2 pb-2">
+          <button
+            type="button"
+            onClick={handleUploadEntry}
+            disabled={isUploading || isProcessingFile}
+            className="icon-btn"
+            title="Upload report"
+            aria-label="Upload report"
+          >
+            <Paperclip className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setQueryScopeMode(queryScopeMode === 'all' ? 'selected' : 'all')}
+            className="inline-flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[13px] text-ink-3 transition-colors hover:bg-paper-hover hover:text-ink"
+            title={`Scope: ${queryScopeDetail}. Click to switch between all reports and selected reports.`}
+          >
+            <FolderOpen className="h-4 w-4 shrink-0" />
+            <span className="truncate">{queryScopeLabel}</span>
+          </button>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className="segmented" role="group" aria-label="Reasoning tier">
+              <button
+                type="button"
+                onClick={() => setTier('flash')}
+                aria-pressed={tier === 'flash'}
+                title="Fast: answers directly from the most relevant passages"
+              >
+                Fast
+              </button>
+              <button
+                type="button"
+                onClick={() => setTier('deep')}
+                aria-pressed={tier === 'deep'}
+                title="Deep: plans a search, reads more evidence and checks coverage before answering"
+              >
+                Deep
+              </button>
+            </div>
+            <button
+              type="submit"
+              disabled={!inputText.trim() || isLoading}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-ink text-white transition-colors hover:bg-ink-2 disabled:cursor-not-allowed disabled:bg-paper-hover disabled:text-ink-5"
+              title="Send (Enter)"
+              aria-label="Send"
+            >
+              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+      </form>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-1">
+        <ModelStatus apiBase={esgApiBase} tier={tier} />
+        <span className="hidden text-xs text-ink-4 md:inline">Check the cited passages before relying on an answer.</span>
+      </div>
+    </div>
+  );
+
+  const renderMessages = () => (
+    <div className="mx-auto w-full max-w-[760px] px-4 pb-8 pt-6 sm:px-6 lg:pt-2">
+      <div className="space-y-8">
+        {displayedConversation.map((message, index) => {
+          const time = message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          if (message.type === 'user') {
+            return (
+              <div key={index} className="group flex flex-col items-end">
+                <div className="max-w-[85%] rounded-2xl bg-paper-hover px-4 py-2.5">
+                  <div className="cg-prose cg-prose-compact">
+                    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                      {normalizeMathForMarkdown(message.content)}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+                <time className="mt-1 px-1 text-[11px] text-ink-5 opacity-0 transition-opacity group-hover:opacity-100">
+                  {time}
+                </time>
+              </div>
+            );
+          }
+
+          const feedbackMessageId = getFeedbackMessageId(message, index);
+          const feedbackRating = submittedFeedback[feedbackMessageId] || message.data?.feedback?.rating;
+          const feedbackDraft = feedbackDrafts[feedbackMessageId];
+          const canSubmitFeedback = Boolean(message.content.trim() && message.data?.backend);
+          const messageAgentTrace = [
+            ...(message.data?.flowTrace || []),
+            ...(message.data?.agentTrace || []),
+          ];
+          const isAgentAnswer = message.data?.agentPath === 'agent' || messageAgentTrace.length > 0;
+          const hasAssistantContent = message.content.trim().length > 0;
+          const messageSources = message.data?.sources || [];
+
+          return (
+            <article key={index} className="group">
+              {!hasAssistantContent && (
+                <>
+                  <div className="flex items-center gap-2.5 text-[15px] text-ink-3">
+                    <span className="cg-working" aria-hidden="true" />
+                    <span>{currentLoadingStep}</span>
+                  </div>
+                  {isAgentAnswer && messageAgentTrace.length > 0 && (
+                    <div className="mt-3 pl-[18px]">
+                      <TraceEvents steps={messageAgentTrace} compact />
+                    </div>
+                  )}
+                  {showLongWaitHint && <p className="mt-3 pl-[18px] text-xs text-ink-4">{loadingHintText}</p>}
+                </>
+              )}
+
+              {isAgentAnswer && hasAssistantContent && message.data?.partial && (
+                <div className="mb-3">
+                  <AnswerWarningBadge partial={message.data?.partial} partialReason={message.data?.partialReason} />
+                </div>
+              )}
+
+              {hasAssistantContent && (
+                <div className="cg-prose">
+                  <ReactMarkdown
+                    remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
+                    components={buildAnswerComponents((sourceNumber) => openSourcesDrawer(messageSources, sourceNumber))}
+                  >
+                    {linkCitations(normalizeStreamingMarkdown(message.content), messageSources)}
+                  </ReactMarkdown>
+                </div>
+              )}
+
+              {hasAssistantContent && (
+                <SourceStrip sources={messageSources} onOpen={(sourceNumber) => openSourcesDrawer(messageSources, sourceNumber)} />
+              )}
+
+              {hasAssistantContent && (
+                <div className="mt-3 flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => void copyMessage(feedbackMessageId, message.content)}
+                    className="icon-btn h-7 w-7"
+                    aria-label="Copy answer"
+                    title="Copy"
+                  >
+                    {copiedMessageKey === feedbackMessageId ? <Check className="h-3.5 w-3.5 text-ok" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                  {canSubmitFeedback && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void submitFeedback(message, index, 'up')}
+                        disabled={Boolean(feedbackRating || feedbackDraft?.submitting)}
+                        aria-pressed={feedbackRating === 'up'}
+                        aria-label="Mark answer helpful"
+                        title="Helpful"
+                        className={`icon-btn h-7 w-7 ${feedbackRating === 'up' ? 'text-ink disabled:opacity-100' : ''}`}
+                      >
+                        <ThumbsUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openDownvoteFeedback(message, index)}
+                        disabled={Boolean(feedbackRating || feedbackDraft?.submitting)}
+                        aria-pressed={feedbackRating === 'down'}
+                        aria-label="Mark answer unhelpful"
+                        title="Not helpful"
+                        className={`icon-btn h-7 w-7 ${feedbackRating === 'down' ? 'text-ink disabled:opacity-100' : ''}`}
+                      >
+                        <ThumbsDown className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
+                  {feedbackRating && <span className="ml-1.5 text-xs text-ink-4">Thanks for the feedback</span>}
+                  {feedbackDraft?.error && feedbackDraft.rating !== 'down' && (
+                    <span className="ml-1.5 inline-flex items-center gap-1 text-xs text-err">
+                      <AlertCircle className="h-3 w-3" />
+                      {feedbackDraft.error}
+                    </span>
+                  )}
+                  <time className="ml-auto text-[11px] text-ink-5 opacity-0 transition-opacity group-hover:opacity-100">{time}</time>
+                </div>
+              )}
+
+              {feedbackDraft && feedbackDraft.rating === 'down' && !feedbackRating && (
+                <div className="mt-2 max-w-lg rounded-xl border border-line bg-white p-3">
+                  <p className="text-[13px] font-medium text-ink">What was wrong with this answer?</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {FEEDBACK_REASON_OPTIONS.map(option => {
+                      const selected = feedbackDraft.tags.includes(option.tag);
+                      return (
+                        <label
+                          key={option.tag}
+                          className={`inline-flex h-7 cursor-pointer items-center rounded-md border px-2.5 text-xs transition-colors ${
+                            selected
+                              ? 'border-ink bg-ink text-white'
+                              : 'border-line bg-white text-ink-3 hover:border-line-strong hover:text-ink'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => toggleFeedbackTag(feedbackMessageId, option.tag)}
+                            className="sr-only"
+                          />
+                          {option.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {feedbackDraft.tags.includes('other') && (
+                    <textarea
+                      value={feedbackDraft.reasonText}
+                      onChange={(event) => setFeedbackReasonText(feedbackMessageId, event.target.value)}
+                      rows={2}
+                      placeholder="Add a note"
+                      aria-label="Feedback note"
+                      className="input mt-2 min-h-[64px] resize-none text-[13px]"
+                    />
+                  )}
+                  {feedbackDraft.error && (
+                    <p className="mt-2 flex items-center gap-1.5 text-xs text-err">
+                      <AlertCircle className="h-3 w-3" />
+                      {feedbackDraft.error}
+                    </p>
+                  )}
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFeedbackDrafts(prev => {
+                          const next = { ...prev };
+                          delete next[feedbackMessageId];
+                          return next;
+                        });
+                      }}
+                      className="btn btn-ghost btn-sm"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void submitFeedback(message, index, 'down')}
+                      disabled={feedbackDraft.submitting}
+                      className="btn btn-primary btn-sm"
+                    >
+                      {feedbackDraft.submitting ? 'Sending…' : 'Send feedback'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </article>
+          );
+        })}
+
+        {showPipelineStatus && !hasPendingAssistantMessage && (
+          <div>
+            <div className="flex items-center gap-2.5 text-[15px] text-ink-3">
+              <span className="cg-working" aria-hidden="true" />
+              <span>{currentLoadingStep}</span>
+            </div>
+            {liveTrace.length > 0 && (
+              <div className="mt-3 pl-[18px]">
+                <TraceEvents steps={liveTrace} compact />
+              </div>
+            )}
+            {showLongWaitHint && <p className="mt-3 pl-[18px] text-xs text-ink-4">{loadingHintText}</p>}
+          </div>
+        )}
+        <div ref={conversationEndRef} />
+      </div>
+    </div>
+  );
+
+  const renderChatView = () => (
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {!isEmptyChat && (
+          <header className="hidden h-14 shrink-0 items-center gap-3 px-6 lg:flex">
+            <h1 className="min-w-0 truncate text-sm font-medium text-ink-2" title={sessionTitle}>
+              {sessionTitle}
+            </h1>
+            {queryScopeMode !== 'all' && (
+              <span className="tag shrink-0" title={queryScopeDetail}>
+                <FolderOpen className="h-3 w-3 text-ink-4" />
+                {queryScopeLabel}
+              </span>
+            )}
+            {hasAgentWorkspace && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAgentDrawerOpen(prev => !prev);
+                  setAgentDrawerTab('process');
+                }}
+                aria-pressed={agentDrawerOpen}
+                className={`btn btn-sm ml-auto gap-1.5 ${agentDrawerOpen ? 'bg-paper-hover text-ink' : 'btn-ghost'}`}
+                title="Show how the answer was researched"
+              >
+                <Network className="h-3.5 w-3.5" />
+                Process
+              </button>
+            )}
+          </header>
+        )}
+
+        <div
+          ref={conversationScrollRef}
+          onScroll={updateAutoFollowConversation}
+          className="cg-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        >
+          {isEmptyChat ? (
+            <WorkbenchWelcome
+              reportCount={totalDocuments}
+              starters={agentStarterCards}
+              composer={renderComposer()}
+              onUpload={handleUploadEntry}
+              onLibrary={() => setActiveTab('documents')}
+              onPrompt={(starter) => {
+                setTier(starter.tier);
+                setInputText(starter.prompt);
+                composerInputRef.current?.focus();
+              }}
+            />
+          ) : (
+            renderMessages()
+          )}
+        </div>
+
+        {!isEmptyChat && (
+          <div className="shrink-0 px-4 pb-4 pt-2 sm:px-6">
+            <div className="mx-auto w-full max-w-[760px]">{renderComposer()}</div>
+          </div>
+        )}
+      </section>
+
+      {hasAgentWorkspace && (
+        <AgentWorkspaceDrawer
+          open={agentDrawerOpen}
+          tab={agentDrawerTab}
+          onTabChange={setAgentDrawerTab}
+          onClose={() => setAgentDrawerOpen(false)}
+          steps={drawerTrace}
+          sources={drawerSources}
+          isLoading={isLoading}
+          currentLoadingStep={currentLoadingStep}
+          highlightedSource={highlightedSource}
+        />
+      )}
+    </div>
+  );
+
+  const renderSyncStatus = (doc: Document) => {
+    const loadingDetail = loadingDocumentId === doc.id;
+    const synced = Boolean(doc.neo4j_sync?.synced);
+    const syncEnabled = doc.neo4j_sync?.enabled !== false;
+    const failed = syncEnabled && !synced && !loadingDetail && Boolean(doc.neo4j_sync?.reason);
+    const label = loadingDetail
+      ? 'Loading details'
+      : synced
+        ? 'Synced to Neo4j'
+        : failed
+          ? `Neo4j sync failed: ${doc.neo4j_sync?.reason}`
+          : 'Not synced to Neo4j';
+    return (
+      <span className="inline-flex h-7 w-7 items-center justify-center" title={label} aria-label={label} role="img">
+        {loadingDetail ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-ink-4" />
+        ) : (
+          <span className={`status-dot ${synced ? 'bg-ok' : failed ? 'bg-warn' : 'bg-line-strong'}`} />
+        )}
+      </span>
+    );
+  };
+
+  const nodeLabelFor = (nodeId: string) =>
+    displayedGraph?.nodes.find((node: GraphNode) => node.id === nodeId)?.label || nodeId;
+
+  const renderGraphInspector = () => {
+    const connectedEdges = selectedGraphNode
+      ? (displayedGraph?.edges || []).filter(
+          (edge: GraphEdge) => edge.source === selectedGraphNode.id || edge.target === selectedGraphNode.id,
+        )
+      : [];
+    const canReset = Boolean(selectedGraphEdge) || selectedGraphNodeId !== graphFocusNodeId;
+    return (
+      <div className="rounded-xl border border-line bg-white">
+        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
+          <span className="text-sm font-medium text-ink">
+            {selectedGraphEdge ? 'Relationship' : selectedGraphNode ? 'Entity' : 'Overview'}
+          </span>
+          {canReset && (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedGraphEdgeId(null);
+                setSelectedGraphNodeId(graphFocusNodeId);
+              }}
+              className="btn btn-ghost btn-sm h-7"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+        <div className="grid gap-6 p-4 md:grid-cols-2">
+          <div className="min-w-0">
+            {selectedGraphEdge ? (
+              <div className="space-y-2 text-sm">
+                <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <span className="font-medium text-ink">{nodeLabelFor(selectedGraphEdge.source)}</span>
+                  <span className="font-mono text-xs text-ink-4">{formatGraphLabel(selectedGraphEdge.relationship_type)}</span>
+                  <span className="font-medium text-ink">{nodeLabelFor(selectedGraphEdge.target)}</span>
+                </p>
+                <p className="text-xs text-ink-4">Confidence {(selectedGraphEdge.confidence * 100).toFixed(0)}%</p>
+                <p className="leading-6 text-ink-2">
+                  {selectedGraphEdge.evidence || 'No evidence passage is attached to this relationship.'}
+                </p>
+              </div>
+            ) : selectedGraphNode ? (
+              <div>
+                <p className="text-base font-medium text-ink">{selectedGraphNode.label}</p>
+                <p className="mt-0.5 text-xs text-ink-4">
+                  {[
+                    formatGraphLabel(selectedGraphNode.type),
+                    GRAPH_DOMAIN_LABELS[normalizeGraphDomain(selectedGraphNode.domain)] || selectedGraphNode.domain,
+                    `${graphDegreeMap.get(selectedGraphNode.id) || 0} connections`,
+                    `${(selectedGraphNode.confidence * 100).toFixed(0)}% confidence`,
+                    selectedGraphNode.company,
+                    selectedGraphNode.year,
+                  ].filter(Boolean).join(' · ')}
+                </p>
+                {selectedGraphNode.description && (
+                  <p className="mt-2 text-sm leading-6 text-ink-2">{selectedGraphNode.description}</p>
+                )}
+                <div className="section-label mb-1 mt-4">Relationships</div>
+                {connectedEdges.length === 0 ? (
+                  <p className="text-sm text-ink-4">No relationships recorded for this entity.</p>
+                ) : (
+                  <ul className="divide-y divide-line">
+                    {connectedEdges.slice(0, 5).map((edge: GraphEdge) => {
+                      const otherId = edge.source === selectedGraphNode.id ? edge.target : edge.source;
+                      return (
+                        <li key={getGraphEdgeId(edge)}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedGraphEdgeId(getGraphEdgeId(edge));
+                              setSelectedGraphNodeId(null);
+                            }}
+                            className="flex w-full items-baseline justify-between gap-3 py-2 text-left text-sm transition-colors hover:text-ink"
+                          >
+                            <span className="min-w-0 truncate text-ink-2">
+                              <span className="font-mono text-xs text-ink-4">{formatGraphLabel(edge.relationship_type)}</span>{' '}
+                              {nodeLabelFor(otherId)}
+                            </span>
+                            <span className="shrink-0 font-mono text-xs text-ink-4">{(edge.confidence * 100).toFixed(0)}%</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm leading-6 text-ink-3">Select an entity or a relationship in the graph to read its details here.</p>
+            )}
+          </div>
+
+          <div className="min-w-0">
+            <div className="section-label mb-1.5">Domains</div>
+            <div className="flex flex-wrap gap-1.5">
+              {graphDomainBreakdown.length > 0 ? graphDomainBreakdown.map(([domain, count]) => (
+                <span key={domain} className="tag">
+                  <span className={`status-dot ${DOMAIN_DOT_CLASS[domain] || 'bg-domain-general'}`} />
+                  {GRAPH_DOMAIN_LABELS[domain] || domain}
+                  <span className="tabular-nums text-ink-4">{count}</span>
+                </span>
+              )) : (
+                <span className="text-sm text-ink-4">No domain information.</span>
+              )}
+            </div>
+            <div className="section-label mb-1 mt-4">Most connected</div>
+            <ul className="divide-y divide-line">
+              {graphTopNodes.slice(0, 4).map(node => (
+                <li key={node.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedGraphNodeId(node.id);
+                      setSelectedGraphEdgeId(null);
+                    }}
+                    className="flex w-full items-baseline justify-between gap-3 py-2 text-left text-sm transition-colors hover:text-ink"
+                  >
+                    <span className={`truncate ${node.id === selectedGraphNodeId ? 'font-medium text-ink' : 'text-ink-2'}`}>{node.label}</span>
+                    <span className="shrink-0 font-mono text-xs text-ink-4">{node.degree} links</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderDocumentDetail = (doc: Document) => {
+    const totalRelationships = doc.relationships?.length || 0;
+    return (
+      <section className="min-w-0" aria-label="Report details">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <h2 className="break-words text-xl font-semibold leading-snug text-ink">{doc.title}</h2>
+            {doc.source && <p className="mt-1 truncate font-mono text-xs text-ink-4">{doc.source}</p>}
+            {loadingDocumentId === doc.id && <p className="mt-2 text-sm text-ink-3">Loading details…</p>}
+          </div>
+          <button type="button" onClick={() => askAboutDocument(doc)} className="btn btn-primary btn-sm">
+            Ask about this report
+          </button>
+        </div>
+
+        <dl className="mt-6 grid grid-cols-3 divide-x divide-line rounded-xl border border-line bg-white">
+          {[
+            ['Concepts', String(doc.graph?.metadata?.node_count || 0)],
+            ['Connections', String(doc.graph?.metadata?.edge_count || 0)],
+            ['Structure', doc.graph?.metadata?.is_acyclic ? 'Acyclic' : 'Cyclic'],
+          ].map(([label, value]) => (
+            <div key={label} className="min-w-0 px-4 py-3">
+              <dt className="text-xs text-ink-4">{label}</dt>
+              <dd className="mt-1 truncate text-lg font-semibold tabular-nums text-ink">{value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        {isAdmin && (
+          <div className="mt-6 overflow-hidden rounded-xl border border-line bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2 text-sm">
+                <Database className="h-4 w-4 shrink-0 text-ink-4" />
+                <span className="font-medium text-ink">Neo4j</span>
+                <span className={`status-dot ${neo4jConnected ? 'bg-ok' : neo4jStatus ? 'bg-warn' : 'bg-line-strong'}`} />
+                <span className="text-ink-3">{neo4jStatus ? (neo4jConnected ? 'Connected' : 'Unavailable') : 'Checking…'}</span>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={handleOpenFullGraph} className="btn btn-secondary btn-sm">
+                  <Network className="h-3.5 w-3.5" />
+                  Open full graph
+                </button>
+                <button type="button" onClick={() => setActiveTab('upload')} className="btn btn-ghost btn-sm">
+                  Add report
+                </button>
+              </div>
+            </div>
+            {neo4jStatus && !neo4jConnected && (
+              <p className="border-b border-line px-4 py-2.5 text-sm text-ink-3">
+                {neo4jStatus.message || neo4jStatus.reason || 'Neo4j status check failed.'}
+              </p>
+            )}
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 px-4 py-3 sm:grid-cols-5">
+              {([
+                ['Documents', neo4jCounts.document_count],
+                ['Chunks', neo4jCounts.chunk_count],
+                ['Entities', neo4jCounts.entity_count],
+                ['Relations', neo4jCounts.relation_count],
+                ['Mentions', neo4jCounts.mention_count],
+              ] as Array<[string, number | undefined]>).map(([label, value]) => (
+                <div key={label}>
+                  <dt className="text-xs text-ink-4">{label}</dt>
+                  <dd className="mt-0.5 text-sm font-medium tabular-nums text-ink">
+                    {typeof value === 'number' ? value.toLocaleString() : '—'}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            {selectedNeo4jSync && (
+              <p className="border-t border-line px-4 py-2.5 text-xs text-ink-3">
+                This report:{' '}
+                {selectedNeo4jSync.synced
+                  ? `synced · ${selectedNeo4jSync.chunks_synced || 0} chunks · ${selectedNeo4jSync.entities_synced || 0} entities · ${selectedNeo4jSync.relations_synced || 0} relations`
+                  : selectedNeo4jSync.reason || 'not synced'}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="mt-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-base font-semibold text-ink">Graph</h3>
+              <p className="mt-0.5 text-sm text-ink-3">
+                {neo4jGraphState === 'ready'
+                  ? 'The Neo4j subgraph around this report.'
+                  : 'Entities and relationships extracted from this report.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsDocumentGraphOpen(prev => !prev)}
+              aria-expanded={isDocumentGraphOpen}
+              className="btn btn-secondary btn-sm"
+            >
+              {isDocumentGraphOpen ? 'Hide graph' : 'Show graph'}
+            </button>
+          </div>
+          {isDocumentGraphOpen && (
+            <div className="mt-4 space-y-4">
+              {neo4jGraphState === 'loading' ? (
+                <div className="flex h-[360px] items-center justify-center gap-2 rounded-xl border border-line bg-white text-sm text-ink-3">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading the graph…
+                </div>
+              ) : displayedGraph && displayedGraph.nodes.length > 0 ? (
+                <>
+                  <GraphVisualizer
+                    graph={displayedGraph}
+                    height={520}
+                    focusNodeId={selectedGraphNodeId || graphFocusNodeId}
+                    selectedNodeId={selectedGraphNodeId}
+                    selectedEdgeId={selectedGraphEdgeId}
+                    highlightPath={highlightPath}
+                    onNodeSelect={(node: GraphNode) => {
+                      setSelectedGraphNodeId(node.id);
+                      setSelectedGraphEdgeId(null);
+                      setHighlightPath(null);
+                    }}
+                    onEdgeSelect={(edge: GraphEdge) => {
+                      setSelectedGraphEdgeId(getGraphEdgeId(edge));
+                      setSelectedGraphNodeId(null);
+                      setHighlightPath(null);
+                    }}
+                  />
+                  {renderGraphInspector()}
+                </>
+              ) : (
+                <div className="rounded-xl border border-dashed border-line-strong px-6 py-12 text-center">
+                  <p className="font-medium text-ink">No graph for this report</p>
+                  <p className="mt-1 text-sm text-ink-3">
+                    {displayedGraph
+                      ? 'Not enough connected entities were extracted to draw one.'
+                      : 'This report has not been extracted into a graph yet.'}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-10">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-ink">Relationships</h3>
+              <p className="mt-0.5 text-sm text-ink-3">
+                Showing {filteredSelectedRelationships.length} of {totalRelationships}
+              </p>
+            </div>
+            <div className="flex w-full gap-2 sm:w-auto">
+              <div className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-4" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder="Search relationships"
+                  aria-label="Search relationships"
+                  value={searchTerm}
+                  className="input h-9 pl-8 pr-8 text-sm"
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-ink-4 hover:text-ink"
+                    aria-label="Clear search"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              <select
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                aria-label="Relationship type"
+                className="input h-9 w-auto text-sm"
+              >
+                <option value="">All types</option>
+                <option value="causes">Causes</option>
+                <option value="influences">Influences</option>
+                <option value="leads_to">Leads to</option>
+                <option value="affects">Affects</option>
+                <option value="improves">Improves</option>
+                <option value="harms">Harms</option>
+              </select>
+            </div>
+          </div>
+          {filteredSelectedRelationships.length === 0 ? (
+            <div className="mt-4 rounded-xl border border-dashed border-line-strong px-6 py-10 text-center">
+              <p className="font-medium text-ink">No relationships found</p>
+              <p className="mt-1 text-sm text-ink-3">Try a broader search or clear the type filter.</p>
+            </div>
+          ) : (
+            <ul className="mt-4 divide-y divide-line border-y border-line">
+              {filteredSelectedRelationships.map((rel, index) => (
+                <li key={index} className="py-3.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1.5">
+                    <p className="min-w-0 text-sm">
+                      <span className="font-medium text-ink">{rel.cause}</span>
+                      <span className="mx-2 text-ink-4">→</span>
+                      <span className="font-medium text-ink">{rel.effect}</span>
+                    </p>
+                    <span className="flex shrink-0 items-center gap-2 text-xs text-ink-4">
+                      <span className="tag h-5 px-1.5 font-mono text-[11px]">{rel.relationship_type}</span>
+                      <span className="tabular-nums">{(rel.confidence * 100).toFixed(0)}%</span>
+                    </span>
+                  </div>
+                  {rel.evidence && <p className="mt-1.5 text-sm leading-6 text-ink-3">{rel.evidence}</p>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </section>
+    );
+  };
+
+  const renderLibraryView = () => (
+    <div className="mx-auto w-full max-w-[1200px] px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="page-title">Library</h1>
+          <p className="mt-1 text-sm text-ink-3">Reports you can search. Put up to three in scope to focus a question on them.</p>
+        </div>
+        <button type="button" onClick={handleUploadEntry} className="btn btn-secondary btn-sm">
+          <FileUp className="h-4 w-4" />
+          Upload report
+        </button>
+      </div>
+
+      {documentsError && (
+        <div className="mt-5 rounded-lg border border-warn-line bg-warn-bg px-3 py-2 text-sm text-warn">{documentsError}</div>
+      )}
+      {isDocumentsLoading && (
+        <div className="mt-5 flex items-center gap-2 text-sm text-ink-3">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading reports…
+        </div>
+      )}
+
+      {documents.length === 0 ? (
+        !isDocumentsLoading && (
+          <div className="mt-8 rounded-xl border border-dashed border-line-strong px-6 py-16 text-center">
+            <p className="font-medium text-ink">No reports yet</p>
+            <p className="mx-auto mt-1 max-w-sm text-sm text-ink-3">
+              Upload a sustainability report to start asking questions about it.
+            </p>
+            <button type="button" onClick={handleUploadEntry} className="btn btn-primary btn-sm mt-5">
+              Upload a report
+            </button>
+          </div>
+        )
+      ) : (
+        <div className="mt-6 grid gap-8 xl:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] xl:items-start">
+          <ul className="panel divide-y divide-line overflow-hidden" aria-label="Reports">
+            {documents.map((doc) => {
+              const inQueryScope = queryDocumentIds.includes(doc.id);
+              const canAddToScope = inQueryScope || queryDocumentIds.length < 3;
+              const isSelected = selectedDocument?.id === doc.id;
+              const relationshipCount = doc.relationship_count ?? (doc.relationships?.length || 0);
+              return (
+                <li
+                  key={doc.id}
+                  className={`group relative flex items-start gap-2 py-3 pl-4 pr-2 transition-colors ${
+                    isSelected ? 'bg-paper-sunken' : 'hover:bg-paper-sunken/60'
+                  }`}
+                >
+                  {isSelected && <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-ink" />}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void selectDocument(doc);
+                    }}
+                    aria-current={isSelected ? 'true' : undefined}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <span className="line-clamp-2 break-words text-sm font-medium leading-snug text-ink">{doc.title}</span>
+                    <span className="mt-1 block text-xs text-ink-4">
+                      {doc.graph?.metadata?.node_count || 0} concepts · {relationshipCount} relationships
+                    </span>
+                  </button>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleDocumentInScope(doc.id)}
+                      disabled={!canAddToScope}
+                      aria-pressed={inQueryScope}
+                      title={inQueryScope ? 'Remove from question scope' : canAddToScope ? 'Add to question scope' : 'Up to three reports can be in scope'}
+                      className={`h-7 rounded-md px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
+                        inQueryScope
+                          ? 'bg-ink text-white hover:bg-ink-2'
+                          : 'border border-line bg-white text-ink-3 hover:border-line-strong hover:text-ink disabled:text-ink-5 disabled:hover:border-line'
+                      }`}
+                    >
+                      {inQueryScope ? 'In scope' : canAddToScope ? 'Add' : 'Max 3'}
+                    </button>
+                    {isAdmin && renderSyncStatus(doc)}
+                    <button
+                      type="button"
+                      onClick={() => exportGraph(doc, 'json')}
+                      className="icon-btn h-7 w-7 sm:opacity-0 sm:focus:opacity-100 sm:group-hover:opacity-100"
+                      title="Export graph as JSON"
+                      aria-label={`Export graph for ${doc.title}`}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteDocument(doc.id)}
+                      className="icon-btn h-7 w-7 hover:text-err sm:opacity-0 sm:focus:opacity-100 sm:group-hover:opacity-100"
+                      title="Delete report"
+                      aria-label={`Delete ${doc.title}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          {selectedDocument ? (
+            renderDocumentDetail(selectedDocument)
+          ) : (
+            <div className="rounded-xl border border-dashed border-line-strong px-6 py-16 text-center text-sm text-ink-3">
+              Select a report to see what was extracted from it.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderUploadView = () => (
+    <div className="mx-auto w-full max-w-[720px] px-4 py-6 sm:px-6 lg:py-10">
+      <h1 className="page-title">Upload a report</h1>
+      <p className="mt-1 text-sm leading-6 text-ink-3">
+        PDF, Word, plain text or RTF, up to 50 MB. The report is split into passages, indexed for search and read for
+        entities and relationships.
+      </p>
+
+      <div className="segmented mt-6" role="tablist" aria-label="Input method">
+        {([
+          { id: 'file', label: 'Upload a file' },
+          { id: 'text', label: 'Paste text' },
+        ] as const).map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            role="tab"
+            aria-selected={uploadInputMode === option.id}
+            onClick={() => {
+              setUploadInputMode(option.id);
+              if (option.id === 'file') {
+                setUploadForm((prev) => ({ ...prev, content: '' }));
+              } else {
+                setUploadedFile(null);
+                setFileContent('');
+              }
+            }}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4">
+        {uploadInputMode === 'file' ? (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,.txt,.rtf"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  handleFileUpload(file);
+                }
+              }}
+              className="hidden"
+              id="file-upload"
+            />
+            {!uploadedFile ? (
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Choose a report file"
+                onClick={() => fileInputRef.current?.click()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDraggingFile(true);
+                }}
+                onDragLeave={() => setIsDraggingFile(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDraggingFile(false);
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) handleFileUpload(file);
+                }}
+                className={`flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-6 py-10 text-center transition-colors ${
+                  isDraggingFile ? 'border-ink bg-white' : 'border-line-strong bg-white/60 hover:border-ink-5 hover:bg-white'
+                }`}
+              >
+                <FileUp className={`h-5 w-5 ${isDraggingFile ? 'text-ink' : 'text-ink-4'}`} />
+                <p className="mt-3 text-sm font-medium text-ink">
+                  {isDraggingFile ? 'Drop to add the file' : 'Drop a file here, or click to browse'}
+                </p>
+                <p className="mt-1 text-xs text-ink-4">PDF, DOC, DOCX, TXT or RTF</p>
+                {isProcessingFile && (
+                  <p className="mt-4 flex items-center gap-2 text-xs text-ink-3">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Reading the file…
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-line bg-white px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <FileText className="h-4 w-4 shrink-0 text-ink-4" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-ink">{uploadedFile.name}</p>
+                    <p className="text-xs text-ink-4">{(uploadedFile.size / 1024).toFixed(1)} KB</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUploadedFile(null);
+                      setFileContent('');
+                    }}
+                    className="btn btn-ghost btn-sm hover:text-err"
+                  >
+                    Remove
+                  </button>
+                </div>
+                {fileContent && (
+                  <details className="mt-3 border-t border-line pt-3">
+                    <summary className="cursor-pointer text-xs font-medium text-ink-3 hover:text-ink">Preview</summary>
+                    <p className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-ink-2">
+                      {fileContent.substring(0, 400)}
+                      {fileContent.length > 400 && <span className="text-ink-4">…</span>}
+                    </p>
+                  </details>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <textarea
+            value={uploadForm.content}
+            onChange={(e) => setUploadForm({ ...uploadForm, content: e.target.value })}
+            rows={14}
+            aria-label="Report text"
+            className="input min-h-[300px] resize-y text-sm"
+            placeholder="Paste a section, an excerpt or the whole report."
+          />
+        )}
+      </div>
+
+      <div className="mt-6 space-y-4">
+        <div>
+          <label className="field-label" htmlFor="upload-title">Title</label>
+          <input
+            id="upload-title"
+            type="text"
+            value={uploadForm.title}
+            onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
+            className="input"
+            placeholder={uploadedFile?.name || 'For example: Orbis Materials Sustainability Report 2024'}
+          />
+        </div>
+
+        {isAdmin && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="field-label" htmlFor="upload-domain">Category</label>
+              <select
+                id="upload-domain"
+                value={uploadForm.domain}
+                onChange={(e) => setUploadForm({ ...uploadForm, domain: e.target.value })}
+                className="input"
+              >
+                <option value="general">General</option>
+                <option value="esg_report">ESG report</option>
+                <option value="academic">Academic prior</option>
+                <option value="regulatory">Regulatory context</option>
+                <option value="news">News</option>
+                <option value="environmental">Environmental</option>
+                <option value="social">Social</option>
+                <option value="governance">Governance</option>
+              </select>
+            </div>
+            <div>
+              <label className="field-label" htmlFor="upload-source-type">Source type</label>
+              <select
+                id="upload-source-type"
+                value={uploadForm.source_type}
+                onChange={(e) => setUploadForm({ ...uploadForm, source_type: e.target.value })}
+                className="input"
+              >
+                <option value="">Detect automatically</option>
+                <option value="corporate_disclosure">Corporate disclosure</option>
+                <option value="peer_reviewed">Peer reviewed</option>
+                <option value="regulatory_doc">Regulatory document</option>
+                <option value="analyst_report">Analyst report</option>
+                <option value="news_article">News article</option>
+              </select>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-4">
+        <button type="button" onClick={() => handleUpload()} disabled={uploadDisabled} className="btn btn-primary">
+          {isUploading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {uploadStage ? `${uploadStage.charAt(0).toUpperCase()}${uploadStage.slice(1)}…` : 'Processing…'}
+            </>
+          ) : (
+            'Index this report'
+          )}
+        </button>
+        {!isUploading && uploadDisabled && (
+          <span className="text-xs text-ink-4">Add a file or text, and a title.</span>
+        )}
+      </div>
+
+      {isUploading && (
+        <div className="mt-5">
+          <div className="flex items-center justify-between gap-3 text-xs text-ink-3">
+            <span className="truncate">{uploadMessage || uploadStage || 'Processing'}</span>
+            <span className="shrink-0 font-mono tabular-nums text-ink-2">{uploadProgress}%</span>
+          </div>
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-paper-hover">
+            <div className="h-full bg-ink transition-all duration-500" style={{ width: `${Math.max(4, uploadProgress)}%` }} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderSkillsView = () => (
+    <div className="mx-auto w-full max-w-[880px] px-4 py-6 sm:px-6 lg:py-10">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="page-title">Skills</h1>
+          <p className="mt-1 max-w-xl text-sm leading-6 text-ink-3">
+            Skills shape how the research agent plans, searches and checks its work. They are kept separate from your
+            report library.
+          </p>
+        </div>
+        <button type="button" onClick={() => skillFileInputRef.current?.click()} className="btn btn-secondary btn-sm">
+          <FileUp className="h-4 w-4" />
+          Upload skill
+        </button>
+      </div>
+
+      <div className="relative mt-6">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-4" />
+        <input
+          value={skillSearchTerm}
+          onChange={(event) => setSkillSearchTerm(event.target.value)}
+          className="input pl-9"
+          placeholder="Search skills"
+          aria-label="Search skills"
+        />
+      </div>
+
+      {filteredSkillCards.length === 0 ? (
+        <p className="py-10 text-center text-sm text-ink-4">No skills match “{skillSearchTerm}”.</p>
+      ) : (
+        <ul className="mt-4 divide-y divide-line border-y border-line">
+          {filteredSkillCards.map((skill) => (
+            <li key={skill.name} className="grid gap-1.5 py-4 sm:grid-cols-[200px_minmax(0,1fr)] sm:gap-6">
+              <div>
+                <h2 className="text-sm font-medium text-ink">{skill.name}</h2>
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-ink-4">
+                  <span className={`status-dot ${skill.status === 'Installed' ? 'bg-ok' : 'bg-line-strong'}`} />
+                  {skill.status} · {skill.owner}
+                </p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm leading-6 text-ink-2">{skill.summary}</p>
+                <p className="mt-1 text-xs leading-5 text-ink-4">Used for: {skill.trigger}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <section className="mt-10">
+        <h2 className="text-base font-semibold text-ink">Add a skill</h2>
+        <p className="mt-1 text-sm leading-6 text-ink-3">
+          Accepted files: <span className="font-mono text-xs">{SKILL_FILE_ALLOWED_LABEL}</span>. Reports and other
+          documents belong in Upload.
+        </p>
+        <input
+          ref={skillFileInputRef}
+          type="file"
+          accept={SKILL_FILE_ACCEPT}
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) handleSkillFileUpload(file);
+          }}
+        />
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label="Choose a skill file"
+          onClick={() => skillFileInputRef.current?.click()}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              skillFileInputRef.current?.click();
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setIsDraggingSkillFile(true);
+          }}
+          onDragLeave={() => setIsDraggingSkillFile(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDraggingSkillFile(false);
+            const file = event.dataTransfer.files?.[0];
+            if (file) handleSkillFileUpload(file);
+          }}
+          className={`mt-4 flex min-h-[140px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-6 py-8 text-center transition-colors ${
+            isDraggingSkillFile ? 'border-ink bg-white' : 'border-line-strong bg-white/60 hover:border-ink-5 hover:bg-white'
+          }`}
+        >
+          <p className="text-sm font-medium text-ink">
+            {isDraggingSkillFile ? 'Drop to add the skill' : 'Drop a skill file here, or click to browse'}
+          </p>
+          <p className="mt-1 text-xs text-ink-4">Up to 10 MB</p>
+        </div>
+
+        {skillUploadDraft && (
+          <div
+            className={`mt-4 flex items-start gap-3 rounded-xl border px-4 py-3 ${
+              skillUploadDraft.status === 'accepted'
+                ? 'border-ok-line bg-ok-bg text-ok'
+                : 'border-warn-line bg-warn-bg text-warn'
+            }`}
+          >
+            {skillUploadDraft.status === 'accepted'
+              ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+              : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">
+                {skillUploadDraft.name}
+                <span className="ml-2 font-normal opacity-80">{formatSkillFileSize(skillUploadDraft.size)}</span>
+              </p>
+              <p className="mt-0.5 text-sm leading-5">{skillUploadDraft.reason}</p>
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+
   return (
-    <div className="cg-workspace research-workspace overflow-hidden text-ink">
+    <div className="research-workspace flex h-screen h-dvh overflow-hidden bg-paper text-ink">
       <input
         ref={quickUploadInputRef}
         type="file"
@@ -2800,1748 +4431,74 @@ ${isDuplicate
           }
         }}
       />
-      {isSearchPaletteOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-ink/15 px-4 pt-[12vh] backdrop-blur-sm"
-          onMouseDown={() => setIsSearchPaletteOpen(false)}
-          role="presentation"
-        >
-          <div
-            className="w-full max-w-xl overflow-hidden rounded-2xl border border-hairline bg-white shadow-2xl"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 border-b border-hairline px-4 py-3">
-              <Search className="h-4 w-4 text-ink-stone" />
-              <input
-                ref={taskSearchInputRef}
-                value={taskSearchTerm}
-                onChange={(event) => setTaskSearchTerm(event.target.value)}
-                placeholder="Search tasks"
-                className="min-w-0 flex-1 border-0 bg-transparent text-sm text-ink outline-none placeholder:text-ink-stone"
-              />
-              <button
-                type="button"
-                onClick={() => setIsSearchPaletteOpen(false)}
-                className="rounded-lg p-1.5 text-ink-stone transition hover:bg-surface-soft hover:text-ink"
-                aria-label="Close search"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="max-h-[420px] overflow-y-auto p-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSearchPaletteOpen(false);
-                  setTaskSearchTerm('');
-                  handleNewSession();
-                }}
-                className="mb-2 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-ink transition hover:bg-surface-soft"
-              >
-                <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white">
-                  <Plus className="h-3.5 w-3.5" />
-                </span>
-                New task
-              </button>
-              {isChatSessionsLoading && chatSessions.length === 0 ? (
-                <div className="px-3 py-8 text-center text-sm text-ink-stone">Loading tasks...</div>
-              ) : filteredTaskSessions.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-hairline bg-surface-soft px-4 py-8 text-center text-sm text-ink-stone">
-                  No matching tasks.
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {filteredTaskSessions.map((session) => (
-                    <button
-                      key={session.id}
-                      type="button"
-                      onClick={() => {
-                        setIsSearchPaletteOpen(false);
-                        setTaskSearchTerm('');
-                        handleSelectSession(session.id);
-                      }}
-                      className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-surface-soft"
-                    >
-                      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-hairline bg-white text-ink-charcoal">
-                        <MessageSquare className="h-3.5 w-3.5" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold text-ink-charcoal">
-                          {session.title || 'New task'}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-ink-stone">
-                          {formatRelativeTime(session.updatedAt)}
-                          {session.messageCount ? ` · ${session.messageCount} messages` : ''}
-                        </span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+      {isSearchPaletteOpen && renderSearchPalette()}
+
+      <aside className="hidden w-[260px] shrink-0 border-r border-line bg-paper-sunken lg:block">
+        {renderSidebar()}
+      </aside>
+
+      {isMobileNavOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            type="button"
+            aria-label="Close sidebar"
+            className="absolute inset-0 h-full w-full cursor-default bg-ink/20"
+            onClick={closeMobileNav}
+          />
+          <aside className="absolute inset-y-0 left-0 w-[280px] max-w-[85vw] bg-paper-sunken shadow-lg">
+            {renderSidebar()}
+          </aside>
         </div>
       )}
-      <div className="flex h-full w-full overflow-hidden border-t border-hairline bg-transparent">
-        <aside className="research-sidebar hidden h-full w-[224px] shrink-0 border-r border-hairline bg-white lg:flex lg:flex-col">
-          <div className="space-y-1 px-2 py-3">
-            <button
-              onClick={handleNewSession}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] font-semibold text-ink transition hover:bg-surface-soft"
-            >
-              <Plus className="h-4 w-4" />
-              New Task
-            </button>
-            <button
-              onClick={() => setIsSearchPaletteOpen(true)}
-              className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition ${
-                isSearchPaletteOpen ? 'bg-surface-soft font-semibold text-ink' : 'text-ink-charcoal hover:bg-surface-soft'
-              }`}
-            >
-              <Search className="h-4 w-4" />
-              Search
-            </button>
-            <button
-              onClick={() => setActiveTab('documents')}
-              className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition ${
-                activeTab === 'documents' ? 'bg-surface-soft font-semibold text-ink' : 'text-ink-charcoal hover:bg-surface-soft'
-              }`}
-            >
-              <FolderOpen className="h-4 w-4" />
-              Assets
-              <span className="ml-auto text-[11px] text-ink-stone">{totalDocuments}</span>
-            </button>
-          </div>
 
-          <div className="border-t border-hairline px-2 py-3">
-            <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-stone">
-              CausalGraph Lab
-            </div>
-            {[
-              { label: 'Research Agent', meta: 'Beta', icon: BrainCircuit, action: () => setActiveTab('chat') },
-              { label: 'Graph Reasoner', meta: '', icon: Network, action: () => setActiveTab('documents') },
-              { label: 'Skills', meta: 'New', icon: Zap, action: () => setActiveTab('skills') },
-            ].map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={item.action}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-ink-charcoal transition hover:bg-surface-soft hover:text-ink"
-                >
-                  <Icon className="h-4 w-4" />
-                  <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
-                  {item.meta && <span className="text-[10px] text-ink-stone">{item.meta}</span>}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="border-t border-hairline px-2 py-3">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex h-12 shrink-0 items-center gap-1 border-b border-line px-2 lg:hidden">
+          <button type="button" onClick={() => setIsMobileNavOpen(true)} className="icon-btn" aria-label="Open sidebar">
+            <PanelLeft className="h-[18px] w-[18px]" />
+          </button>
+          <div className="min-w-0 flex-1 truncate px-1 text-sm font-medium text-ink">{mobileTitle}</div>
+          {activeTab === 'chat' && hasAgentWorkspace && (
             <button
               type="button"
-              onClick={() => setActiveTab('documents')}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-ink-charcoal transition hover:bg-surface-soft hover:text-ink"
+              onClick={() => {
+                setAgentDrawerOpen(prev => !prev);
+                setAgentDrawerTab('process');
+              }}
+              className="icon-btn"
+              aria-label="Show process"
             >
-              <Database className="h-4 w-4" />
-              Explore Evidence
+              <Network className="h-[18px] w-[18px]" />
             </button>
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto border-t border-hairline px-2 py-3">
-            <div className="mb-1 flex items-center justify-between px-2">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-stone">Task History</div>
-              <div className="text-[11px] text-ink-stone">{chatSessions.length}</div>
-            </div>
-            {isChatSessionsLoading && chatSessions.length === 0 && (
-              <div className="px-2 py-3 text-[12px] text-ink-stone">Loading...</div>
-            )}
-            {chatSessionsError && (
-              <div className="px-2 py-2 text-[12px] text-red-500">{chatSessionsError}</div>
-            )}
-            {chatSessions.length === 0 ? (
-              <div className="px-2 py-4 text-[12px] text-ink-stone">No tasks yet</div>
-            ) : (
-              sortedTaskSessions.map((session) => {
-                  const isActive = session.id === currentSessionId;
-                  return (
-                    <div key={session.id} className="group/session relative">
-                      <button
-                        onClick={() => handleSelectSession(session.id)}
-                        className={`mb-1 block w-full rounded-lg px-2.5 py-2 pr-8 text-left text-[12px] transition ${
-                          isActive ? 'bg-surface-soft font-semibold text-ink' : 'text-ink-charcoal hover:bg-surface-soft'
-                        }`}
-                      >
-                        <span className="block truncate">{session.title || 'New task'}</span>
-                        <span className="mt-0.5 block text-[11px] font-normal text-ink-stone">{formatRelativeTime(session.updatedAt)}</span>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (window.confirm('Delete this conversation?')) {
-                            handleDeleteSession(session.id);
-                          }
-                        }}
-                        className="absolute right-1 top-2 rounded-md p-1 text-ink-stone opacity-0 transition hover:bg-white hover:text-red-600 group-hover/session:opacity-100"
-                        title="Delete task"
-                        aria-label="Delete task"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  );
-                })
-            )}
-          </div>
-
-          <div className="border-t border-hairline px-3 py-3">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-semibold text-white">
-                {String(user?.username || user?.email || 'U').trim().charAt(0).toUpperCase()}
-              </span>
-              <div className="min-w-0">
-                <div className="truncate text-[12px] font-semibold text-ink">{user?.username || user?.email || 'User'}</div>
-                <div className="text-[11px] text-ink-stone">{accountPlanLabel}</div>
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex gap-2 overflow-x-auto border-b border-hairline bg-surface-soft px-3 py-3 lg:hidden">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => item.action ? item.action() : setActiveTab(item.id)}
-                  className={`${mobileTabButtonClass(item.id)} relative`}
-                >
-                  {item.id === 'upload' && isUploading && (
-                    <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-ink ring-2 ring-white" />
-                  )}
-                  <Icon className="h-4 w-4" />
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {isUploading && (
-            <div className="flex items-center gap-2 border-b border-hairline bg-white px-4 py-2 text-xs text-ink-charcoal shadow-sm">
-              <Loader2 className="h-3 w-3 animate-spin text-ink-charcoal" />
-              <span className="truncate">
-                {uploadDisplayTitle} · {uploadStage || 'processing'} · {uploadProgress}%
-              </span>
-            </div>
           )}
+          <button type="button" onClick={handleNewSession} className="icon-btn" aria-label="New research">
+            <PenSquare className="h-[18px] w-[18px]" />
+          </button>
+        </div>
 
-          <div className={activeTab === 'chat' ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'min-h-0 flex-1 overflow-y-auto p-4 sm:p-5 lg:p-6'}>
-
-        {activeTab === 'chat' && (
-          <div className="flex min-h-0 flex-1 overflow-hidden">
-          <section className="flex min-h-0 flex-1 flex-col">
-            <header className="border-b border-hairline bg-white/95 px-4 py-3 sm:px-6">
-              {(() => {
-                const currentSession = chatSessions.find(s => s.id === currentSessionId);
-                const sessionTitle = currentSession?.title?.trim() || deriveSessionTitle(conversation) || 'Research desk';
-                return (
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <h1 className="truncate font-display text-[18px] font-semibold leading-[1.35] tracking-normal text-ink">
-                        {sessionTitle}
-                      </h1>
-                      <p className="mt-0.5 truncate text-[12px] text-ink-steel" title={queryScopeDetail}>
-                        Scope: {queryScopeLabel}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <button
-                        onClick={handleNewSession}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-hairline bg-white text-ink-charcoal transition hover:border-ink hover:bg-surface-soft"
-                        title="New task"
-                        aria-label="New task"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={handleUploadEntry}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-hairline bg-white text-ink-charcoal transition hover:border-ink hover:bg-surface-soft"
-                        title="Upload report"
-                        aria-label="Upload report"
-                      >
-                        <FileUp className="h-4 w-4" />
-                      </button>
-                      {hasAgentWorkspace && (
-                        <button
-                          onClick={() => {
-                            setAgentDrawerOpen(prev => !prev);
-                            setAgentDrawerTab('process');
-                          }}
-                          className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-semibold transition ${
-                            agentDrawerOpen
-                              ? 'border-ink bg-ink text-white'
-                              : 'border-hairline bg-white text-ink-charcoal hover:border-ink hover:bg-surface-soft'
-                          }`}
-                          title="Current process"
-                        >
-                          <Network className="h-3.5 w-3.5" />
-                          Process
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-              <ModelStatus apiBase={esgApiBase} tier={tier} />
-            </header>
-
-            <div
-              ref={conversationScrollRef}
-              onScroll={updateAutoFollowConversation}
-              className="research-conversation min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6"
-            >
-              <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col">
-                {displayedConversation.length === 0 && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.45 }}
-                    className="flex flex-1 items-center justify-center"
-                  >
-                    <WorkbenchWelcome
-                      reportCount={totalDocuments}
-                      starters={agentStarterCards}
-                      onUpload={handleUploadEntry}
-                      onLibrary={() => setActiveTab('documents')}
-                      onPrompt={(starter) => {
-                        setTier(starter.tier);
-                        setInputText(starter.prompt);
-                        document.getElementById('research-question')?.focus();
-                      }}
-                    />
-                  </motion.div>
-                )}
-
-                <div className="space-y-6">
-                  {displayedConversation.map((message, index) => {
-                    const isUser = message.type === 'user';
-
-                    if (isUser) {
-                      return (
-                        <motion.div
-                          key={index}
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.35 }}
-                          className="group flex flex-col items-end"
-                        >
-                          <div className="max-w-[680px] rounded-xl bg-surface-soft px-4 py-3 text-[14px] leading-[1.55] text-ink-charcoal">
-                            <div className="prose prose-sm max-w-none leading-[1.55] text-ink-charcoal prose-p:text-ink-charcoal [&>p]:mb-1 [&>p:last-child]:mb-0 [&>ul]:pl-4 [&>ol]:pl-4">
-                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}>
-                                {normalizeMathForMarkdown(message.content)}
-                              </ReactMarkdown>
-                            </div>
-                          </div>
-                          <div className="mt-1.5 text-[11px] tracking-normal text-ink-stone opacity-0 transition-opacity group-hover:opacity-100">
-                            {message.timestamp.toLocaleTimeString()}
-                          </div>
-                        </motion.div>
-                      );
-                    }
-
-                    const feedbackMessageId = getFeedbackMessageId(message, index);
-                    const feedbackRating = submittedFeedback[feedbackMessageId] || message.data?.feedback?.rating;
-                    const feedbackDraft = feedbackDrafts[feedbackMessageId];
-                    const canSubmitFeedback = Boolean(message.content.trim() && message.data?.backend);
-                    const messageAgentTrace = [
-                      ...(message.data?.flowTrace || []),
-                      ...(message.data?.agentTrace || []),
-                    ];
-                    const isAgentAnswer = message.data?.agentPath === 'agent' || messageAgentTrace.length > 0;
-                    const hasAssistantContent = message.content.trim().length > 0;
-
-                    return (
-                      <motion.div
-                        key={index}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.35 }}
-                        className="group"
-                      >
-                        <div className="flex gap-3">
-                          <div className="cg-icon-well mt-0.5 h-8 w-8 shrink-0 bg-ink text-white">
-                            <Network className="h-4 w-4" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="max-w-[820px]">
-                              {isAgentAnswer && !hasAssistantContent && (
-                                <MiniMaxTraceEvents steps={messageAgentTrace} compact />
-                              )}
-                              {isAgentAnswer && hasAssistantContent && message.data?.partial && (
-                                <div className="mb-3">
-                                  <AnswerWarningBadge
-                                    partial={message.data?.partial}
-                                    partialReason={message.data?.partialReason}
-                                  />
-                                </div>
-                              )}
-                              {hasAssistantContent ? (
-                                <div className="cg-message-assistant prose prose-sm max-w-none text-[14px] leading-[1.78] text-ink-charcoal prose-headings:mb-2 prose-headings:mt-5 prose-headings:font-display prose-p:mb-3 prose-ul:pl-4 prose-ol:pl-4 prose-li:mb-1.5 prose-strong:text-ink [&>p:first-child]:mt-0 [&>p:last-child]:mb-0 [&>code]:font-mono [&>pre]:font-mono">
-                                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}>
-                                    {normalizeStreamingMarkdown(message.content)}
-                                  </ReactMarkdown>
-                                </div>
-                              ) : (
-                                <div className="mt-2 flex items-center gap-2 text-[14px] text-ink-steel">
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  <span>{currentLoadingStep}</span>
-                                </div>
-                              )}
-                              {hasAssistantContent && (
-                                <EvidenceRail
-                                  sources={message.data?.sources || []}
-                                  onOpenFiles={() => {
-                                    setAgentDrawerSourcesOverride(message.data?.sources || []);
-                                    setAgentDrawerOpen(true);
-                                    setAgentDrawerTab('files');
-                                  }}
-                                />
-                              )}
-                            </div>
-
-                            {canSubmitFeedback && (
-                              <div className="mt-3">
-                                <div className="flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => void submitFeedback(message, index, 'up')}
-                                    disabled={Boolean(feedbackRating || feedbackDraft?.submitting)}
-                                    aria-pressed={feedbackRating === 'up'}
-                                    aria-label="Mark answer helpful"
-                                    title="Helpful"
-                                    className={`cg-btn-icon !h-7 !w-7 disabled:cursor-not-allowed ${
-                                      feedbackRating === 'up'
-                                        ? '!border-ink !bg-ink !text-white'
-                                        : '!text-ink-steel hover:!text-ink'
-                                    } ${feedbackRating && feedbackRating !== 'up' ? 'opacity-45' : ''}`}
-                                  >
-                                    <ThumbsUp className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => openDownvoteFeedback(message, index)}
-                                    disabled={Boolean(feedbackRating || feedbackDraft?.submitting)}
-                                    aria-pressed={feedbackRating === 'down'}
-                                    aria-label="Mark answer unhelpful"
-                                    title="Unhelpful"
-                                    className={`cg-btn-icon !h-7 !w-7 disabled:cursor-not-allowed ${
-                                      feedbackRating === 'down'
-                                        ? '!border-ink !bg-ink !text-white'
-                                        : '!text-ink-steel hover:!text-ink'
-                                    } ${feedbackRating && feedbackRating !== 'down' ? 'opacity-45' : ''}`}
-                                  >
-                                    <ThumbsDown className="h-3.5 w-3.5" />
-                                  </button>
-                                  {feedbackRating && (
-                                    <span className="ml-1 inline-flex items-center gap-1 text-[11px] font-medium text-ink-steel">
-                                      <CheckCircle2 className="h-3 w-3" />
-                                      Feedback sent
-                                    </span>
-                                  )}
-                                  {feedbackDraft?.error && feedbackDraft.rating !== 'down' && (
-                                    <span className="ml-1 inline-flex items-center gap-1 text-[11px] font-medium text-red-600">
-                                      <AlertCircle className="h-3 w-3" />
-                                      {feedbackDraft.error}
-                                    </span>
-                                  )}
-                                </div>
-
-                                {feedbackDraft && feedbackDraft.rating === 'down' && !feedbackRating && (
-                                  <div className="mt-2 max-w-xl rounded-lg border border-hairline bg-white p-3 shadow-sm">
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {FEEDBACK_REASON_OPTIONS.map(option => {
-                                        const selected = feedbackDraft.tags.includes(option.tag);
-                                        return (
-                                          <label
-                                            key={option.tag}
-                                            className={`inline-flex cursor-pointer items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
-                                              selected
-                                                ? 'border-ink bg-ink text-white'
-                                                : 'border-hairline bg-canvas text-ink-steel hover:border-ink hover:text-ink'
-                                            }`}
-                                          >
-                                            <input
-                                              type="checkbox"
-                                              checked={selected}
-                                              onChange={() => toggleFeedbackTag(feedbackMessageId, option.tag)}
-                                              className="sr-only"
-                                            />
-                                            {option.label}
-                                          </label>
-                                        );
-                                      })}
-                                    </div>
-                                    {feedbackDraft.tags.includes('other') && (
-                                      <textarea
-                                        value={feedbackDraft.reasonText}
-                                        onChange={(event) => setFeedbackReasonText(feedbackMessageId, event.target.value)}
-                                        rows={2}
-                                        placeholder="Add a note"
-                                        className="mt-2 block w-full resize-none rounded-lg border border-hairline bg-canvas px-3 py-2 text-[12px] leading-5 text-ink outline-none placeholder:text-ink-stone focus:border-ink"
-                                      />
-                                    )}
-                                    {feedbackDraft.error && (
-                                      <div className="mt-2 flex items-center gap-1.5 text-[11px] font-medium text-red-600">
-                                        <AlertCircle className="h-3 w-3" />
-                                        <span>{feedbackDraft.error}</span>
-                                      </div>
-                                    )}
-                                    <div className="mt-2 flex justify-end gap-1.5">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setFeedbackDrafts(prev => {
-                                            const next = { ...prev };
-                                            delete next[feedbackMessageId];
-                                            return next;
-                                          });
-                                        }}
-                                        className="rounded-full border border-hairline px-3 py-1 text-[11px] font-semibold text-ink-steel transition hover:border-ink hover:text-ink"
-                                      >
-                                        Cancel
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => void submitFeedback(message, index, 'down')}
-                                        disabled={feedbackDraft.submitting}
-                                        className="rounded-full border border-ink bg-ink px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-ink-charcoal disabled:cursor-not-allowed disabled:opacity-60"
-                                      >
-                                        {feedbackDraft.submitting ? 'Sending...' : 'Submit'}
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            <div className="mt-1.5 text-[11px] text-ink-stone opacity-0 transition-opacity group-hover:opacity-100">
-                              {message.timestamp.toLocaleTimeString()}
-                            </div>
-                          </div>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-
-                  {showPipelineStatus && !hasPendingAssistantMessage && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-4">
-                      <div className="max-w-[820px]">
-                        <p className="text-[14px] leading-6 text-ink-charcoal">Routing the question through the report pipeline.</p>
-                        {[...pipelineTrace, ...agentTrace].length > 0 ? (
-                          <MiniMaxTraceEvents steps={[...pipelineTrace, ...agentTrace]} compact />
-                        ) : (
-                          <div className="mt-3 flex w-fit items-center gap-2 rounded-full border border-hairline bg-white px-3 py-1.5 text-[12px] text-ink-steel">
-                            <Loader2 className="h-3 w-3 animate-spin text-ink" />
-                            <span>{currentLoadingStep}</span>
-                          </div>
-                        )}
-                      </div>
-                      {showLongWaitHint && (
-                        <p className="mt-2 max-w-[820px] text-[12px] text-ink-steel">
-                          {loadingHintText}
-                        </p>
-                      )}
-                    </motion.div>
-                  )}
-                  <div ref={conversationEndRef} />
-                </div>
-              </div>
+        {isUploading && activeTab !== 'upload' && (
+          <div className="shrink-0 border-b border-line bg-white px-4 py-2">
+            <div className="mx-auto flex max-w-[760px] items-center gap-3 text-xs text-ink-3">
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              <span className="min-w-0 flex-1 truncate">
+                Indexing {uploadDisplayTitle} · {uploadStage || 'processing'}
+              </span>
+              <span className="shrink-0 font-mono tabular-nums">{uploadProgress}%</span>
             </div>
-
-            <div className="border-t border-hairline bg-surface-soft px-4 py-3 sm:px-6">
-              <div className="mx-auto w-full max-w-5xl">
-                <form
-                  onSubmit={handleSubmit}
-                  className="cg-agent-composer px-3 py-2 transition"
-                >
-                  <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setQueryScopeMode(queryScopeMode === 'all' ? 'selected' : 'all')}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-canvas px-2.5 py-1 text-[11px] font-semibold text-ink-charcoal transition hover:border-ink hover:text-ink"
-                      title="Toggle document scope"
-                    >
-                      <FolderOpen className="h-3 w-3" />
-                      <span>Scope: {queryScopeLabel}</span>
-                    </button>
-                    {queryScopeMode !== 'all' && effectiveQueryDocumentIds.slice(0, 2).map((docId) => {
-                      const doc = documents.find(item => item.id === docId);
-                      if (!doc) return null;
-                      const removable = queryDocumentIds.includes(docId);
-                      return (
-                        <span key={docId} className="inline-flex min-w-0 items-center gap-1 rounded-full border border-hairline bg-surface px-2 py-0.5 text-[11px] font-medium text-ink-charcoal">
-                          <span className="truncate max-w-[160px]">{doc.title}</span>
-                          {removable && (
-                            <button
-                              type="button"
-                              onClick={() => setQueryDocumentIds((prev) => prev.filter((id) => id !== docId))}
-                              className="text-ink-faint transition hover:text-ink-charcoal"
-                              title="Remove from query scope"
-                            >
-                              ×
-                            </button>
-                          )}
-                        </span>
-                      );
-                    })}
-                    {queryScopeMode !== 'all' && (
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('documents')}
-                        className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold text-ink-steel transition hover:bg-surface-soft hover:text-ink"
-                        title="Pick query documents"
-                      >
-                        Change
-                      </button>
-                    )}
-                  </div>
-                  <textarea
-                    id="research-question"
-                    aria-label="Research question"
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    onKeyDown={(e) => {
-                      // Skip Enter-to-send while an IME composition session is
-                      // active — Chinese/Japanese/Korean users press Enter to
-                      // confirm candidates or commit Pinyin, not to submit.
-                      // `nativeEvent.isComposing` and the legacy keyCode 229
-                      // both flag this state.
-                      if (
-                        e.key === 'Enter' &&
-                        !e.shiftKey &&
-                        !e.nativeEvent.isComposing &&
-                        e.keyCode !== 229
-                      ) {
-                        e.preventDefault();
-                        handleSubmit(e as unknown as React.FormEvent);
-                      }
-                    }}
-                    placeholder={
-                      tier === 'deep'
-                        ? 'Ask a deep analytical question: causal reasoning, scenarios, comparisons…'
-                        : 'Query emissions, targets, risks, governance, or supply-chain signals…'
-                    }
-                    rows={1}
-                    className="block max-h-28 min-h-[30px] w-full resize-none border-0 bg-transparent px-1 py-1 text-[14px] leading-[1.5] text-ink outline-none placeholder:text-ink-stone"
-                    disabled={isLoading}
-                  />
-                  <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={handleUploadEntry}
-                        disabled={isUploading || isProcessingFile}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-hairline bg-white text-ink-charcoal shadow-sm transition hover:border-ink hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
-                        title="Upload report"
-                        aria-label="Upload report"
-                      >
-                        <Paperclip className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <div
-                        className="inline-flex items-center rounded-full border border-hairline bg-white p-0.5"
-                        role="group"
-                        aria-label="Reasoning tier"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setTier('flash')}
-                          aria-pressed={tier === 'flash'}
-                          className={`inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] font-semibold transition ${
-                            tier === 'flash'
-                              ? 'bg-ink text-white shadow-sm'
-                              : 'text-ink-steel hover:bg-surface-soft hover:text-ink'
-                          }`}
-                          title="Fast: non-thinking answers from the configured model"
-                        >
-                          <Zap className="h-3.5 w-3.5" />
-                          <span>Fast</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setTier('deep')}
-                          aria-pressed={tier === 'deep'}
-                          className={`inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] font-semibold transition ${
-                            tier === 'deep'
-                              ? 'bg-ink text-white shadow-sm'
-                              : 'text-ink-steel hover:bg-surface-soft hover:text-ink'
-                          }`}
-                          title="Deep: extended reasoning, retrieval and graph context"
-                        >
-                          <BrainCircuit className="h-3.5 w-3.5" />
-                          <span>Deep</span>
-                        </button>
-                      </div>
-                      <button
-                        type="submit"
-                        disabled={!inputText.trim() || isLoading}
-                        className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-full bg-ink text-white shadow-sm transition hover:bg-ink-charcoal active:translate-y-[0.5px] disabled:cursor-not-allowed disabled:bg-surface-soft disabled:text-ink-stone disabled:shadow-none"
-                        title="Send (Enter)"
-                        aria-label="Send"
-                      >
-                        <ArrowUp className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                </form>
-                <div className="mt-1 px-1 text-right">
-                  <span className="cg-eyebrow text-ink-stone">
-                    Verify citations · Enter to send · Shift + Enter for a new line
-                  </span>
-                </div>
-              </div>
-            </div>
-          </section>
-          {hasAgentWorkspace && (
-            <AgentWorkspaceDrawer
-              open={agentDrawerOpen}
-              tab={agentDrawerTab}
-              onTabChange={setAgentDrawerTab}
-              onClose={() => setAgentDrawerOpen(false)}
-              steps={drawerTrace}
-              sources={drawerSources}
-              isLoading={isLoading}
-              currentLoadingStep={currentLoadingStep}
-            />
-          )}
           </div>
         )}
 
-          {activeTab === 'skills' && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mx-auto w-full max-w-[1320px] space-y-5"
-            >
-              <header className="cg-tool-panel px-6 py-5 sm:px-7">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <h2 className="font-display text-[28px] font-semibold leading-[1.16] tracking-normal text-ink">
-                      Skills
-                    </h2>
-                    <p className="mt-2 max-w-2xl text-sm leading-6 text-ink-steel">
-                      Agent capabilities are managed separately from report assets.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => skillFileInputRef.current?.click()}
-                    className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink-charcoal"
-                  >
-                    <FileUp className="h-4 w-4" />
-                    Upload skill
-                  </button>
-                </div>
-              </header>
-
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr),420px]">
-                <section className="cg-tool-panel p-5 sm:p-6">
-                  <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div>
-                      <h3 className="text-base font-semibold text-ink">Skill library</h3>
-                      <p className="mt-1 text-sm text-ink-steel">Installed skills guide the report agent workflow.</p>
-                    </div>
-                    <div className="relative w-full lg:w-72">
-                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-stone" />
-                      <input
-                        value={skillSearchTerm}
-                        onChange={(event) => setSkillSearchTerm(event.target.value)}
-                        className="w-full rounded-full border border-hairline bg-white py-2 pl-9 pr-3 text-sm text-ink outline-none transition focus:border-ink-steel focus:ring-1 focus:ring-ink/10"
-                        placeholder="Search skills"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {filteredSkillCards.map((skill) => (
-                      <article key={skill.name} className="rounded-xl border border-hairline bg-white p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <h4 className="truncate text-sm font-semibold text-ink">{skill.name}</h4>
-                            <p className="mt-0.5 text-xs text-ink-stone">{skill.owner}</p>
-                          </div>
-                          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                            skill.status === 'Installed'
-                              ? 'bg-success-bg text-success'
-                              : 'bg-surface-soft text-ink-steel'
-                          }`}>
-                            {skill.status}
-                          </span>
-                        </div>
-                        <p className="mt-3 line-clamp-3 text-sm leading-6 text-ink-steel">{skill.summary}</p>
-                        <div className="mt-4 rounded-lg bg-surface-soft px-3 py-2 text-xs leading-5 text-ink-charcoal">
-                          {skill.trigger}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-
-                <aside className="cg-tool-panel p-5 sm:p-6">
-                  <div className="mb-5">
-                    <h3 className="text-base font-semibold text-ink">Skill file intake</h3>
-                    <p className="mt-1 text-sm leading-6 text-ink-steel">
-                      Reports, PDFs, Word files, and plain notes are rejected here.
-                    </p>
-                  </div>
-
-                  <input
-                    ref={skillFileInputRef}
-                    type="file"
-                    accept={SKILL_FILE_ACCEPT}
-                    className="hidden"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      event.target.value = '';
-                      if (file) handleSkillFileUpload(file);
-                    }}
-                  />
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => skillFileInputRef.current?.click()}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        skillFileInputRef.current?.click();
-                      }
-                    }}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      setIsDraggingSkillFile(true);
-                    }}
-                    onDragLeave={() => setIsDraggingSkillFile(false)}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      setIsDraggingSkillFile(false);
-                      const file = event.dataTransfer.files?.[0];
-                      if (file) handleSkillFileUpload(file);
-                    }}
-                    className={`flex min-h-[210px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-5 py-8 text-center transition ${
-                      isDraggingSkillFile
-                        ? 'border-ink bg-white shadow-sm'
-                        : 'border-hairline bg-surface-soft hover:border-ink-stone hover:bg-white'
-                    }`}
-                  >
-                    <div className="flex h-11 w-11 items-center justify-center rounded-full border border-hairline bg-white">
-                      <Zap className={`h-5 w-5 ${isDraggingSkillFile ? 'text-ink' : 'text-ink-stone'}`} />
-                    </div>
-                    <p className="mt-4 text-[15px] font-semibold text-ink">
-                      {isDraggingSkillFile ? 'Release skill file' : 'Drop skill file or browse'}
-                    </p>
-                    <p className="mt-2 max-w-sm text-xs leading-5 text-ink-steel">
-                      {SKILL_FILE_ALLOWED_LABEL}
-                    </p>
-                  </div>
-
-                  {skillUploadDraft && (
-                    <div className={`mt-4 rounded-xl border px-4 py-3 ${
-                      skillUploadDraft.status === 'accepted'
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                        : 'border-amber-200 bg-amber-50 text-amber-800'
-                    }`}>
-                      <div className="flex items-start gap-3">
-                        <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/80">
-                          {skillUploadDraft.status === 'accepted'
-                            ? <CheckCircle2 className="h-4 w-4" />
-                            : <AlertCircle className="h-4 w-4" />}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold">{skillUploadDraft.name}</div>
-                          <div className="mt-0.5 text-xs opacity-80">{formatSkillFileSize(skillUploadDraft.size)}</div>
-                          <p className="mt-2 text-sm leading-5">{skillUploadDraft.reason}</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </aside>
-              </div>
-            </motion.div>
-          )}
-
-          {activeTab === 'upload' && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mx-auto w-full max-w-[1320px] space-y-5"
-            >
-              <header className="cg-tool-panel px-6 py-5 sm:px-7">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="min-w-0">
-                    <h2 className="font-display text-[28px] font-semibold leading-[1.16] tracking-normal text-ink">
-                      Upload a report
-                    </h2>
-                    <p className="mt-2 max-w-xl text-sm leading-6 text-ink-steel">
-                      Add a file or paste text, then index it for search.
-                    </p>
-                  </div>
-                  <span className="rounded-full border border-hairline bg-surface-soft px-3 py-1.5 text-xs font-semibold text-ink-charcoal">
-                    PDF, Word, Text, RTF
-                  </span>
-                </div>
-              </header>
-
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr),420px]">
-                <section className="cg-tool-panel p-5 sm:p-6">
-                  <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h3 className="text-base font-semibold text-ink">Source</h3>
-                      <p className="mt-1 text-sm text-ink-steel">Choose one input method.</p>
-                    </div>
-                    <div className="inline-flex rounded-lg border border-hairline bg-surface-soft p-0.5">
-                      {([
-                        { id: 'file', label: 'Upload file' },
-                        { id: 'text', label: 'Paste text' },
-                      ] as const).map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          onClick={() => {
-                            setUploadInputMode(option.id);
-                            if (option.id === 'file') {
-                              setUploadForm((prev) => ({ ...prev, content: '' }));
-                            } else {
-                              setUploadedFile(null);
-                              setFileContent('');
-                            }
-                          }}
-                          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                            uploadInputMode === option.id
-                              ? 'bg-ink text-white shadow-sm'
-                              : 'text-ink-steel hover:bg-white hover:text-ink'
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {uploadInputMode === 'file' ? (
-                    <>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".pdf,.doc,.docx,.txt,.rtf"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            handleFileUpload(file);
-                          }
-                        }}
-                        className="hidden"
-                        id="file-upload"
-                      />
-                      {!uploadedFile ? (
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => fileInputRef.current?.click()}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              fileInputRef.current?.click();
-                            }
-                          }}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            setIsDraggingFile(true);
-                          }}
-                          onDragLeave={() => setIsDraggingFile(false)}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            setIsDraggingFile(false);
-                            const file = e.dataTransfer.files?.[0];
-                            if (file) handleFileUpload(file);
-                          }}
-                          className={`flex min-h-[260px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-10 text-center transition ${
-                            isDraggingFile
-                              ? 'border-ink bg-white shadow-sm'
-                              : 'border-hairline bg-surface-soft hover:border-ink-stone hover:bg-white'
-                          }`}
-                        >
-                          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-hairline bg-white">
-                            <FileUp className={`h-5 w-5 ${isDraggingFile ? 'text-ink' : 'text-ink-stone'}`} />
-                          </div>
-                          <p className="mt-4 text-[16px] font-semibold text-ink">
-                            {isDraggingFile ? 'Release to upload' : 'Drop file or browse'}
-                          </p>
-                          <p className="mt-2 max-w-md text-sm leading-6 text-ink-steel">
-                            Files up to 50MB. Text files show a quick preview.
-                          </p>
-                          {isProcessingFile && (
-                            <div className="mt-4 flex items-center gap-2 text-xs text-ink-steel">
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              <span>Processing file…</span>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl border border-hairline bg-surface-soft p-4">
-                          <div className="flex items-start gap-3">
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-ink-charcoal">
-                              <FileUp className="h-4 w-4" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium text-ink">{uploadedFile.name}</p>
-                              <p className="text-xs text-ink-steel">{(uploadedFile.size / 1024).toFixed(1)} KB</p>
-                            </div>
-                            <button
-                              onClick={() => {
-                                setUploadedFile(null);
-                                setFileContent('');
-                              }}
-                              className="text-xs font-medium text-ink-steel transition hover:text-red-600"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                          {fileContent && (
-                            <details className="group/preview mt-3">
-                              <summary className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-steel hover:text-ink-charcoal">
-                                <span className="text-ink-stone transition-transform group-open/preview:rotate-90">›</span>
-                                Preview first 200 characters
-                              </summary>
-                              <div className="mt-2 max-h-24 overflow-y-auto rounded-md border border-hairline bg-white p-3 text-xs leading-5 text-ink-charcoal">
-                                {fileContent.substring(0, 200)}
-                                {fileContent.length > 200 && <span className="text-ink-stone">…</span>}
-                              </div>
-                            </details>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div>
-                      <textarea
-                        value={uploadForm.content}
-                        onChange={(e) => setUploadForm({ ...uploadForm, content: e.target.value })}
-                        rows={15}
-                        className="w-full min-h-[320px] resize-none rounded-2xl border border-hairline bg-surface-soft px-4 py-3 text-sm leading-6 text-ink outline-none transition focus:border-ink-steel focus:ring-1 focus:ring-ink/10"
-                        placeholder="Paste the report text here. You can add a full section, a short excerpt, or the complete report if needed."
-                      />
-                    </div>
-                  )}
-                </section>
-
-                <aside className="cg-tool-panel p-5 sm:p-6">
-                  <div className="mb-5">
-                    <h3 className="text-base font-semibold text-ink">Report details</h3>
-                    <p className="mt-1 text-sm leading-6 text-ink-steel">
-                      {isAdmin
-                        ? 'Labels are optional for managed uploads.'
-                        : 'Give the report a clear name.'}
-                    </p>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div>
-                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-ink-steel">
-                        Report title <span className="text-ink-stone">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={uploadForm.title}
-                        onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-                        className="w-full rounded-lg border border-hairline px-3 py-2 text-sm text-ink outline-none transition focus:border-ink-steel focus:ring-1 focus:ring-ink/10"
-                        placeholder={uploadedFile?.name || 'Enter document title'}
-                      />
-                    </div>
-
-                    {isAdmin && (
-                      <>
-                        <div>
-                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-ink-steel">
-                            Category
-                          </label>
-                          <select
-                            value={uploadForm.domain}
-                            onChange={(e) => setUploadForm({ ...uploadForm, domain: e.target.value })}
-                            className="w-full rounded-lg border border-hairline px-3 py-2 text-sm text-ink outline-none transition focus:border-ink-steel focus:ring-1 focus:ring-ink/10"
-                          >
-                            <option value="general">General</option>
-                            <option value="esg_report">ESG report</option>
-                            <option value="academic">Academic prior</option>
-                            <option value="regulatory">Regulatory context</option>
-                            <option value="news">News</option>
-                            <option value="environmental">Environmental</option>
-                            <option value="social">Social</option>
-                            <option value="governance">Governance</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-ink-steel">
-                            Source type
-                          </label>
-                          <select
-                            value={uploadForm.source_type}
-                            onChange={(e) => setUploadForm({ ...uploadForm, source_type: e.target.value })}
-                            className="w-full rounded-lg border border-hairline px-3 py-2 text-sm text-ink outline-none transition focus:border-ink-steel focus:ring-1 focus:ring-ink/10"
-                          >
-                            <option value="">Auto-detect</option>
-                            <option value="corporate_disclosure">Corporate disclosure</option>
-                            <option value="peer_reviewed">Peer reviewed</option>
-                            <option value="regulatory_doc">Regulatory document</option>
-                            <option value="analyst_report">Analyst report</option>
-                            <option value="news_article">News article</option>
-                          </select>
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => handleUpload()}
-                    disabled={uploadDisabled}
-                    className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-ink-charcoal active:translate-y-[0.5px] disabled:cursor-not-allowed disabled:bg-hairline disabled:text-ink-muted"
-                  >
-                    {isUploading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>{uploadStage ? `${uploadStage}…` : 'Processing…'}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Database className="h-4 w-4" />
-                        <span>Index this report</span>
-                      </>
-                    )}
-                  </button>
-
-                  {isUploading && (
-                    <div className="mt-4 space-y-2">
-                      <div className="flex items-center justify-between text-xs text-ink-steel">
-                        <span className="truncate">{uploadMessage || uploadStage || 'Processing'}</span>
-                        <span className="ml-2 shrink-0 font-mono text-[12px] font-semibold text-ink-charcoal">
-                          {uploadProgress}%
-                        </span>
-                      </div>
-                      <div className="h-1.5 overflow-hidden rounded-full bg-surface-soft">
-                        <div
-                          className="h-full bg-ink transition-all duration-500"
-                          style={{ width: `${Math.max(4, uploadProgress)}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </aside>
-              </div>
-            </motion.div>
-          )}
-
-	          {activeTab === 'documents' && (
-	            <motion.div
-	              initial={{ opacity: 0, y: 20 }}
-	              animate={{ opacity: 1, y: 0 }}
-	              className="grid min-w-0 gap-4 2xl:grid-cols-[minmax(280px,360px),minmax(0,1fr)]"
-	            >
-	              <div className="cg-tool-panel min-w-0 p-4 sm:p-5">
-	                <div className="mb-5 flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="font-display text-[22px] font-semibold leading-[1.25] tracking-normal text-ink">
-                      Library
-                    </h2>
-                    <p className="mt-1 text-sm text-ink-steel">Pick reports for focused questions.</p>
-                  </div>
-                  <span className="cg-chip font-mono text-[11px] text-ink-charcoal">
-                    {documents.length} items
-                  </span>
-                </div>
-                {documentsError && (
-                  <div
-                    className="mb-4 rounded-md border px-3 py-2 text-sm"
-                    style={{
-                      borderColor: 'var(--cg-warn-border)',
-                      background: 'var(--cg-warn-bg)',
-                      color: 'var(--cg-warn)',
-                    }}
-                  >
-                    {documentsError}
-                  </div>
-                )}
-                {isDocumentsLoading && (
-                  <div className="mb-4 flex items-center gap-2 text-sm text-ink-steel">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    <span>Loading documents from backend…</span>
-                  </div>
-                )}
-                <div className="space-y-3">
-                  {documents.map((doc) => {
-                    const inQueryScope = queryDocumentIds.includes(doc.id);
-                    const canAddToScope = inQueryScope || queryDocumentIds.length < 3;
-                    return (
-                    <div
-                      key={doc.id}
-                      className={`group min-w-0 cursor-pointer p-4 ${
-                        selectedDocument?.id === doc.id
-	                          ? 'cg-list-row cg-list-row-active'
-                          : 'cg-list-row'
-                      }`}
-                      onClick={() => {
-                        void selectDocument(doc);
-                      }}
-                    >
-	                      <div className="flex min-w-0 items-start justify-between gap-3">
-	                        <div className="min-w-0 flex-1">
-	                          <h3 className="mb-2 line-clamp-2 break-words font-display text-[15px] font-semibold leading-[1.4] tracking-normal text-ink">
-	                            {doc.title}
-	                          </h3>
-	                          <p className="text-sm text-ink-steel">
-                              {doc.graph?.metadata?.node_count || 0} concepts · {doc.relationship_count ?? (doc.relationships?.length || 0)} relationships
-                            </p>
-	                          {doc.source && (
-	                            <p className="mt-1 line-clamp-1 break-words text-xs text-ink-stone">{doc.source}</p>
-	                          )}
-	                        </div>
-                        <div className="flex items-start gap-1">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setQueryScopeMode('selected');
-                              setQueryDocumentIds((prev) => {
-                                if (prev.includes(doc.id)) {
-                                  return prev.filter((id) => id !== doc.id);
-                                }
-                                if (prev.length >= 3) return prev;
-                                return [...prev, doc.id];
-                              });
-                            }}
-                            disabled={!canAddToScope}
-                            className={`inline-flex h-6 items-center rounded-md border px-2 text-[10px] font-semibold uppercase tracking-[0.08em] transition ${
-                              inQueryScope
-                                ? 'border-ink bg-ink text-white'
-                                : canAddToScope
-                                  ? 'border-hairline bg-white text-ink-charcoal hover:border-hairline hover:text-ink'
-                                  : 'cursor-not-allowed border-hairline bg-surface-soft text-ink-stone'
-                            }`}
-                            title={inQueryScope ? 'Remove from query scope' : canAddToScope ? 'Add to query scope' : 'You can select up to 3 documents'}
-                          >
-                            {inQueryScope ? 'Selected' : canAddToScope ? 'Use' : 'Max 3'}
-                          </button>
-                          {isAdmin && (() => {
-                            const isLoading = loadingDocumentId === doc.id;
-                            const synced = Boolean(doc.neo4j_sync?.synced);
-                            const syncEnabled = doc.neo4j_sync?.enabled !== false;
-                            const failed = syncEnabled && !synced && !isLoading && Boolean(doc.neo4j_sync?.reason);
-                            if (isLoading) {
-                              return (
-                                <span className="mt-1 inline-flex h-5 w-5 items-center justify-center" title="Loading detail">
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin text-ink-steel" />
-                                </span>
-                              );
-                            }
-                            if (synced) {
-                              return (
-                                <span
-                                  className="mt-1 inline-flex h-5 w-5 items-center justify-center"
-                                  title="Synced to Neo4j"
-                                >
-                                  <CheckCircle2 className="h-3.5 w-3.5" style={{ color: 'var(--cg-success)' }} />
-                                </span>
-                              );
-                            }
-                            if (failed) {
-                              return (
-                                <span
-                                  className="mt-1 inline-flex h-5 w-5 items-center justify-center"
-                                  title={doc.neo4j_sync?.reason || 'Sync failed'}
-                                >
-                                  <AlertCircle className="h-3.5 w-3.5" style={{ color: 'var(--cg-warn)' }} />
-                                </span>
-                              );
-                            }
-                            return (
-                              <span className="mt-1 inline-flex h-5 w-5 items-center justify-center" title="Not synced">
-                                <Circle className="h-3 w-3 text-ink-faint" />
-                              </span>
-                            );
-                          })()}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              exportGraph(doc, 'json');
-                            }}
-                            className="rounded-md p-1.5 text-ink-steel opacity-100 transition hover:bg-surface-soft hover:text-ink sm:opacity-0 sm:group-hover:opacity-100"
-                            title="Export graph"
-                          >
-                            <Download className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteDocument(doc.id);
-                            }}
-                            className="rounded-md p-1.5 text-ink-steel opacity-100 transition hover:bg-red-50 hover:text-red-600 sm:opacity-0 sm:group-hover:opacity-100"
-                            title="Delete report"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )})}
-                </div>
-	              </div>
-	              {selectedDocument && (
-	                <div className="cg-tool-panel min-w-0 p-4 sm:p-5 lg:p-6">
-	                  <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-	                    <div className="min-w-0">
-	                      <h3 className="break-words text-2xl font-semibold leading-tight text-ink">{selectedDocument.title}</h3>
-	                      <p className="mt-1 text-sm text-ink-steel">Overview of what was extracted from this report.</p>
-                        {loadingDocumentId === selectedDocument.id && (
-                          <p className="mt-2 text-sm text-ink-steel">Loading document detail...</p>
-                        )}
-	                    </div>
-                    <button
-                      onClick={() => setActiveTab('chat')}
-                      className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink-charcoal"
-                    >
-                      Query corpus
-                    </button>
-                  </div>
-                  <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    <div className="cg-tool-panel-soft p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-ink-steel">Concepts</div>
-                      <div className="mt-2 text-3xl font-semibold text-ink">{selectedDocument.graph?.metadata?.node_count || 0}</div>
-                    </div>
-                    <div className="cg-tool-panel-soft p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-ink-steel">Connections</div>
-                      <div className="mt-2 text-3xl font-semibold text-ink">{selectedDocument.graph?.metadata?.edge_count || 0}</div>
-                    </div>
-                    <div className="cg-tool-panel-soft p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-ink-steel">Structure</div>
-                      <div className="mt-2 text-2xl font-semibold text-ink">
-                        {selectedDocument.graph?.metadata?.is_acyclic ? 'Acyclic' : 'Cyclic'}
-                      </div>
-                    </div>
-                  </div>
-
-                  {isAdmin && (
-                    <div className="cg-tool-panel-soft mb-6 p-4">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-hairline bg-white text-ink-charcoal">
-                          <Database className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h4 className="text-sm font-semibold text-ink">Neo4j persistence</h4>
-                            <span
-                              className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                                neo4jConnected
-                                  ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
-                                  : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
-                              }`}
-                            >
-                              {neo4jConnected ? 'Connected' : 'Unavailable'}
-                            </span>
-                          </div>
-                          <p className="mt-1 break-words text-sm text-ink-steel">
-                            {neo4jStatus
-                              ? neo4jConnected
-                                ? 'Graph persistence is online.'
-                                : neo4jStatus.message || neo4jStatus.reason || 'Neo4j status check failed.'
-                              : 'Checking Neo4j status...'}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={handleOpenFullGraph}
-                          className="inline-flex items-center justify-center rounded-lg border border-hairline bg-white px-3 py-2 text-sm font-medium text-ink-charcoal transition hover:bg-surface-soft"
-                        >
-                          <Network className="mr-2 h-4 w-4" />
-                          Open full graph
-                        </button>
-                        <button
-                          onClick={() => setActiveTab('upload')}
-                          className="inline-flex items-center justify-center rounded-lg border border-hairline bg-white px-3 py-2 text-sm font-medium text-ink-charcoal transition hover:bg-surface-soft"
-                        >
-                          Add report
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                      {[
-                        ['Documents', neo4jCounts.document_count],
-                        ['Chunks', neo4jCounts.chunk_count],
-                        ['Entities', neo4jCounts.entity_count],
-                        ['Relations', neo4jCounts.relation_count],
-                        ['Mentions', neo4jCounts.mention_count],
-                      ].map(([label, value]) => (
-                        <div key={label} className="rounded-lg border border-hairline bg-white p-3">
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-steel">{label}</div>
-                          <div className="mt-1 text-xl font-semibold text-ink">{typeof value === 'number' ? value : '-'}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {selectedNeo4jSync && (
-                      <div className="mt-3 rounded-lg border border-hairline bg-white px-3 py-2 text-sm text-ink-charcoal">
-                        Current report sync: {selectedNeo4jSync.synced ? 'synced' : selectedNeo4jSync.reason || 'not synced'}
-                        {selectedNeo4jSync.synced && (
-                          <>
-                            {' '}· {selectedNeo4jSync.chunks_synced || 0} chunks
-                            {' '}· {selectedNeo4jSync.entities_synced || 0} entities
-                            {' '}· {selectedNeo4jSync.relations_synced || 0} relations
-                          </>
-                        )}
-                      </div>
-                    )}
-                    </div>
-                  )}
-
-                  <div className="mb-6">
-                    <div className="flex flex-col gap-3 border-b border-hairline pb-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h4 className="text-base font-semibold text-ink">Graph explorer</h4>
-                        <p className="mt-1 text-sm text-ink-steel">
-                          Open this only when you need node-level evidence.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsDocumentGraphOpen(prev => !prev)}
-                        className="inline-flex items-center justify-center rounded-full border border-hairline bg-white px-4 py-2 text-sm font-semibold text-ink-charcoal transition hover:border-ink hover:text-ink"
-                      >
-                        {isDocumentGraphOpen ? 'Hide graph' : 'Show graph'}
-                      </button>
-                    </div>
-                    {isDocumentGraphOpen && (
-                      <div className="mt-4 space-y-4">
-                        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr),360px]">
-                          <div className="min-w-0 space-y-4">
-                            <div className="grid gap-3 lg:grid-cols-3">
-                              <div className="cg-tool-panel-soft p-4">
-                                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-steel">Focused graph</div>
-                                <div className="mt-2 text-base font-semibold text-ink">{graphViewTitle}</div>
-                                <p className="mt-1 text-sm text-ink-steel">
-                                  {neo4jGraphState === 'ready'
-                                    ? 'Rendered from the Neo4j subgraph for the current report.'
-                                    : 'Rendered from the local extracted graph for this report.'}
-                                </p>
-                              </div>
-                              <div className="cg-tool-panel-soft p-4">
-                                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-steel">Domain mix</div>
-                                <div className="mt-3 flex flex-wrap gap-2">
-                                  {graphDomainBreakdown.length > 0 ? graphDomainBreakdown.map(([domain, count]) => (
-                                    <span key={domain} className="rounded-full border border-hairline bg-white px-3 py-1 text-sm text-ink-charcoal">
-                                      {GRAPH_DOMAIN_LABELS[domain] || domain}: {count}
-                                    </span>
-                                  )) : (
-                                    <span className="text-sm text-ink-steel">No domain metadata available.</span>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="cg-tool-panel-soft p-4">
-                                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-steel">Top connected</div>
-                                <div className="mt-3 space-y-2">
-                                  {graphTopNodes.slice(0, 3).map(node => (
-                                    <button
-                                      key={node.id}
-                                      onClick={() => {
-                                        setSelectedGraphNodeId(node.id);
-                                        setSelectedGraphEdgeId(null);
-                                      }}
-                                      className="flex w-full items-center justify-between rounded-lg border border-hairline bg-white px-3 py-2 text-left text-sm text-ink-charcoal transition hover:border-hairline hover:bg-surface"
-                                    >
-                                      <span className="truncate pr-3">{node.label}</span>
-                                      <span className="shrink-0 text-xs text-ink-stone">{node.degree} links</span>
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="cg-tool-panel p-4">
-                              <div className="mb-3 flex items-center justify-between">
-                                <div>
-                                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-steel">Detail graph</div>
-                                  <div className="mt-1 text-base font-semibold text-ink">{graphViewTitle}</div>
-                                </div>
-                                <div className="text-right">
-                                  <div className="text-xs font-medium uppercase tracking-[0.14em] text-ink-stone">
-                                    {neo4jGraphState === 'ready' ? 'Neo4j' : 'Local'}
-                                  </div>
-                                  <div className="mt-1 text-sm text-ink-steel">
-                                    {neo4jGraphState === 'ready'
-                                      ? 'Focused subgraph from the current report'
-                                      : neo4jGraphState === 'loading'
-                                        ? 'Loading Neo4j subgraph...'
-                                        : 'Local graph fallback'}
-                                  </div>
-                                </div>
-                              </div>
-
-                              {neo4jGraphState === 'loading' ? (
-                                <div className="flex h-[420px] items-center justify-center rounded-xl border border-hairline bg-surface-soft text-ink-steel">
-                                  <Loader2 className="mr-3 h-5 w-5 animate-spin" />
-                                  Loading focused graph view...
-                                </div>
-                              ) : displayedGraph ? (
-                                displayedGraph.nodes.length > 0 ? (
-		                              <GraphVisualizer
-                                  graph={displayedGraph}
-                                  height={520}
-                                  focusNodeId={selectedGraphNodeId || graphFocusNodeId}
-                                  selectedNodeId={selectedGraphNodeId}
-                                  selectedEdgeId={selectedGraphEdgeId}
-                                  highlightPath={highlightPath}
-                                  onNodeSelect={(node: GraphNode) => {
-                                    setSelectedGraphNodeId(node.id);
-                                    setSelectedGraphEdgeId(null);
-                                    setHighlightPath(null);
-                                  }}
-                                  onEdgeSelect={(edge: GraphEdge) => {
-                                    setSelectedGraphEdgeId(getGraphEdgeId(edge));
-                                    setSelectedGraphNodeId(null);
-                                    setHighlightPath(null);
-                                  }}
-                                />
-                                ) : (
-                                  <div className="cg-empty-state py-12 text-center text-ink-steel">
-                                    <Database className="mx-auto mb-3 h-12 w-12 text-ink-faint" />
-                                    <p className="text-lg font-medium">No graph data available</p>
-                                    <p className="text-sm">This report does not have enough connected entities to render a graph.</p>
-                                  </div>
-                                )
-                              ) : (
-		                              <div className="cg-empty-state py-12 text-center text-ink-steel">
-                                  <Database className="mx-auto mb-3 h-12 w-12 text-ink-faint" />
-                                  <p className="text-lg font-medium">No graph data available</p>
-                                  <p className="text-sm">This document does not have a graph visualization yet.</p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="cg-tool-panel-soft p-4">
-                            <div className="mb-4 flex items-center justify-between">
-                              <div>
-                                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-steel">Inspector</div>
-                                <div className="mt-1 text-base font-semibold text-ink">
-                                  {selectedGraphEdge ? 'Relationship detail' : selectedGraphNode ? 'Entity detail' : 'Graph detail'}
-                                </div>
-                              </div>
-                              <button
-                                onClick={() => {
-                                  setSelectedGraphEdgeId(null);
-                                  setSelectedGraphNodeId(graphFocusNodeId);
-                                }}
-                                className="rounded-lg border border-hairline bg-white px-3 py-1.5 text-xs font-medium text-ink-charcoal transition hover:bg-surface-soft"
-                              >
-                                Reset
-                              </button>
-                            </div>
-
-                            {selectedGraphEdge ? (
-                              <div className="space-y-3">
-                                <div className="rounded-xl border border-hairline bg-white p-4">
-                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-steel">Relationship</div>
-                                  <div className="mt-2 text-base font-semibold text-ink">
-                                    {formatGraphLabel(selectedGraphEdge.relationship_type)}
-                                  </div>
-                                  <div className="mt-3 grid gap-3">
-                                    <div className="rounded-lg border border-hairline bg-surface p-3">
-                                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-steel">Source node</div>
-                                      <div className="mt-1 text-sm font-semibold text-ink">
-                                        {displayedGraph?.nodes.find((node: GraphNode) => node.id === selectedGraphEdge.source)?.label || selectedGraphEdge.source}
-                                      </div>
-                                    </div>
-                                    <div className="rounded-lg border border-hairline bg-white p-3">
-                                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-steel">Relationship detail</div>
-                                      <div className="mt-1 text-sm text-ink-charcoal">
-                                        Confidence {(selectedGraphEdge.confidence * 100).toFixed(0)}%
-                                      </div>
-                                      <p className="mt-2 text-sm leading-6 text-ink-charcoal">
-                                        {selectedGraphEdge.evidence || 'No evidence snippet available for this edge.'}
-                                      </p>
-                                    </div>
-                                    <div className="rounded-lg border border-hairline bg-surface p-3">
-                                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-steel">Target node</div>
-                                      <div className="mt-1 text-sm font-semibold text-ink">
-                                        {displayedGraph?.nodes.find((node: GraphNode) => node.id === selectedGraphEdge.target)?.label || selectedGraphEdge.target}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            ) : selectedGraphNode ? (
-                              <div className="space-y-3">
-                                <div className="rounded-xl border border-hairline bg-white p-4">
-                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-steel">Entity</div>
-                                  <div className="mt-2 text-base font-semibold text-ink">{selectedGraphNode.label}</div>
-                                  <div className="mt-2 text-sm text-ink-charcoal">
-                                    {formatGraphLabel(selectedGraphNode.type)} · {GRAPH_DOMAIN_LABELS[normalizeGraphDomain(selectedGraphNode.domain)] || selectedGraphNode.domain}
-                                  </div>
-                                  {selectedGraphNode.description && (
-                                    <p className="mt-3 text-sm leading-6 text-ink-charcoal">{selectedGraphNode.description}</p>
-                                  )}
-                                </div>
-                                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                                  <div className="rounded-xl border border-hairline bg-white p-3">
-                                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-steel">Connections</div>
-                                    <div className="mt-2 text-base font-semibold text-ink">
-                                      {graphDegreeMap.get(selectedGraphNode.id) || 0}
-                                    </div>
-                                  </div>
-                                  <div className="rounded-xl border border-hairline bg-white p-3">
-                                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-steel">Confidence</div>
-                                    <div className="mt-2 text-base font-semibold text-ink">
-                                      {(selectedGraphNode.confidence * 100).toFixed(0)}%
-                                    </div>
-                                  </div>
-                                  {(selectedGraphNode.company || selectedGraphNode.year) && (
-                                    <div className="rounded-xl border border-hairline bg-white p-3 sm:col-span-2 xl:col-span-1">
-                                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-steel">Context</div>
-                                      <div className="mt-2 text-sm text-ink-charcoal">
-                                        {[selectedGraphNode.company, selectedGraphNode.year].filter(Boolean).join(' · ')}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="rounded-xl border border-hairline bg-white p-3">
-                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-steel">Connected relationships</div>
-                                  <div className="mt-2 space-y-2">
-                                    {displayedGraph?.edges
-                                      .filter((edge: GraphEdge) => edge.source === selectedGraphNode.id || edge.target === selectedGraphNode.id)
-                                      .slice(0, 4)
-                                      .map((edge: GraphEdge) => (
-                                        <button
-                                          key={getGraphEdgeId(edge)}
-                                          onClick={() => {
-                                            setSelectedGraphEdgeId(getGraphEdgeId(edge));
-                                            setSelectedGraphNodeId(null);
-                                          }}
-                                          className="flex w-full items-center justify-between rounded-lg border border-hairline bg-surface px-3 py-2 text-left text-sm text-ink-charcoal transition hover:border-hairline hover:bg-white"
-                                        >
-                                          <span className="truncate pr-3">{formatGraphLabel(edge.relationship_type)}</span>
-                                          <span className="shrink-0 text-xs text-ink-stone">
-                                            {(edge.confidence * 100).toFixed(0)}%
-                                          </span>
-                                        </button>
-                                      ))}
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="space-y-3">
-                                <div className="rounded-xl border border-hairline bg-white p-4">
-                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-steel">Current focus</div>
-                                  <div className="mt-2 text-base font-semibold text-ink">
-                                    {displayedGraph?.nodes.find((node: GraphNode) => node.id === graphFocusNodeId)?.label || 'No focus entity'}
-                                  </div>
-                                  <p className="mt-2 text-sm leading-6 text-ink-charcoal">
-                                    Select a node or edge to inspect its meaning, type, and evidence in the current drill-down.
-                                  </p>
-                                </div>
-                                <div className="rounded-xl border border-hairline bg-white p-4">
-                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-steel">Reading hint</div>
-                                  <p className="mt-2 text-sm leading-6 text-ink-charcoal">
-                                    Select a node or edge in the graph to inspect its context, evidence, and connected relationships here.
-                                  </p>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-	                      <h4 className="text-lg font-medium text-ink">Key relationships</h4>
-	                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <div className="relative">
-                          <input
-                            ref={searchInputRef}
-                            type="text"
-                            placeholder="Search relationships"
-                            value={searchTerm}
-                            className="w-full rounded-lg border border-hairline bg-white px-3 py-2 pr-8 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-hairline sm:w-64"
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                          />
-                          {searchTerm && (
-                            <button
-                              onClick={() => setSearchTerm('')}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-stone hover:text-ink-charcoal"
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
-                        <select
-                          value={filterType}
-                          onChange={(e) => setFilterType(e.target.value)}
-                          className="w-full rounded-lg border border-hairline bg-white px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-hairline sm:w-auto"
-                        >
-                          <option value="">All Types</option>
-                          <option value="causes">Causes</option>
-                          <option value="influences">Influences</option>
-                          <option value="leads_to">Leads To</option>
-                          <option value="affects">Affects</option>
-                          <option value="improves">Improves</option>
-                          <option value="harms">Harms</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="text-sm text-ink-steel mb-3">
-                      Showing {filteredSelectedRelationships.length} of {selectedDocument.relationships?.length || 0} relationships
-                    </div>
-                    <div className="space-y-3">
-                      {filteredSelectedRelationships.length === 0 && (
-	                        <div className="cg-empty-state py-10 text-center text-ink-steel">
-                          <Search className="mx-auto mb-3 h-10 w-10 text-ink-faint" />
-                          <p className="text-lg font-medium">No relationships found</p>
-                          <p className="text-sm">Try a broader search or clear the current filters.</p>
-                        </div>
-                      )}
-                      {filteredSelectedRelationships.map((rel, index) => (
-	                        <div key={index} className="rounded-lg border border-hairline bg-white p-4">
-                          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                            <div className="flex-1 text-sm">
-                              <span className="font-semibold text-ink">{rel.cause}</span>
-                              <span className="mx-2 text-ink-stone">→</span>
-                              <span className="font-semibold text-ink">{rel.effect}</span>
-                            </div>
-                            <div className="flex items-center gap-3 text-xs">
-	                              <span className="rounded-md bg-surface-soft px-2.5 py-1 font-medium text-ink-charcoal">{rel.relationship_type}</span>
-                              <span className="text-ink-steel">{(rel.confidence * 100).toFixed(0)}% confidence</span>
-                            </div>
-                          </div>
-                          {rel.evidence && <p className="mt-3 border-l-2 border-hairline pl-3 text-sm leading-6 text-ink-charcoal">Evidence: {rel.evidence}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          )}
-
+        {activeTab === 'chat' ? (
+          renderChatView()
+        ) : (
+          <div className="cg-scroll min-h-0 flex-1 overflow-y-auto">
+            {activeTab === 'documents' && renderLibraryView()}
+            {activeTab === 'upload' && renderUploadView()}
+            {activeTab === 'skills' && renderSkillsView()}
           </div>
-        </main>
+        )}
+      </div>
+    </div>
+  );
+};
 
-	    </div>
-	  </div>
-	  );
-	};
 export default Agent;

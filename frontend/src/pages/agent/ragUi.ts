@@ -104,21 +104,21 @@ export const formatSourceChipLabel = (source: RagSource): string => {
 export const getLoadingSteps = (tier: RagReasoningMode) => {
   if (tier === 'deep') {
     return [
-      'Routing query...',
-      'Decomposing question...',
-      'Layered search across current / historical / regulatory...',
-      'Reading top sources...',
-      'Pulling graph context...',
-      'Composing structured analysis...',
-      'Citing evidence...',
-      'Finalising answer...',
+      'Reading the question…',
+      'Breaking the question down…',
+      'Searching current, historical and regulatory sources…',
+      'Reading the most relevant passages…',
+      'Checking the graph…',
+      'Working through the evidence…',
+      'Adding citations…',
+      'Finishing the answer…',
     ];
   }
   return [
-    'Routing query...',
-    'Searching reports...',
-    'Reading top sources...',
-    'Writing answer...',
+    'Reading the question…',
+    'Searching the reports…',
+    'Reading the most relevant passages…',
+    'Writing the answer…',
   ];
 };
 
@@ -144,4 +144,44 @@ export const normalizeStreamingMarkdown = (value: string): string => {
     return `${normalized}\n\`\`\``;
   }
   return normalized;
+};
+
+const CITATION_PATTERN = /\[([^[\]\n]{1,200})\](?!\()/g;
+const CITATION_SEPARATOR = /\s*[,;，；]\s*/;
+
+/**
+ * Turn inline evidence markers such as `[chunk_3]` or `[chunk_3, chunk_7]`
+ * into numbered markdown links (`[1](#cite-1)`) that the answer renderer
+ * shows as citation buttons. Only markers whose ids all match a cited source
+ * are rewritten; anything else — graph markers, prose in brackets, fenced
+ * code — is left untouched.
+ */
+export const linkCitations = (markdown: string, sources: RagSource[]): string => {
+  if (!markdown || !sources.length) return markdown;
+  const numberById = new Map<string, number>();
+  sources.forEach((source, index) => {
+    const id = String(source.chunk_id || '').trim();
+    if (id && !numberById.has(id)) numberById.set(id, index + 1);
+  });
+  if (numberById.size === 0) return markdown;
+
+  const linkSegment = (segment: string) =>
+    segment.replace(CITATION_PATTERN, (match, inner: string) => {
+      const ids = inner.split(CITATION_SEPARATOR).map((id) => id.trim()).filter(Boolean);
+      if (!ids.length || !ids.every((id) => numberById.has(id))) return match;
+      return ids.map((id) => `[${numberById.get(id)}](#cite-${numberById.get(id)})`).join('');
+    });
+
+  // Leave fenced code blocks and inline code spans exactly as written.
+  return markdown
+    .split(/(```[\s\S]*?(?:```|$))/g)
+    .map((block) => (
+      block.startsWith('```')
+        ? block
+        : block
+          .split(/(`[^`\n]*`)/g)
+          .map((part) => (part.startsWith('`') ? part : linkSegment(part)))
+          .join('')
+    ))
+    .join('');
 };

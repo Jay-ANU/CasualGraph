@@ -1,5 +1,4 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphData, GraphEdge, GraphHighlightPath, GraphNode } from '../types/graph';
 
 interface KnowledgeGraphViewProps {
@@ -29,12 +28,9 @@ type ClusterDefinition = {
   key: DomainKey;
   tabLabel: string;
   label: string;
-  short: string;
-  relationship: string;
   description: string;
   color: string;
   textColor: string;
-  softFill: string;
   ringFill: string;
   categories: ClusterCategory[];
 };
@@ -66,18 +62,16 @@ type CloudNode = {
   categoryIndex: number;
 };
 
+// Colours match the domain tokens in src/styles/cg-tokens.css.
 const CLUSTERS: ClusterDefinition[] = [
   {
     key: 'environmental',
     tabLabel: 'Environmental',
     label: 'Environmental',
-    short: 'E',
-    relationship: 'has_impact_on',
-    description: 'Climate, resource, and environmental operating signals extracted from disclosures.',
-    color: '#1ba673',
-    textColor: '#0f6f4d',
-    softFill: '#f0fff4',
-    ringFill: 'rgba(27, 166, 115, 0.10)',
+    description: 'Climate, energy, water, waste and other resource topics.',
+    color: '#2F7D5B',
+    textColor: '#24634A',
+    ringFill: 'rgba(47, 125, 91, 0.06)',
     categories: [
       { label: 'Climate Strategy', type: 'Strategy', keywords: ['climate', 'carbon neutral', 'net zero', 'transition'] },
       { label: 'Emissions', type: 'Metric', keywords: ['emission', 'scope 1', 'scope 2', 'scope 3', 'ghg', 'carbon'] },
@@ -90,13 +84,10 @@ const CLUSTERS: ClusterDefinition[] = [
     key: 'social',
     tabLabel: 'Social',
     label: 'Social',
-    short: 'S',
-    relationship: 'influences',
-    description: 'Workforce, supplier, community, and human-rights signals connected to report evidence.',
-    color: '#1456f0',
-    textColor: '#17437d',
-    softFill: '#f2f7ff',
-    ringFill: 'rgba(20, 86, 240, 0.10)',
+    description: 'Workforce, suppliers, communities and human rights.',
+    color: '#3D64C4',
+    textColor: '#2F4F9E',
+    ringFill: 'rgba(61, 100, 196, 0.06)',
     categories: [
       { label: 'Workforce Safety', type: 'Control', keywords: ['safety', 'injury', 'workforce', 'employee health'] },
       { label: 'Diversity & Inclusion', type: 'Metric', keywords: ['diversity', 'inclusion', 'dei', 'gender', 'representation'] },
@@ -109,13 +100,10 @@ const CLUSTERS: ClusterDefinition[] = [
     key: 'governance',
     tabLabel: 'Governance',
     label: 'Governance',
-    short: 'G',
-    relationship: 'governs',
-    description: 'Oversight, controls, ethics, compliance, and risk-management structure.',
-    color: '#d99018',
-    textColor: '#8a5600',
-    softFill: '#fff8ec',
-    ringFill: 'rgba(217, 144, 24, 0.13)',
+    description: 'Board oversight, controls, ethics, compliance and risk.',
+    color: '#B07A1E',
+    textColor: '#86601A',
+    ringFill: 'rgba(176, 122, 30, 0.07)',
     categories: [
       { label: 'Board Oversight', type: 'Oversight', keywords: ['board', 'committee', 'oversight', 'director'] },
       { label: 'Audit Controls', type: 'Control', keywords: ['audit', 'assurance', 'internal control', 'verification'] },
@@ -127,14 +115,11 @@ const CLUSTERS: ClusterDefinition[] = [
   {
     key: 'ai',
     tabLabel: 'AI',
-    label: 'AI Intelligence',
-    short: 'AI',
-    relationship: 'powers',
-    description: 'Document understanding and reasoning capabilities that turn reports into graph context.',
-    color: '#8b5cf6',
-    textColor: '#6d3fd6',
-    softFill: '#f7f4ff',
-    ringFill: 'rgba(139, 92, 246, 0.12)',
+    label: 'AI and data',
+    description: 'Artificial intelligence, data and model topics mentioned in the reports.',
+    color: '#7B5BC0',
+    textColor: '#5F4599',
+    ringFill: 'rgba(123, 91, 192, 0.06)',
     categories: [
       { label: 'Document Parsing', type: 'Capability', keywords: ['parse', 'parsing', 'document', 'pdf', 'chunk'] },
       { label: 'Retrieval', type: 'Capability', keywords: ['retrieval', 'rag', 'search', 'vector', 'embedding'] },
@@ -146,6 +131,7 @@ const CLUSTERS: ClusterDefinition[] = [
 ];
 
 const CLUSTER_BY_KEY = new Map(CLUSTERS.map((cluster) => [cluster.key, cluster]));
+const LINE_STRONG = '#D5D1C8';
 
 const normalizeDomainKey = (value: string) => {
   const normalized = String(value || 'general').toLowerCase();
@@ -187,7 +173,7 @@ const formatTypeLabel = (value: string) => value.replace(/_/g, ' ');
 
 const truncateLabel = (value: string, limit = 28) => {
   if (value.length <= limit) return value;
-  return `${value.slice(0, limit - 1)}...`;
+  return `${value.slice(0, limit - 1)}…`;
 };
 
 const splitLabel = (value: string, maxLineLength = 14) => {
@@ -289,11 +275,12 @@ const buildClusterLayouts = (
   graph: GraphData,
   canvasWidth: number,
   canvasHeight: number,
-  compact: boolean
+  compact: boolean,
+  narrow = false
 ): ClusterLayout[] => {
   const degreeMap = getDegreeMap(graph);
   const positions = clusterPositions(canvasWidth, canvasHeight, compact);
-  const clusterRadius = Math.max(compact ? 54 : 76, Math.min(canvasWidth, canvasHeight) * (compact ? 0.17 : 0.2));
+  const clusterRadius = Math.max(compact ? 54 : narrow ? 56 : 76, Math.min(canvasWidth, canvasHeight) * (compact ? 0.17 : 0.2));
   const categoryRadius = clusterRadius * (compact ? 0.62 : 0.66);
 
   return CLUSTERS.map((definition) => {
@@ -349,13 +336,9 @@ const buildClusterLayouts = (
 const summarizeGraph = (graph: GraphData) => ({
   nodes: graph.nodes.length,
   edges: graph.edges.length,
-  categories: CLUSTERS.length,
 });
 
-const compactNumber = (value: number) => {
-  if (value >= 10000) return `${(value / 1000).toFixed(0)}k`;
-  return value.toLocaleString();
-};
+const formatCount = (value: number) => value.toLocaleString();
 
 const getInitialClusterTab = (): ClusterTab => {
   if (typeof window === 'undefined') return 'overview';
@@ -375,27 +358,34 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
   onNodeSelect,
   onEdgeSelect,
 }) => {
-  const svgId = useId().replace(/:/g, '');
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(width);
   const initialTab = useMemo(() => compact ? 'overview' : getInitialClusterTab(), [compact]);
   const [activeTab, setActiveTab] = useState<ClusterTab>(initialTab);
-  const [inspectedCluster, setInspectedCluster] = useState<DomainKey>(initialTab === 'overview' ? 'ai' : initialTab);
+  const [inspectedCluster, setInspectedCluster] = useState<DomainKey>(initialTab === 'overview' ? 'environmental' : initialTab);
   const [inspectedCategoryId, setInspectedCategoryId] = useState<string | null>(null);
   const [internalSelectedNodeId, setInternalSelectedNodeId] = useState<string | null>(null);
   const [internalSelectedEdgeId, setInternalSelectedEdgeId] = useState<string | null>(null);
 
+  const hasNodes = graph.nodes.length > 0;
   const canvasWidth = Math.max(compact ? 260 : 300, Math.floor(containerWidth || width));
-  const canvasHeight = compact ? Math.min(height, 340) : height;
+  const narrow = canvasWidth < 560;
+  // On narrow screens the clusters sit closer together, so the canvas is
+  // shortened to keep them readable instead of floating in empty space.
+  const canvasHeight = compact
+    ? Math.min(height, 340)
+    : narrow
+      ? Math.min(height, Math.max(420, Math.round(canvasWidth * 1.3)))
+      : height;
   const stats = summarizeGraph(graph);
   const effectiveSelectedNodeId = selectedNodeId ?? internalSelectedNodeId;
   const effectiveSelectedEdgeId = selectedEdgeId ?? internalSelectedEdgeId;
   const clusterLayouts = useMemo(
-    () => buildClusterLayouts(graph, canvasWidth, canvasHeight, compact),
-    [graph, canvasWidth, canvasHeight, compact]
+    () => buildClusterLayouts(graph, canvasWidth, canvasHeight, compact, narrow),
+    [graph, canvasWidth, canvasHeight, compact, narrow]
   );
   const graphNodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
-  const inspectedLayout = clusterLayouts.find((cluster) => cluster.definition.key === inspectedCluster) || clusterLayouts[3];
+  const inspectedLayout = clusterLayouts.find((cluster) => cluster.definition.key === inspectedCluster) || clusterLayouts[0];
   const selectedNode = effectiveSelectedNodeId ? graphNodeById.get(effectiveSelectedNodeId) || null : null;
   const selectedEdge = effectiveSelectedEdgeId ? graph.edges.find((edge) => makeEdgeId(edge) === effectiveSelectedEdgeId) || null : null;
   const overviewClouds = useMemo(() => {
@@ -433,7 +423,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
     const observer = new ResizeObserver(updateWidth);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [width]);
+  }, [width, hasNodes]);
 
   useEffect(() => {
     if (!effectiveSelectedNodeId) return;
@@ -445,20 +435,20 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
     }
   }, [effectiveSelectedNodeId, graph.nodes]);
 
-  if (!graph.nodes.length) {
+  if (!hasNodes) {
     return (
-      <div className="cg-empty-state py-16 text-center">
-        <span className="cg-eyebrow block text-ink-stone">No real graph available</span>
-        <p className="mt-2 text-sm text-ink-steel">The backend did not return extracted nodes for this view.</p>
+      <div className="rounded-xl border border-dashed border-line-strong px-6 py-14 text-center">
+        <p className="font-medium text-ink">No graph data</p>
+        <p className="mt-1 text-sm text-ink-3">No extracted entities were returned for this view.</p>
       </div>
     );
   }
 
   const focusNode = focusNodeId ? graph.nodes.find((node) => node.id === focusNodeId) : null;
-  const coreLabel = focusNode?.label || 'CausalGraph Knowledge Graph';
+  const coreLabel = focusNode?.label || 'All reports';
   const coreX = canvasWidth / 2;
   const coreY = canvasHeight * (compact ? 0.51 : 0.52);
-  const coreRadius = compact ? 36 : 54;
+  const coreRadius = compact ? 34 : narrow ? 38 : 50;
 
   const handleClusterSelect = (cluster: ClusterLayout) => {
     setInspectedCluster(cluster.definition.key);
@@ -502,14 +492,14 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
   const renderDrilldownCanvas = (cluster: ClusterLayout) => {
     const definition = cluster.definition;
     const centerX = canvasWidth * 0.5;
-    const centerY = canvasHeight * 0.54;
-    const radius = Math.min(canvasWidth, canvasHeight) * (canvasWidth < 520 ? 0.3 : 0.36);
+    const centerY = canvasHeight * 0.5;
+    const radius = Math.min(canvasWidth, canvasHeight) * (narrow ? 0.3 : 0.36);
     const categoryCenters = definition.categories.map((category, index) => {
       const angle = -Math.PI / 2 + (index / definition.categories.length) * Math.PI * 2;
       return {
         category,
-        x: centerX + Math.cos(angle) * radius * 0.58,
-        y: centerY + Math.sin(angle) * radius * 0.48,
+        x: centerX + Math.cos(angle) * radius * 0.62,
+        y: centerY + Math.sin(angle) * radius * 0.52,
       };
     });
     const cloudNodes = buildCloudNodes(
@@ -517,68 +507,19 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
       definition,
       categoryCenters.map((category) => ({ x: category.x, y: category.y })),
       Math.max(10, radius * 0.18),
-      canvasWidth < 520 ? 1.25 : 1.55
+      narrow ? 1.25 : 1.55
     );
     const cloudNodeById = new Map(cloudNodes.map((node) => [node.node.id, node]));
     const visibleEdges = graph.edges
       .filter((edge) => inferEdgeDomain(edge) === definition.key)
       .filter((edge) => cloudNodeById.has(edge.source) && cloudNodeById.has(edge.target))
-      .slice(0, canvasWidth < 520 ? 80 : 260);
+      .slice(0, narrow ? 80 : 260);
     const selectedCloudNode = effectiveSelectedNodeId ? cloudNodeById.get(effectiveSelectedNodeId) : null;
 
     return (
-      <div ref={containerRef} className="min-w-0 overflow-hidden rounded-xl border border-hairline bg-white">
-        <svg viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} className="block w-full">
-          <defs>
-            <pattern id={`${svgId}-drill-grid`} width="32" height="32" patternUnits="userSpaceOnUse">
-              <path d="M32 0H0V32" fill="none" stroke="rgba(10,10,10,0.035)" strokeWidth="1" />
-            </pattern>
-            <filter id={`${svgId}-drill-shadow`} x="-30%" y="-30%" width="160%" height="160%">
-              <feDropShadow dx="0" dy="10" stdDeviation="12" floodColor="#0a0a0a" floodOpacity="0.10" />
-            </filter>
-          </defs>
-          <rect x="0" y="0" width={canvasWidth} height={canvasHeight} fill="#ffffff" />
-          <rect x="0" y="0" width={canvasWidth} height={canvasHeight} fill={`url(#${svgId}-drill-grid)`} />
-
-          {!compact && (
-            <g>
-              <rect
-                x={18}
-                y={18}
-                width={canvasWidth < 520 ? 128 : 148}
-                height={30}
-                rx={9}
-                fill="#ffffff"
-                stroke="#e5e7eb"
-                onClick={() => {
-                  setActiveTab('overview');
-                  setInspectedCategoryId(null);
-                }}
-                className="cursor-pointer"
-              />
-              <text
-                x={canvasWidth < 520 ? 82 : 92}
-                y={38}
-                textAnchor="middle"
-                className="fill-slate-900 text-[12px] font-semibold"
-                onClick={() => {
-                  setActiveTab('overview');
-                  setInspectedCategoryId(null);
-                }}
-              >
-                Back to overview
-              </text>
-              <text x={18} y={72} className="fill-slate-400 text-[11px] font-semibold uppercase tracking-[0.14em]">
-                Full subgraph
-              </text>
-              <text x={18} y={96} className="fill-slate-950 text-[18px] font-semibold">
-                {definition.label}
-              </text>
-              <text x={18} y={116} className="fill-slate-500 text-[12px]">
-                {cluster.nodeCount} real nodes · {cluster.edgeCount} real edges · {visibleEdges.length} visible links
-              </text>
-            </g>
-          )}
+      <div className="min-w-0 overflow-hidden rounded-xl border border-line bg-white">
+        <svg viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} className="block w-full" role="img" aria-label={`${definition.label} entities and relationships`}>
+          <rect x="0" y="0" width={canvasWidth} height={canvasHeight} fill="#FFFFFF" />
 
           <ellipse
             cx={centerX}
@@ -587,8 +528,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
             ry={radius * 1.1}
             fill={definition.ringFill}
             stroke={definition.color}
-            strokeOpacity={0.18}
-            strokeWidth={1.2}
+            strokeOpacity={0.16}
           />
 
           {visibleEdges.map((edge, index) => {
@@ -603,9 +543,9 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                 y1={source.y}
                 x2={target.x}
                 y2={target.y}
-                stroke={definition.color}
-                strokeOpacity={selected ? 0.72 : 0.09}
-                strokeWidth={selected ? 1.8 : 0.7}
+                stroke={selected ? definition.color : '#1A1915'}
+                strokeOpacity={selected ? 0.8 : 0.07}
+                strokeWidth={selected ? 1.6 : 0.7}
                 onClick={() => handleEdgeSelect(edge)}
                 className="cursor-pointer"
               />
@@ -622,9 +562,9 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                 cy={cloudNode.y}
                 r={selected || highlighted ? cloudNode.radius + 2.4 : cloudNode.radius}
                 fill={definition.color}
-                fillOpacity={selected || highlighted ? 0.95 : 0.48}
-                stroke={selected || highlighted ? '#0a0a0a' : '#ffffff'}
-                strokeWidth={selected || highlighted ? 1.6 : 0.45}
+                fillOpacity={selected || highlighted ? 1 : 0.5}
+                stroke={selected || highlighted ? '#1A1915' : 'none'}
+                strokeWidth={selected || highlighted ? 1.2 : 0}
                 onClick={() => handleNodeSelect(cloudNode.node)}
                 className="cursor-pointer"
               />
@@ -634,103 +574,47 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
           {categoryCenters.map((item, index) => {
             const count = cloudNodes.filter((node) => node.categoryIndex === index).length;
             if (count === 0) return null;
-            const lines = splitLabel(item.category.label, canvasWidth < 520 ? 10 : 16);
+            const lines = splitLabel(item.category.label, narrow ? 10 : 16);
             return (
-              <g key={item.category.label} onClick={() => {
-                const firstNode = cloudNodes.find((node) => node.categoryIndex === index);
-                if (firstNode) handleNodeSelect(firstNode.node);
-                setInspectedCategoryId(firstNode?.node.id || null);
-              }} className="cursor-pointer">
-                <circle
-                  cx={item.x}
-                  cy={item.y}
-                  r={canvasWidth < 520 ? 18 : 24}
-                  fill="rgba(255,255,255,0.94)"
-                  stroke={definition.color}
-                  strokeWidth="1.4"
-                  filter={`url(#${svgId}-drill-shadow)`}
-                />
+              <g
+                key={item.category.label}
+                onClick={() => {
+                  const firstNode = cloudNodes.find((node) => node.categoryIndex === index);
+                  if (firstNode) handleNodeSelect(firstNode.node);
+                  setInspectedCategoryId(firstNode?.node.id || null);
+                }}
+                className="cursor-pointer"
+              >
                 <text
                   x={item.x}
-                  y={item.y + 5}
+                  y={item.y - (narrow ? 22 : 28) - (lines.length - 1) * 13}
                   textAnchor="middle"
-                  className={`${canvasWidth < 520 ? 'text-[10px]' : 'text-[12px]'} font-bold`}
-                  fill={definition.textColor}
+                  className="fill-ink text-[12px] font-medium"
+                  stroke="#FFFFFF"
+                  strokeWidth="4"
+                  paintOrder="stroke"
                 >
-                  {item.category.label
-                    .split(/\s|&/)
-                    .map((word) => word[0])
-                    .join('')
-                    .slice(0, 2)}
+                  {lines.map((line, lineIndex) => (
+                    <tspan key={line} x={item.x} dy={lineIndex === 0 ? 0 : 13}>
+                      {line}
+                    </tspan>
+                  ))}
+                  <tspan x={item.x} dy={14} className="fill-ink-4 text-[11px] font-normal">
+                    {count} {count === 1 ? 'entity' : 'entities'}
+                  </tspan>
                 </text>
-                {!compact && (
-                  <>
-                    <text
-                      x={item.x}
-                      y={item.y + (canvasWidth < 520 ? 35 : 44) - (lines.length - 1) * 6}
-                      textAnchor="middle"
-                      className="fill-slate-950 text-[11px] font-semibold"
-                      stroke="#ffffff"
-                      strokeWidth="4"
-                      paintOrder="stroke"
-                    >
-                      {lines.map((line, lineIndex) => (
-                        <tspan key={line} x={item.x} dy={lineIndex === 0 ? 0 : 13}>
-                          {line}
-                        </tspan>
-                      ))}
-                    </text>
-                    <text
-                      x={item.x}
-                      y={item.y + (canvasWidth < 520 ? 62 : 72)}
-                      textAnchor="middle"
-                      className="fill-slate-500 text-[10px]"
-                      stroke="#ffffff"
-                      strokeWidth="3"
-                      paintOrder="stroke"
-                    >
-                      {count} nodes
-                    </text>
-                  </>
-                )}
               </g>
             );
           })}
 
-          <g filter={`url(#${svgId}-drill-shadow)`}>
-            <circle cx={centerX} cy={centerY} r={canvasWidth < 520 ? 31 : 42} fill="#ffffff" stroke="#e5e7eb" />
-            <rect
-              x={centerX - (canvasWidth < 520 ? 16 : 21)}
-              y={centerY - (canvasWidth < 520 ? 25 : 34)}
-              width={canvasWidth < 520 ? 32 : 42}
-              height={canvasWidth < 520 ? 32 : 42}
-              rx={canvasWidth < 520 ? 10 : 13}
-              fill={definition.color}
-            />
-            <text
-              x={centerX}
-              y={centerY - (canvasWidth < 520 ? 5 : 9)}
-              textAnchor="middle"
-              className={`${canvasWidth < 520 ? 'text-[12px]' : 'text-[15px]'} font-bold`}
-              fill="#ffffff"
-            >
-              {definition.short}
-            </text>
-            {!compact && (
-              <text x={centerX} y={centerY + 27} textAnchor="middle" className="fill-slate-950 text-[13px] font-semibold">
-                {definition.tabLabel}
-              </text>
-            )}
-          </g>
-
           {selectedCloudNode && !compact && (
-            <g transform={`translate(${Math.min(canvasWidth - 210, Math.max(18, selectedCloudNode.x + 18))}, ${Math.max(24, selectedCloudNode.y - 42)})`}>
-              <rect width="192" height="56" rx="10" fill="rgba(255,255,255,0.96)" stroke="#e5e7eb" />
-              <text x="12" y="22" className="fill-slate-950 text-[12px] font-semibold">
-                {truncateLabel(selectedCloudNode.node.label, 24)}
+            <g transform={`translate(${Math.min(canvasWidth - 214, Math.max(14, selectedCloudNode.x + 16))}, ${Math.max(14, selectedCloudNode.y - 44)})`}>
+              <rect width="200" height="50" rx="8" fill="#FFFFFF" stroke={LINE_STRONG} />
+              <text x="12" y="21" className="fill-ink text-[12px] font-medium">
+                {truncateLabel(selectedCloudNode.node.label, 26)}
               </text>
-              <text x="12" y="41" className="fill-slate-500 text-[11px]">
-                {formatTypeLabel(selectedCloudNode.node.type)} · {(selectedCloudNode.node.confidence * 100).toFixed(0)}%
+              <text x="12" y="38" className="fill-ink-4 text-[11px]">
+                {formatTypeLabel(selectedCloudNode.node.type)} · {(selectedCloudNode.node.confidence * 100).toFixed(0)}% confidence
               </text>
             </g>
           )}
@@ -739,101 +623,72 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
     );
   };
 
-  const renderCanvas = () => (
-    !compact && activeTab !== 'overview'
-      ? renderDrilldownCanvas(inspectedLayout)
-      : (
-    <div ref={containerRef} className="min-w-0 overflow-hidden rounded-xl border border-hairline bg-white">
-      <svg viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} className="block w-full">
-        <defs>
-          <pattern id={`${svgId}-grid`} width="32" height="32" patternUnits="userSpaceOnUse">
-            <path d="M32 0H0V32" fill="none" stroke="rgba(10,10,10,0.035)" strokeWidth="1" />
-          </pattern>
-          <filter id={`${svgId}-soft-shadow`} x="-30%" y="-30%" width="160%" height="160%">
-            <feDropShadow dx="0" dy="12" stdDeviation="14" floodColor="#0a0a0a" floodOpacity="0.10" />
-          </filter>
-          <filter id={`${svgId}-node-shadow`} x="-35%" y="-35%" width="170%" height="170%">
-            <feDropShadow dx="0" dy="7" stdDeviation="8" floodColor="#0a0a0a" floodOpacity="0.10" />
-          </filter>
-          {CLUSTERS.map((cluster) => (
-            <radialGradient key={cluster.key} id={`${svgId}-${cluster.key}-halo`} cx="50%" cy="50%" r="55%">
-              <stop offset="0%" stopColor={cluster.softFill} stopOpacity="0.98" />
-              <stop offset="100%" stopColor={cluster.color} stopOpacity="0.10" />
-            </radialGradient>
-          ))}
-        </defs>
-
-        <rect x="0" y="0" width={canvasWidth} height={canvasHeight} fill="#ffffff" />
-        <rect x="0" y="0" width={canvasWidth} height={canvasHeight} fill={`url(#${svgId}-grid)`} />
+  const renderOverviewCanvas = () => (
+    <div className="min-w-0 overflow-hidden rounded-xl border border-line bg-white">
+      <svg viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} className="block w-full" role="img" aria-label="Entities grouped by ESG domain">
+        <rect x="0" y="0" width={canvasWidth} height={canvasHeight} fill="#FFFFFF" />
 
         {clusterLayouts.map((cluster) => {
           const active = activeTab === 'overview' || activeTab === cluster.definition.key;
-          const isInspected = inspectedCluster === cluster.definition.key;
+          const isInspected = !compact && inspectedCluster === cluster.definition.key;
           const edgeSelected = cluster.representativeEdge && effectiveSelectedEdgeId === makeEdgeId(cluster.representativeEdge);
-          const opacity = active ? 1 : 0.22;
+          const emphasised = Boolean(edgeSelected || isInspected);
           const path = `M ${coreX} ${coreY} C ${(coreX + cluster.x) / 2} ${coreY}, ${(coreX + cluster.x) / 2} ${cluster.y}, ${cluster.x} ${cluster.y}`;
 
           return (
-            <g key={`core-${cluster.definition.key}`} opacity={opacity}>
-              <path
-                d={path}
-                fill="none"
-                stroke={cluster.definition.color}
-                strokeWidth={edgeSelected || isInspected ? 2.4 : 1.4}
-                strokeOpacity={edgeSelected || isInspected ? 0.86 : 0.45}
-                strokeDasharray={cluster.definition.key === 'ai' ? '0' : '6 8'}
-                onClick={() => handleClusterSelect(cluster)}
-                className="cursor-pointer"
-              />
-              {!compact && (
-                <g transform={`translate(${(coreX + cluster.x) / 2}, ${(coreY + cluster.y) / 2})`}>
-                  <rect
-                    x={-46}
-                    y={-11}
-                    width={92}
-                    height={22}
-                    rx={7}
-                    fill="rgba(255,255,255,0.92)"
-                    stroke={cluster.definition.color}
-                    strokeOpacity={0.28}
-                  />
-                  <text
-                    x="0"
-                    y="4"
-                    textAnchor="middle"
-                    fontFamily="var(--cg-font-mono)"
-                    className="text-[10px] font-semibold"
-                    fill={cluster.definition.textColor}
-                  >
-                    {cluster.definition.relationship}
-                  </text>
-                </g>
-              )}
-            </g>
+            <path
+              key={`core-${cluster.definition.key}`}
+              d={path}
+              fill="none"
+              stroke={emphasised ? cluster.definition.color : LINE_STRONG}
+              strokeWidth={emphasised ? 1.5 : 1}
+              strokeOpacity={active ? (emphasised ? 0.7 : 1) : 0.3}
+              strokeDasharray={emphasised ? undefined : '3 5'}
+              onClick={() => handleClusterSelect(cluster)}
+              className="cursor-pointer"
+            />
           );
         })}
 
+        {/* Drawn before the clusters so cluster labels stay readable where they overlap it. */}
+        <g>
+          <circle cx={coreX} cy={coreY} r={coreRadius} fill="#FFFFFF" stroke={LINE_STRONG} />
+          <circle cx={coreX} cy={coreY - (compact ? 10 : 14)} r={compact ? 3 : 3.5} fill="#1A1915" />
+          <text
+            x={coreX}
+            y={coreY + (compact ? 6 : 6)}
+            textAnchor="middle"
+            className={`fill-ink font-medium ${compact ? 'text-[10px]' : 'text-[12px]'}`}
+          >
+            {truncateLabel(coreLabel, compact || narrow ? 12 : 16)}
+          </text>
+          {!compact && (
+            <text x={coreX} y={coreY + 22} textAnchor="middle" className="fill-ink-4 text-[10px]">
+              {formatCount(stats.nodes)} entities
+            </text>
+          )}
+        </g>
+
         {clusterLayouts.map((cluster) => {
           const active = activeTab === 'overview' || activeTab === cluster.definition.key;
-          const isInspected = inspectedCluster === cluster.definition.key;
-          const opacity = active ? 1 : 0.2;
+          const isInspected = !compact && inspectedCluster === cluster.definition.key;
           const definition = cluster.definition;
+          const labelX = cluster.x - cluster.radius * 1.05;
+          const labelY = cluster.y - cluster.radius * 0.98;
 
           return (
-            <g key={definition.key} opacity={opacity}>
+            <g key={definition.key} opacity={active ? 1 : 0.25}>
               <ellipse
                 cx={cluster.x}
                 cy={cluster.y}
                 rx={cluster.radius * 1.17}
                 ry={cluster.radius}
-                fill={`url(#${svgId}-${definition.key}-halo)`}
+                fill={definition.ringFill}
                 stroke={definition.color}
-                strokeWidth={isInspected ? 1.8 : 1}
-                strokeOpacity={isInspected ? 0.36 : 0.18}
+                strokeOpacity={isInspected ? 0.4 : 0.16}
                 onClick={() => handleClusterSelect(cluster)}
                 className="cursor-pointer"
               />
-              <circle cx={cluster.x} cy={cluster.y} r="3.5" fill={definition.color} opacity="0.72" />
               {(overviewClouds.find((cloud) => cloud.key === definition.key)?.nodes || []).map((cloudNode) => {
                 const selected = effectiveSelectedNodeId === cloudNode.node.id || selectedNodeSet.has(cloudNode.node.id);
                 return (
@@ -843,8 +698,8 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                     cy={cloudNode.y}
                     r={selected ? cloudNode.radius + 1.6 : cloudNode.radius}
                     fill={definition.color}
-                    fillOpacity={selected ? 0.95 : compact ? 0.46 : 0.34}
-                    stroke={selected ? '#0a0a0a' : 'none'}
+                    fillOpacity={selected ? 1 : compact ? 0.45 : 0.35}
+                    stroke={selected ? '#1A1915' : 'none'}
                     strokeWidth={selected ? 1.2 : 0}
                     onClick={() => handleNodeSelect(cloudNode.node)}
                     className="cursor-pointer"
@@ -858,7 +713,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                   effectiveSelectedNodeId === category.backingNode?.id ||
                   selectedNodeSet.has(category.backingNode?.id || category.id);
                 const lineHighlighted = selectedEdgeIdSet.has(makePathEdgeId(category.backingNode?.id || category.id, definition.key));
-                const nodeRadius = compact ? (selected ? 16 : 13) : (selected ? 25 : 21);
+                const nodeRadius = compact ? (selected ? 6 : 4.5) : (selected ? 7 : 5.5);
                 const labelLines = splitLabel(category.shortLabel || category.label, compact ? 10 : 15);
 
                 return (
@@ -869,39 +724,24 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                       x2={category.x}
                       y2={category.y}
                       stroke={definition.color}
-                      strokeOpacity={selected || lineHighlighted ? 0.7 : 0.28}
-                      strokeWidth={selected || lineHighlighted ? 1.7 : 1}
-                      strokeDasharray="4 6"
+                      strokeOpacity={selected || lineHighlighted ? 0.6 : 0.22}
+                      strokeWidth={selected || lineHighlighted ? 1.4 : 1}
                     />
                     <circle
                       cx={category.x}
                       cy={category.y}
                       r={nodeRadius}
-                      fill="rgba(255,255,255,0.96)"
+                      fill={selected ? definition.color : '#FFFFFF'}
                       stroke={definition.color}
-                      strokeWidth={selected ? 2.4 : 1.2}
-                      filter={`url(#${svgId}-node-shadow)`}
+                      strokeWidth={1.5}
                     />
-                    <text
-                      x={category.x}
-                      y={category.y + (compact ? 4 : 5)}
-                      textAnchor="middle"
-                      className={`${compact ? 'text-[11px]' : 'text-[13px]'} font-bold`}
-                      fill={definition.textColor}
-                    >
-                      {category.label
-                        .split(/\s|&/)
-                        .map((word) => word[0])
-                        .join('')
-                        .slice(0, 2)}
-                    </text>
-                    {!compact && (
+                    {!compact && !narrow && (
                       <text
                         x={category.x}
-                        y={category.y + nodeRadius + 18 - (labelLines.length - 1) * 6}
+                        y={category.y + nodeRadius + 15 - (labelLines.length - 1) * 6}
                         textAnchor="middle"
-                        className="fill-slate-900 text-[11px] font-semibold"
-                        stroke="#ffffff"
+                        className={`text-[11px] ${selected ? 'fill-ink font-medium' : 'fill-ink-3'}`}
+                        stroke="#FFFFFF"
                         strokeWidth="4"
                         paintOrder="stroke"
                       >
@@ -916,37 +756,27 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                 );
               })}
               <g onClick={() => handleClusterSelect(cluster)} className="cursor-pointer">
-                <circle
-                  cx={cluster.x - cluster.radius * 0.55}
-                  cy={cluster.y - cluster.radius * 0.88}
-                  r={compact ? 15 : 19}
-                  fill={definition.color}
-                  filter={`url(#${svgId}-node-shadow)`}
-                />
+                <circle cx={Math.max(10, labelX)} cy={labelY - (compact ? 4 : 5)} r={compact ? 3.5 : 4} fill={definition.color} />
                 <text
-                  x={cluster.x - cluster.radius * 0.55}
-                  y={cluster.y - cluster.radius * 0.88 + (definition.short === 'AI' ? 4 : 5)}
-                  textAnchor="middle"
-                  className={`${compact ? 'text-[10px]' : 'text-[13px]'} font-bold`}
-                  fill="#ffffff"
-                >
-                  {definition.short}
-                </text>
-                <text
-                  x={cluster.x - cluster.radius * 0.28}
-                  y={cluster.y - cluster.radius * 0.88 - (compact ? 2 : 5)}
-                  className={`${compact ? 'text-[11px]' : 'text-[16px]'} font-semibold`}
-                  fill="#0a0a0a"
+                  x={Math.max(10, labelX) + 10}
+                  y={labelY}
+                  className={`fill-ink font-medium ${compact ? 'text-[11px]' : 'text-[14px]'}`}
+                  stroke="#FFFFFF"
+                  strokeWidth="4"
+                  paintOrder="stroke"
                 >
                   {definition.label}
                 </text>
                 {!compact && (
                   <text
-                    x={cluster.x - cluster.radius * 0.28}
-                    y={cluster.y - cluster.radius * 0.88 + 14}
-                    className="fill-slate-500 text-[11px]"
+                    x={Math.max(10, labelX) + 10}
+                    y={labelY + 16}
+                    className="fill-ink-4 text-[11px]"
+                    stroke="#FFFFFF"
+                    strokeWidth="4"
+                    paintOrder="stroke"
                   >
-                    {cluster.nodeCount} nodes · {cluster.edgeCount} edges
+                    {formatCount(cluster.nodeCount)} entities{narrow ? '' : ` · ${formatCount(cluster.edgeCount)} relationships`}
                   </text>
                 )}
               </g>
@@ -954,231 +784,166 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
           );
         })}
 
-        <g filter={`url(#${svgId}-soft-shadow)`}>
-          <circle cx={coreX} cy={coreY} r={coreRadius} fill="#ffffff" stroke="#e5e7eb" strokeWidth="1.2" />
-          <rect
-            x={coreX - (compact ? 17 : 22)}
-            y={coreY - (compact ? 33 : 44)}
-            width={compact ? 34 : 44}
-            height={compact ? 34 : 44}
-            rx={compact ? 10 : 13}
-            fill="#0a0a0a"
-          />
-          <text
-            x={coreX}
-            y={coreY - (compact ? 12 : 17)}
-            textAnchor="middle"
-            className={`${compact ? 'text-[13px]' : 'text-[16px]'} font-bold`}
-            fill="#ffffff"
-          >
-            cg
-          </text>
-          {!compact && (
-            <>
-              <text x={coreX} y={coreY + 18} textAnchor="middle" className="fill-slate-950 text-[16px] font-semibold">
-                {truncateLabel(coreLabel, 28)}
-              </text>
-              <text x={coreX} y={coreY + 39} textAnchor="middle" className="fill-slate-500 text-[12px]">
-                {compactNumber(stats.nodes)} nodes · {compactNumber(stats.edges)} edges
-              </text>
-            </>
-          )}
-        </g>
-
-        {!compact && (
-          <g transform={`translate(${Math.max(18, canvasWidth - 172)}, ${canvasHeight - 38})`}>
-            <rect x="0" y="0" width="154" height="24" rx="8" fill="rgba(255,255,255,0.92)" stroke="#e5e7eb" />
-            <text x="12" y="16" className="fill-slate-500 text-[10px] font-semibold">
-              Edge types:
-            </text>
-            <line x1="72" y1="12" x2="96" y2="12" stroke="#1ba673" strokeWidth="2" />
-            <line x1="104" y1="12" x2="128" y2="12" stroke="#1456f0" strokeWidth="2" strokeDasharray="4 4" />
-            <line x1="136" y1="12" x2="148" y2="12" stroke="#8b5cf6" strokeWidth="2" />
-          </g>
-        )}
       </svg>
     </div>
-      )
+  );
+
+  const renderCanvas = () => (
+    !compact && activeTab !== 'overview'
+      ? renderDrilldownCanvas(inspectedLayout)
+      : renderOverviewCanvas()
   );
 
   if (compact) {
     return (
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45 }}
-        className="min-w-0 space-y-2"
-      >
+      <div ref={containerRef} className="min-w-0">
         {renderCanvas()}
-      </motion.div>
+      </div>
     );
   }
 
+  const tabs: ClusterTab[] = ['overview', ...CLUSTERS.map((cluster) => cluster.key)];
+  const activeDefinition = activeTab === 'overview' ? null : CLUSTER_BY_KEY.get(activeTab);
+  const activeLayout = activeDefinition ? clusterLayouts.find((cluster) => cluster.definition.key === activeDefinition.key) : null;
+  const inspected = inspectedLayout.definition;
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45 }}
-      className="min-w-0 space-y-4"
-    >
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <span className="cg-eyebrow block text-ink-steel">Knowledge graph</span>
-          <h4 className="font-display text-[20px] font-semibold leading-[1.25] tracking-normal text-ink">
-            ESG/AI cluster map
-          </h4>
-          <p className="mt-1 max-w-2xl text-[13px] leading-[1.55] text-ink-steel">
-            Four semantic clusters organize the real extracted nodes returned by the backend graph.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 gap-2 text-right sm:flex sm:items-center sm:gap-3">
-          {[
-            ['Nodes', compactNumber(stats.nodes)],
-            ['Edges', compactNumber(stats.edges)],
-            ['Clusters', stats.categories],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-lg border border-hairline bg-white px-3 py-2 shadow-sm">
-              <div className="text-[11px] font-medium text-ink-stone">{label}</div>
-              <div className="mt-0.5 font-mono text-[13px] font-semibold text-ink">{value}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-2 rounded-xl border border-hairline bg-surface-soft p-2">
-        {(['overview', ...CLUSTERS.map((cluster) => cluster.key)] as ClusterTab[]).map((tab) => {
-          const definition = tab === 'overview' ? null : CLUSTER_BY_KEY.get(tab);
-          const active = activeTab === tab;
-          return (
-            <button
-              key={tab}
-              onClick={() => {
-                setActiveTab(tab);
-                if (definition) setInspectedCluster(definition.key);
-              }}
-              className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-semibold transition ${
-                active
-                  ? 'bg-white text-ink shadow-sm'
-                  : 'text-ink-steel hover:bg-white/80 hover:text-ink'
-              }`}
-            >
-              {definition && (
-                <span
-                  className="flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white"
-                  style={{ backgroundColor: definition.color }}
+    <div className="min-w-0 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="max-w-full overflow-x-auto">
+          <div className="segmented" role="tablist" aria-label="Graph view">
+            {tabs.map((tab) => {
+              const definition = tab === 'overview' ? null : CLUSTER_BY_KEY.get(tab);
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab}
+                  onClick={() => {
+                    setActiveTab(tab);
+                    if (definition) setInspectedCluster(definition.key);
+                  }}
+                  className="shrink-0"
                 >
-                  {definition.short}
-                </span>
-              )}
-              {definition?.tabLabel || 'Overview'}
-            </button>
-          );
-        })}
+                  {definition && <span className="status-dot" style={{ backgroundColor: definition.color }} />}
+                  {definition?.tabLabel || 'Overview'}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <p className="text-xs tabular-nums text-ink-4">
+          {activeLayout
+            ? `${formatCount(activeLayout.nodeCount)} entities · ${formatCount(activeLayout.edgeCount)} relationships`
+            : `${formatCount(stats.nodes)} entities · ${formatCount(stats.edges)} relationships`}
+        </p>
       </div>
 
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_286px]">
-        {renderCanvas()}
+      <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
+        <div ref={containerRef} className="min-w-0">
+          {renderCanvas()}
+        </div>
 
-        <aside className="min-w-0 rounded-xl border border-hairline bg-white p-4 shadow-sm">
-          <div className="flex items-start gap-3">
-            <div
-              className="flex h-11 min-w-11 items-center justify-center rounded-xl text-[14px] font-bold text-white"
-              style={{ backgroundColor: inspectedLayout.definition.color }}
-            >
-              {inspectedLayout.definition.short}
+        <aside className="min-w-0 rounded-xl border border-line bg-white text-sm">
+          <div className="border-b border-line p-4">
+            <div className="flex items-center gap-2">
+              <span className="status-dot h-2 w-2" style={{ backgroundColor: inspected.color }} />
+              <span className="font-medium text-ink">{inspected.label}</span>
             </div>
-            <div className="min-w-0">
-              <div className="text-[16px] font-semibold text-ink">{inspectedLayout.definition.label}</div>
-              <p className="mt-1 text-[12px] leading-5 text-ink-steel">{inspectedLayout.definition.description}</p>
-            </div>
+            <p className="mt-1 text-xs leading-5 text-ink-3">{inspected.description}</p>
+            <p className="mt-2 text-xs tabular-nums text-ink-4">
+              {formatCount(inspectedLayout.nodeCount)} entities · {formatCount(inspectedLayout.edgeCount)} relationships
+              {inspectedLayout.nodeCount > 0 && ` · ${(inspectedLayout.confidence * 100).toFixed(0)}% avg. confidence`}
+            </p>
           </div>
 
           {(selectedNode || selectedEdge) && (
-            <div className="mt-4 rounded-xl border border-hairline bg-white p-3">
-              <div className="text-[12px] font-semibold text-ink">
-                {selectedNode ? 'Selected node' : 'Selected relationship'}
-              </div>
+            <div className="border-b border-line p-4">
+              <div className="section-label mb-1">{selectedNode ? 'Selected entity' : 'Selected relationship'}</div>
               {selectedNode ? (
                 <>
-                  <div className="mt-2 text-[13px] font-semibold text-ink">{selectedNode.label}</div>
-                  <div className="mt-1 text-[11px] text-ink-steel">
+                  <p className="font-medium text-ink">{selectedNode.label}</p>
+                  <p className="mt-0.5 text-xs text-ink-4">
                     {formatTypeLabel(selectedNode.type)} · {(selectedNode.confidence * 100).toFixed(0)}% confidence
-                  </div>
+                  </p>
                   {selectedNode.description && (
-                    <p className="mt-2 text-[12px] leading-5 text-ink-steel">{selectedNode.description}</p>
+                    <p className="mt-2 text-xs leading-5 text-ink-3">{selectedNode.description}</p>
                   )}
                 </>
               ) : selectedEdge ? (
                 <>
-                  <div className="mt-2 text-[13px] font-semibold text-ink">{formatTypeLabel(selectedEdge.relationship_type)}</div>
-                  <div className="mt-1 text-[11px] text-ink-steel">
-                    {(selectedEdge.confidence * 100).toFixed(0)}% confidence
-                  </div>
-                  <p className="mt-2 text-[12px] leading-5 text-ink-steel">{selectedEdge.evidence}</p>
+                  <p className="text-[13px] leading-5">
+                    <span className="font-medium text-ink">
+                      {truncateLabel(graphNodeById.get(selectedEdge.source)?.label || selectedEdge.source, 34)}
+                    </span>{' '}
+                    <span className="font-mono text-[11px] text-ink-4">{formatTypeLabel(selectedEdge.relationship_type)}</span>{' '}
+                    <span className="font-medium text-ink">
+                      {truncateLabel(graphNodeById.get(selectedEdge.target)?.label || selectedEdge.target, 34)}
+                    </span>
+                  </p>
+                  <p className="mt-0.5 text-xs text-ink-4">{(selectedEdge.confidence * 100).toFixed(0)}% confidence</p>
+                  {selectedEdge.evidence && (
+                    <p className="mt-2 text-xs leading-5 text-ink-3">{truncateLabel(selectedEdge.evidence, 220)}</p>
+                  )}
                 </>
               ) : null}
             </div>
           )}
 
-          <div className="mt-5 rounded-xl border border-hairline bg-surface-soft p-3">
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-[12px] font-semibold text-ink">Child categories</div>
-              <div className="font-mono text-[11px] text-ink-stone">
-                {(inspectedLayout.confidence * 100).toFixed(0)}% avg
-              </div>
-            </div>
-            <div className="space-y-2">
-              {inspectedLayout.categories.filter((category) => category.nodeCount > 0).map((category) => {
-                const active = inspectedCategoryId === category.id || effectiveSelectedNodeId === category.backingNode?.id;
-                return (
-                  <button
-                    key={category.id}
-                    onClick={() => handleCategorySelect(inspectedLayout, category)}
-                    className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition ${
-                      active
-                        ? 'border-ink bg-white'
-                        : 'border-transparent bg-white/70 hover:border-hairline hover:bg-white'
-                    }`}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-[13px] font-semibold text-ink">{category.label}</span>
-                      <span className="mt-0.5 block text-[11px] text-ink-stone">{category.nodeCount} real nodes</span>
-                    </span>
-                    <span className="font-mono text-[11px] text-ink-steel">
-                      {(category.confidence * 100).toFixed(0)}%
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+          <div className="border-b border-line p-4">
+            <div className="section-label mb-1">Categories</div>
+            {inspectedLayout.categories.some((category) => category.nodeCount > 0) ? (
+              <ul>
+                {inspectedLayout.categories.filter((category) => category.nodeCount > 0).map((category) => {
+                  const active = inspectedCategoryId === category.id || effectiveSelectedNodeId === category.backingNode?.id;
+                  return (
+                    <li key={category.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleCategorySelect(inspectedLayout, category)}
+                        className="flex w-full items-baseline justify-between gap-3 py-1.5 text-left text-[13px] transition-colors hover:text-ink"
+                      >
+                        <span className={`truncate ${active ? 'font-medium text-ink' : 'text-ink-2'}`}>{category.label}</span>
+                        <span className="shrink-0 font-mono text-[11px] text-ink-4">{formatCount(category.nodeCount)}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="text-xs text-ink-4">No entities in this domain yet.</p>
+            )}
           </div>
 
-          <div className="mt-4 rounded-xl border border-hairline bg-white p-3">
-            <div className="text-[12px] font-semibold text-ink">Real relationship sample</div>
+          <div className="p-4">
+            <div className="section-label mb-1.5">Example relationship</div>
             {inspectedLayout.representativeEdge ? (
-              <div className="mt-3 space-y-3 text-[12px] leading-5">
-                <div className="font-semibold text-ink">
-                  {truncateLabel(graphNodeById.get(inspectedLayout.representativeEdge.source)?.label || inspectedLayout.representativeEdge.source, 34)}
-                </div>
-                <div className="font-mono text-[11px]" style={{ color: inspectedLayout.definition.textColor }}>
-                  {formatTypeLabel(inspectedLayout.representativeEdge.relationship_type)}
-                </div>
-                <div className="font-semibold text-ink">
-                  {truncateLabel(graphNodeById.get(inspectedLayout.representativeEdge.target)?.label || inspectedLayout.representativeEdge.target, 34)}
-                </div>
+              <>
+                <p className="text-[13px] leading-5">
+                  <span className="font-medium text-ink">
+                    {truncateLabel(graphNodeById.get(inspectedLayout.representativeEdge.source)?.label || inspectedLayout.representativeEdge.source, 34)}
+                  </span>{' '}
+                  <span className="font-mono text-[11px]" style={{ color: inspected.textColor }}>
+                    {formatTypeLabel(inspectedLayout.representativeEdge.relationship_type)}
+                  </span>{' '}
+                  <span className="font-medium text-ink">
+                    {truncateLabel(graphNodeById.get(inspectedLayout.representativeEdge.target)?.label || inspectedLayout.representativeEdge.target, 34)}
+                  </span>
+                </p>
                 {inspectedLayout.representativeEdge.evidence && (
-                  <p className="border-t border-hairline pt-3 text-[12px] leading-5 text-ink-steel">
-                    {truncateLabel(inspectedLayout.representativeEdge.evidence, 140)}
+                  <p className="mt-2 text-xs leading-5 text-ink-3">
+                    {truncateLabel(inspectedLayout.representativeEdge.evidence, 160)}
                   </p>
                 )}
-              </div>
+              </>
             ) : (
-              <p className="mt-2 text-[12px] leading-5 text-ink-steel">No real relationship is available inside this cluster yet.</p>
+              <p className="text-xs text-ink-4">No relationships in this domain yet.</p>
             )}
           </div>
         </aside>
       </div>
-    </motion.div>
+    </div>
   );
 };
 

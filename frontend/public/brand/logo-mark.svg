@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" role="img" aria-label="CausalGraph">
-  <rect width="40" height="40" rx="12" fill="#020617"/>
+  <rect width="40" height="40" rx="10" fill="#1A1915"/>
   <g transform="translate(8 8)" fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="3"/>
     <ellipse cx="12" cy="12" rx="10" ry="4"/>
