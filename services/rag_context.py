@@ -8,6 +8,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -26,7 +27,9 @@ from services.document_access import (
     _collect_document_entries,
     _is_global_entry,
     _retrievable_registry_entries,
+    accessible_document_ids_for_matter,
 )
+from services.matters import require_matter_member
 
 
 _ENTITY_TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9&.-]*")
@@ -129,6 +132,9 @@ class RagAskRequest(BaseModel):
     # the schema so older clients don't fail validation; the value is ignored.
     mode: Optional[str] = "ask"
     reasoning_mode: Optional[str] = "flash"
+    # Matter workspace to scope the question to (WP1-C). Requires membership; the scope becomes
+    # the matter's documents, intersected with document_ids / preferred_document_id when given.
+    matter_id: Optional[str] = None
 
 
 def _parse_json_object_text(raw: str) -> Dict[str, Any]:
@@ -931,9 +937,71 @@ def _no_accessible_documents_response() -> Dict[str, Any]:
     )}
 
 
+def _matter_forbidden_response(matter_id: str, message: str) -> Dict[str, Any]:
+    return {
+        "error_response": JSONResponse(
+            status_code=403,
+            content={"answer": "", "sources": [], "error": "matter_forbidden", "message": message},
+        ),
+        "matter_id": matter_id,
+    }
+
+
+def _resolve_matter_scope(
+    request: RagAskRequest,
+    current_user: Optional[dict],
+) -> Tuple[Optional[str], Optional[set], Optional[Dict[str, Any]]]:
+    """``(matter_id, matter document ids, error context)`` for ``request.matter_id``.
+
+    No matter: ``(None, None, None)``. Anonymous callers and non-members (platform admins
+    included) get the 403 ``matter_forbidden`` context.
+    """
+    matter_id = str(request.matter_id or "").strip()
+    if not matter_id:
+        return None, None, None
+    if not current_user:
+        return matter_id, None, _matter_forbidden_response(matter_id, "Sign in as a member of this matter to ask about it.")
+    try:
+        require_matter_member(matter_id, current_user, "viewer")
+    except HTTPException:
+        return matter_id, None, _matter_forbidden_response(matter_id, "You are not a member of this matter.")
+    return matter_id, set(accessible_document_ids_for_matter(current_user, matter_id)), None
+
+
+def _intersect_with_matter(
+    matter_id: str,
+    matter_document_ids: set,
+    document_ids: List[str],
+    preferred_document_id: Optional[str],
+) -> Tuple[List[str], Optional[str], Optional[Dict[str, Any]]]:
+    """Keep only the explicitly requested documents that belong to the matter; refuse (403) when
+    documents were requested and none of them do."""
+    requested = [*document_ids, *([preferred_document_id] if preferred_document_id else [])]
+    if requested and not (set(requested) & matter_document_ids):
+        return [], None, _matter_forbidden_response(matter_id, "None of the requested documents belong to this matter.")
+    scoped_ids = [doc_id for doc_id in document_ids if doc_id in matter_document_ids]
+    scoped_preferred = preferred_document_id if preferred_document_id in matter_document_ids else None
+    return scoped_ids, scoped_preferred, None
+
+
+def _entries_within_matter(entries: List[Dict[str, Any]], matter_document_ids: Optional[set]) -> List[Dict[str, Any]]:
+    if matter_document_ids is None:
+        return entries
+    return [entry for entry in entries if str(entry.get("document_id") or "").strip() in matter_document_ids]
+
+
 def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[dict]) -> Dict[str, Any]:
+    matter_id, matter_document_ids, matter_error = _resolve_matter_scope(request, current_user)
+    if matter_error is not None:
+        return matter_error
     effective_document_ids = [str(item).strip() for item in (request.document_ids or []) if str(item).strip()]
     preferred_document_id = str(request.preferred_document_id or "").strip() or None
+    if matter_id and matter_document_ids is not None:
+        effective_document_ids, preferred_document_id, matter_error = _intersect_with_matter(
+            matter_id, matter_document_ids, effective_document_ids, preferred_document_id
+        )
+        if matter_error is not None:
+            return matter_error
     entity_scope_miss = False
     entity_scope_terms: List[str] = []
     document_scope_source: Optional[str] = None
@@ -951,7 +1019,7 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
             memory_backend = "disabled"
     scope_question = _question_with_recent_user_context(request.question, history)
     if current_user and not _is_admin_user(current_user):
-        retrievable_entries = _retrievable_registry_entries(current_user)
+        retrievable_entries = _entries_within_matter(_retrievable_registry_entries(current_user), matter_document_ids)
         allowed_ids = {str(entry.get("document_id") or "").strip() for entry in retrievable_entries if str(entry.get("document_id") or "").strip()}
         routing_hint = _build_request_routing_hint(scope_question, retrievable_entries)
         routing_document_ids = sorted(set(routing_hint.get("target_document_ids") or []) & allowed_ids)
@@ -984,6 +1052,11 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
             if scoped_ids:
                 effective_document_ids = sorted(set(scoped_ids) & allowed_ids)
                 document_scope_source = "entity_resolver"
+            elif matter_document_ids is not None:
+                # Inside a matter the matter is the scope: a party or entity that no title names
+                # (normal once documents are redacted) still searches the matter's documents. The
+                # list is explicit because an empty one would search everything the owner filter allows.
+                effective_document_ids = sorted(allowed_ids)
             elif entity_scope_terms and not preferred_document_id:
                 global_ids = {
                     str(entry.get("document_id") or "").strip()
@@ -1008,7 +1081,7 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
             if not entity_scope_miss and not broad_retrievable_scope:
                 return _no_accessible_documents_response()
     elif current_user and _is_admin_user(current_user):
-        retrievable_entries = _retrievable_registry_entries(current_user)
+        retrievable_entries = _entries_within_matter(_retrievable_registry_entries(current_user), matter_document_ids)
         allowed_ids = {str(entry.get("document_id") or "").strip() for entry in retrievable_entries if str(entry.get("document_id") or "").strip()}
         routing_hint = _build_request_routing_hint(scope_question, retrievable_entries)
         if effective_document_ids or preferred_document_id:
@@ -1036,8 +1109,13 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
             if scoped_ids:
                 effective_document_ids = scoped_ids
                 document_scope_source = "entity_resolver"
-            elif entity_scope_terms:
+            elif entity_scope_terms and matter_document_ids is None:
                 entity_scope_miss = True
+        if matter_document_ids is not None and not effective_document_ids and not entity_scope_miss:
+            # Admins search without an owner filter, so an empty scope would span every matter.
+            effective_document_ids = sorted(allowed_ids)
+            if not effective_document_ids:
+                return _no_accessible_documents_response()
     elif not current_user:
         public_entries = [entry for entry in _collect_document_entries() if _can_retrieve_entry(None, entry)]
         public_ids = {str(entry.get("document_id") or "").strip() for entry in public_entries if str(entry.get("document_id") or "").strip()}
@@ -1065,6 +1143,15 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
         if not effective_document_ids and not entity_scope_miss:
             return _no_accessible_documents_response()
 
+    if matter_document_ids is not None:
+        # Invariant for matter-scoped asks: the scope names only the matter's documents and is
+        # never empty (empty means "everything the owner filter allows" downstream).
+        effective_document_ids = [doc_id for doc_id in effective_document_ids if doc_id in matter_document_ids]
+        if preferred_document_id not in matter_document_ids:
+            preferred_document_id = None
+        if not effective_document_ids and not entity_scope_miss:
+            return _no_accessible_documents_response()
+
     filters = {
         "document_ids": effective_document_ids,
         "preferred_document_id": preferred_document_id,
@@ -1085,12 +1172,15 @@ def _resolve_rag_request_context(request: RagAskRequest, current_user: Optional[
     if entity_scope_miss:
         filters["entity_scope_miss"] = True
         filters["entity_scope_terms"] = entity_scope_terms
+    if matter_id:
+        filters["matter_id"] = matter_id
 
     return {
         "filters": filters,
         "history": history,
         "memory_backend": memory_backend,
         "user_id": str(current_user["id"]) if current_user else None,
+        "matter_id": matter_id,
         "error_response": None,
     }
 
@@ -1116,8 +1206,17 @@ def _resolve_general_rag_request_context(
     history: List[Dict[str, Any]],
     memory_backend: str,
 ) -> Dict[str, Any]:
+    matter_id, matter_document_ids, matter_error = _resolve_matter_scope(request, current_user)
+    if matter_error is not None:
+        return matter_error
     effective_document_ids = [str(item).strip() for item in (request.document_ids or []) if str(item).strip()]
     preferred_document_id = str(request.preferred_document_id or "").strip() or None
+    if matter_id and matter_document_ids is not None:
+        effective_document_ids, preferred_document_id, matter_error = _intersect_with_matter(
+            matter_id, matter_document_ids, effective_document_ids, preferred_document_id
+        )
+        if matter_error is not None:
+            return matter_error
     if preferred_document_id and preferred_document_id not in effective_document_ids:
         effective_document_ids.append(preferred_document_id)
     scope_question = _question_with_recent_user_context(request.question, history)
@@ -1132,7 +1231,7 @@ def _resolve_general_rag_request_context(
         "answer_mode": "general",
     }
     if current_user and not _is_admin_user(current_user):
-        retrievable_entries = _retrievable_registry_entries(current_user)
+        retrievable_entries = _entries_within_matter(_retrievable_registry_entries(current_user), matter_document_ids)
         allowed_ids = {
             str(entry.get("document_id") or "").strip()
             for entry in retrievable_entries
@@ -1168,7 +1267,7 @@ def _resolve_general_rag_request_context(
         # Same rule as _resolve_rag_request_context: the owner scope survives layers that drop document_ids.
         filters["owner_user_id"] = str(current_user.get("id") or "")
     elif current_user and _is_admin_user(current_user):
-        retrievable_entries = _retrievable_registry_entries(current_user)
+        retrievable_entries = _entries_within_matter(_retrievable_registry_entries(current_user), matter_document_ids)
         allowed_ids = {
             str(entry.get("document_id") or "").strip()
             for entry in retrievable_entries
@@ -1218,16 +1317,25 @@ def _resolve_general_rag_request_context(
                 filters["document_ids"] = sorted(set(scoped_ids) & public_ids)
                 if filters["document_ids"]:
                     document_scope_source = "entity_resolver"
+    if matter_document_ids is not None:
+        filters["document_ids"] = [doc_id for doc_id in filters.get("document_ids") or [] if doc_id in matter_document_ids]
+        if preferred_document_id not in matter_document_ids:
+            preferred_document_id = None
+        if not filters["document_ids"]:
+            document_scope_source = None
     filters["preferred_document_id"] = preferred_document_id
     if document_scope_source:
         filters["document_scope_source"] = document_scope_source
     scoped_routing_hint = _routing_hint_with_document_ids(routing_hint, list(filters.get("document_ids") or []))
     if scoped_routing_hint:
         filters["routing_hint"] = scoped_routing_hint
+    if matter_id:
+        filters["matter_id"] = matter_id
     return {
         "filters": filters,
         "history": history,
         "memory_backend": memory_backend,
         "user_id": str(current_user["id"]) if current_user else None,
+        "matter_id": matter_id,
         "error_response": None,
     }

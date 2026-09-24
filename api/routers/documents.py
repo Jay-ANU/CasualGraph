@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -29,8 +30,16 @@ from pipeline_runtime import (
     load_registered_document,
     summarize_registered_document,
 )
+from services import matters as matter_service
 from services.auth import _is_admin_user
-from services.document_access import _can_access_entry, _collect_document_entries, _entry_from_upload
+from services.document_access import (
+    _can_access_entry,
+    _collect_document_entries,
+    _entry_from_upload,
+    _MatterDocumentIndex,
+    _owner_rules_allow_access,
+    summarize_matter_documents,
+)
 
 router = APIRouter()
 
@@ -69,19 +78,118 @@ def _remove_spooled_upload(file_path: Optional[str]) -> None:
         print(f"[documents] Failed to remove spooled upload {file_path}: {type(exc).__name__}: {exc}")
 
 
+def _error_response(exc: HTTPException) -> JSONResponse:
+    detail: Any = exc.detail
+    if not isinstance(detail, dict):
+        detail = {"error": "request_failed", "message": str(detail)}
+    return JSONResponse(status_code=exc.status_code, content=detail)
+
+
+def _accepts_keyword(func: Callable[..., Any], name: str) -> bool:
+    try:
+        parameter = inspect.signature(func).parameters.get(name)
+    except (TypeError, ValueError):
+        return False
+    return parameter is not None and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+
+
+def _matter_kwargs(func: Callable[..., Any], matter_id: str) -> Dict[str, str]:
+    """``{"matter_id": ...}`` only when the ingestion entry point takes it (WP1-A adds the parameter)."""
+    return {"matter_id": matter_id} if matter_id and _accepts_keyword(func, "matter_id") else {}
+
+
+def _upload_target_matter(current_user: dict, matter_id: Optional[str]) -> str:
+    """The matter an upload lands in: the requested one (role ``member``, not archived) or else the
+    caller's default matter. Raises ``HTTPException`` for a requested matter the caller may not use;
+    a failure to provision the default matter only costs the link (the migration files it later)."""
+    requested = str(matter_id or "").strip()
+    if requested:
+        matter_service.require_matter_member(requested, current_user, "member", require_active=True)
+        return requested
+    try:
+        return matter_service.ensure_personal_workspace(current_user)["matter_id"]
+    except Exception as exc:
+        print(f"[documents] Default matter unavailable; upload stays unfiled: {type(exc).__name__}")
+        return ""
+
+
+def _link_ingested_document(result: Any, matter_id: str, current_user: dict) -> None:
+    """After a synchronous ingest: link the (new or deduplicated) document and audit the upload."""
+    document_id = matter_service.result_document_id(result)
+    if not matter_id or not document_id or result.get("rejected"):
+        return
+    try:
+        matter_service.link_uploaded_document(
+            matter_id,
+            document_id,
+            actor_user_id=str(current_user.get("id") or ""),
+            details=matter_service.upload_audit_details(result),
+        )
+        result["matter_id"] = matter_id
+    except Exception as exc:
+        print(f"[documents] Matter link failed for an uploaded document: {type(exc).__name__}")
+        result["matter_link_failed"] = True
+
+
+def _link_started_job(job: Dict[str, Any], matter_id: str, current_user: dict) -> None:
+    """After ``start_ingestion_job``: link now when the job already knows its document (a duplicate
+    finished on the spot, or a reserved ``document_id``); otherwise remember the job so its result
+    is linked when the finished job is first read from ``GET /documents/jobs/{job_id}``."""
+    job_id = str(job.get("job_id") or "").strip()
+    if not matter_id or not job_id:
+        return
+    user_id = str(current_user.get("id") or "")
+    reserved_document_id = str(job.get("document_id") or "").strip()
+    try:
+        if reserved_document_id:
+            matter_service.link_uploaded_document(
+                matter_id,
+                reserved_document_id,
+                actor_user_id=user_id,
+                details={"job_id": job_id},
+            )
+        matter_service.remember_pending_upload(
+            job_id,
+            matter_id=matter_id,
+            user_id=user_id,
+            linked_document_id=reserved_document_id,
+        )
+        matter_service.link_finished_upload(job)
+        job["matter_id"] = matter_id
+    except Exception as exc:
+        print(f"[documents] Matter link failed for ingestion job {job_id}: {type(exc).__name__}")
+        job["matter_link_failed"] = True
+
+
 class ManualDocumentRequest(BaseModel):
     title: str
     content: str
     domain: str = "general"
     source: str = ""
     source_type: str = ""
+    matter_id: Optional[str] = None
 
 
 @router.get("/documents")
-async def list_documents(current_user: dict = Depends(get_current_user)):
+async def list_documents(
+    matter_id: Optional[str] = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+):
     try:
+        matter_value = str(matter_id or "").strip()
+        if matter_value:
+            try:
+                matter_service.require_matter_member(matter_value, current_user, "viewer")
+            except HTTPException as exc:
+                return _error_response(exc)
+            return JSONResponse(content={"documents": summarize_matter_documents(matter_value)})
         audit_index = list_latest_uploads_by_document_id()
-        entries = [entry for entry in _collect_document_entries() if _can_access_entry(current_user, entry)]
+        shared = _MatterDocumentIndex(current_user)
+        entries = [
+            entry
+            for entry in _collect_document_entries()
+            if _can_access_entry(current_user, entry, matter_document_ids=shared)
+        ]
         documents: List[Dict[str, Any]] = []
         for entry in entries:
             document_id = str(entry.get("document_id") or "").strip()
@@ -109,9 +217,14 @@ async def upload_document(
     source_type: str = Form(""),
     source: str = Form(""),
     content: str = Form(""),
+    matter_id: str = Form(""),
     file: Optional[UploadFile] = File(default=None),
     current_user: dict = Depends(get_current_user),
 ):
+    try:
+        target_matter_id = _upload_target_matter(current_user, matter_id)
+    except HTTPException as exc:
+        return _error_response(exc)
     file_path: Optional[str] = None
     try:
         raw_hash: Optional[str] = None
@@ -134,9 +247,11 @@ async def upload_document(
                 document_group=document_group,
                 owner_user_id=str(current_user.get("id") or ""),
                 visibility_scope=visibility_scope,
+                **_matter_kwargs(ingest_uploaded_document, target_matter_id),
             )
         finally:
             _remove_spooled_upload(file_path)
+        _link_ingested_document(result, target_matter_id, current_user)
         return JSONResponse(content=result)
     except Exception as exc:
         _remove_spooled_upload(file_path)
@@ -153,9 +268,14 @@ async def upload_document_async(
     source_type: str = Form(""),
     source: str = Form(""),
     content: str = Form(""),
+    matter_id: str = Form(""),
     file: Optional[UploadFile] = File(default=None),
     current_user: dict = Depends(get_current_user),
 ):
+    try:
+        target_matter_id = _upload_target_matter(current_user, matter_id)
+    except HTTPException as exc:
+        return _error_response(exc)
     file_path: Optional[str] = None
     try:
         raw_hash: Optional[str] = None
@@ -179,10 +299,12 @@ async def upload_document_async(
                 uploader=current_user,
                 owner_user_id=str(current_user.get("id") or ""),
                 visibility_scope=visibility_scope,
+                **_matter_kwargs(start_ingestion_job, target_matter_id),
             )
         except Exception:
             _remove_spooled_upload(file_path)
             raise
+        _link_started_job(job, target_matter_id, current_user)
         return JSONResponse(content=job)
     except Exception as exc:
         _remove_spooled_upload(file_path)
@@ -208,6 +330,15 @@ async def get_document_job(job_id: str, current_user: dict = Depends(get_current
             status_code=404,
             content={"error": "job_not_found", "message": f"No ingestion job found for id {job_id}."},
         )
+    # ingestion_jobs has no completion callback: an async upload into a matter is linked the
+    # first time its finished job is read here (the upload page polls until it finishes).
+    try:
+        linked = matter_service.link_finished_upload(job)
+    except Exception as exc:
+        print(f"[documents] Matter link failed for ingestion job {job_id}: {type(exc).__name__}")
+        linked = None
+    if linked:
+        job = {**job, "matter_id": linked["matter_id"]}
     return JSONResponse(content=job)
 
 
@@ -261,10 +392,12 @@ async def delete_document(document_id: str, current_user: dict = Depends(get_cur
         if not _is_admin_user(current_user):
             entry_owner = str(entry.get("owner_user_id") or "").strip()
             if entry_owner != str(current_user.get("id") or "").strip():
-                return JSONResponse(
-                    status_code=403,
-                    content={"error": "document_forbidden", "message": "Only admins can delete global knowledge base documents."},
+                message = (
+                    "Only admins can delete global knowledge base documents."
+                    if _owner_rules_allow_access(current_user, entry)
+                    else "Only the document's owner can delete it; remove it from the matter instead."
                 )
+                return JSONResponse(status_code=403, content={"error": "document_forbidden", "message": message})
         if audit and str(audit.get("status") or "") in {"deleted", "deleted_with_warnings"}:
             return JSONResponse(
                 status_code=404,
@@ -295,6 +428,14 @@ async def delete_document(document_id: str, current_user: dict = Depends(get_cur
 
         cleanup = delete_uploaded_document(upload)
         document_registry.remove(document_id)
+        try:
+            detached_matter_ids = matter_service.detach_deleted_document(
+                document_id,
+                actor_user_id=str(current_user.get("id") or ""),
+            )
+        except Exception as exc:
+            print(f"[documents] Matter detach failed after deleting a document: {type(exc).__name__}")
+            detached_matter_ids = []
 
         warnings = list(cleanup.get("warnings") or [])
         neo4j_result = cleanup.get("neo4j") or {}
@@ -325,6 +466,7 @@ async def delete_document(document_id: str, current_user: dict = Depends(get_cur
                 "deleted": True,
                 "document_id": document_id,
                 "cleanup": cleanup,
+                "detached_matter_count": len(detached_matter_ids),
             }
         )
     except Exception as exc:
@@ -337,6 +479,10 @@ async def delete_document(document_id: str, current_user: dict = Depends(get_cur
 @router.post("/documents/ingest-text")
 async def ingest_text_document(request: ManualDocumentRequest, current_user: dict = Depends(get_current_user)):
     try:
+        target_matter_id = _upload_target_matter(current_user, request.matter_id)
+    except HTTPException as exc:
+        return _error_response(exc)
+    try:
         is_admin = _is_admin_user(current_user)
         result = ingest_uploaded_document(
             title=request.title,
@@ -347,7 +493,9 @@ async def ingest_text_document(request: ManualDocumentRequest, current_user: dic
             document_group="global_kb" if is_admin else "user_private",
             owner_user_id=str(current_user.get("id") or ""),
             visibility_scope="global" if is_admin else "private",
+            **_matter_kwargs(ingest_uploaded_document, target_matter_id),
         )
+        _link_ingested_document(result, target_matter_id, current_user)
         return JSONResponse(content=result)
     except Exception as exc:
         return JSONResponse(
