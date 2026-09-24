@@ -24,6 +24,7 @@ This repository contains the application code and configuration templates. It do
 - Graph APIs: inspect Neo4j status, entity neighborhoods, causal forward/backward chains, and shortest paths.
 - Hybrid retrieval controls: vector search, BM25 fusion, multi-query expansion, HyDE, reranking, graph context, and decomposition are all environment-controlled.
 - Admin and audit surfaces: login, admin allowlists, upload monitoring, feedback capture, notification hooks, and trace logging.
+- Recruitment: admins email offer letters (English or Chinese templates with a live preview) to candidates from `/admin/recruitment` and track who accepted, declined or has not replied.
 - macOS desktop companion: edge-docked assistant window for report drops, screenshot summaries, and follow-up questions without keeping the web app in focus.
 - Production deployment support: Vercel frontend, Fly.io backend, persistent Fly volume, optional embedded Redis, and external Pinecone / Neo4j services.
 
@@ -368,7 +369,15 @@ GET    /admin/overview
 GET    /admin/uploads
 POST   /admin/invite-codes
 DELETE /admin/uploads/{job_id}
+GET    /admin/recruitment/offers
+POST   /admin/recruitment/offers/preview
+POST   /admin/recruitment/offers
+POST   /admin/recruitment/offers/{offer_id}/resend
+PATCH  /admin/recruitment/offers/{offer_id}
+DELETE /admin/recruitment/offers/{offer_id}
 ```
+
+Recruitment offers are emailed with the same `MAIL_*` SMTP settings as registration codes (see `.env.example`), and every offer is stored in the auth database. When `MAIL_ENABLED=false`, development servers write the offer to the server log instead of sending it, and production (`APP_ENV=production`) refuses to send until mail is configured.
 
 ### Chat Sessions
 

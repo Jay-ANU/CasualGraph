@@ -8,6 +8,7 @@ import About from './pages/About';
 import EsgDemo from './pages/EsgDemo';
 import Login from './pages/Login';
 import Admin from './pages/Admin';
+import Recruitment from './pages/Recruitment';
 import DesktopDownload from './pages/DesktopDownload';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import useDocumentTitle from './utils/useDocumentTitle';
@@ -59,6 +60,7 @@ const Shell: React.FC = () => {
           <Route path="/download" element={<DesktopDownload />} />
           <Route path="/agent" element={<ProtectedRoute><Agent /></ProtectedRoute>} />
           <Route path="/admin" element={<AdminRoute><Admin /></AdminRoute>} />
+          <Route path="/admin/recruitment" element={<AdminRoute><Recruitment /></AdminRoute>} />
           <Route path="/about" element={<About />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

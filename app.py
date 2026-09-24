@@ -23,7 +23,7 @@ import aiosqlite
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
@@ -310,6 +310,7 @@ async def _init_auth_db():
         await _ensure_column(db, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
         await db.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR lower(role) NOT IN ('admin', 'user')")
         await init_user_memory_db(db)
+        await recruitment_offers.init_recruitment_db(db)
         admin_emails = sorted(_admin_email_set())
         if admin_emails:
             placeholders = ",".join("?" for _ in admin_emails)
@@ -746,14 +747,8 @@ async def _verify_email_code(db: aiosqlite.Connection, email: str, code: Optiona
     )
 
 
-def _deliver_email_verification_code(*, email: str, code: str) -> None:
-    if not _MAIL_ENABLED:
-        if _is_production_like_env():
-            raise HTTPException(status_code=503, detail="Email delivery is not configured")
-        print(f"[email-verification] MAIL_ENABLED=false; code for {_normalize_email(email)}: {code}")
-        return
-
-    missing = [
+def _mail_missing_config() -> List[str]:
+    return [
         name
         for name, value in {
             "MAIL_SMTP_HOST": _MAIL_SMTP_HOST,
@@ -763,6 +758,33 @@ def _deliver_email_verification_code(*, email: str, code: str) -> None:
         }.items()
         if not value
     ]
+
+
+def _send_mail_message(message: EmailMessage) -> Dict[str, Any]:
+    """Deliver through the configured SMTP server.
+
+    Raises smtplib.SMTPException or OSError. Returns the recipients the server
+    refused when it accepted at least one of them.
+    """
+    if _MAIL_SMTP_SSL:
+        with smtplib.SMTP_SSL(_MAIL_SMTP_HOST, _MAIL_SMTP_PORT, timeout=15) as smtp:
+            smtp.login(_MAIL_SMTP_USER, _MAIL_SMTP_PASSWORD)
+            return smtp.send_message(message)
+    with smtplib.SMTP(_MAIL_SMTP_HOST, _MAIL_SMTP_PORT, timeout=15) as smtp:
+        if _MAIL_SMTP_STARTTLS:
+            smtp.starttls()
+        smtp.login(_MAIL_SMTP_USER, _MAIL_SMTP_PASSWORD)
+        return smtp.send_message(message)
+
+
+def _deliver_email_verification_code(*, email: str, code: str) -> None:
+    if not _MAIL_ENABLED:
+        if _is_production_like_env():
+            raise HTTPException(status_code=503, detail="Email delivery is not configured")
+        print(f"[email-verification] MAIL_ENABLED=false; code for {_normalize_email(email)}: {code}")
+        return
+
+    missing = _mail_missing_config()
     if missing:
         raise HTTPException(status_code=503, detail=f"Email delivery is missing configuration: {', '.join(missing)}")
 
@@ -784,16 +806,7 @@ def _deliver_email_verification_code(*, email: str, code: str) -> None:
     )
 
     try:
-        if _MAIL_SMTP_SSL:
-            with smtplib.SMTP_SSL(_MAIL_SMTP_HOST, _MAIL_SMTP_PORT, timeout=15) as smtp:
-                smtp.login(_MAIL_SMTP_USER, _MAIL_SMTP_PASSWORD)
-                smtp.send_message(message)
-        else:
-            with smtplib.SMTP(_MAIL_SMTP_HOST, _MAIL_SMTP_PORT, timeout=15) as smtp:
-                if _MAIL_SMTP_STARTTLS:
-                    smtp.starttls()
-                smtp.login(_MAIL_SMTP_USER, _MAIL_SMTP_PASSWORD)
-                smtp.send_message(message)
+        _send_mail_message(message)
     except smtplib.SMTPException as exc:
         raise HTTPException(status_code=502, detail="Email delivery failed") from exc
 
@@ -890,6 +903,7 @@ from user_memory_service import (
     update_user_memory,
 )
 import document_registry
+import recruitment_offers
 from graph.causal_reasoning import CausalReasoner
 from graph.neo4j_store import assert_neo4j_ready, get_neo4j_store, neo4j_sdk_available
 from admin_audit import (
@@ -1252,6 +1266,332 @@ async def delete_rag_unlimited_user(
     cursor = await db.execute("DELETE FROM rag_unlimited_users WHERE email = ?", (normalized_email,))
     await db.commit()
     return {"deleted": cursor.rowcount > 0, "email": normalized_email}
+
+
+# ── Recruitment offers ───────────────────────────────────────────────────────
+_RECRUITMENT_RESEND_COOLDOWN_SECONDS = 60
+
+
+class RecruitmentOfferRequest(BaseModel):
+    candidate_name: str = ""
+    candidate_email: str = ""
+    position: str = ""
+    start_date: Optional[str] = ""
+    respond_by: Optional[str] = ""
+    language: str = "en"
+    subject: str = ""
+    letter: str = ""
+    reply_to_sender: bool = True
+    copy_to_sender: bool = False
+
+
+class RecruitmentOfferStatusRequest(BaseModel):
+    status: str
+
+
+def _recruitment_mail_status() -> Dict[str, Any]:
+    if _MAIL_ENABLED:
+        missing = _mail_missing_config()
+        if missing:
+            return {
+                "mode": "unavailable",
+                "sender": None,
+                "detail": f"Email delivery is missing configuration: {', '.join(missing)}.",
+            }
+        return {"mode": "smtp", "sender": f"{_MAIL_FROM_NAME} <{_MAIL_FROM}>", "detail": ""}
+    if _is_production_like_env():
+        return {"mode": "unavailable", "sender": None, "detail": "Email delivery is not configured on this server."}
+    return {
+        "mode": "log",
+        "sender": None,
+        "detail": "MAIL_ENABLED is false, so offers are written to the server log instead of being emailed.",
+    }
+
+
+def _recruitment_mail_mode() -> str:
+    status = _recruitment_mail_status()
+    if status["mode"] == "unavailable":
+        raise HTTPException(status_code=503, detail=status["detail"])
+    return status["mode"]
+
+
+def _recruitment_sender_name(current_user: dict) -> str:
+    username = str(current_user.get("username") or "").strip()
+    return username or _normalize_email(str(current_user.get("email") or "")).split("@")[0]
+
+
+def _recruitment_draft(
+    request: RecruitmentOfferRequest,
+    current_user: dict,
+    *,
+    strict: bool,
+) -> recruitment_offers.OfferDraft:
+    try:
+        return recruitment_offers.build_draft(
+            candidate_name=request.candidate_name,
+            candidate_email=request.candidate_email,
+            position=request.position,
+            start_date=request.start_date,
+            respond_by=request.respond_by,
+            language=request.language,
+            subject=request.subject,
+            letter=request.letter,
+            sender_name=_recruitment_sender_name(current_user),
+            strict=strict,
+        )
+    except recruitment_offers.OfferValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _recruitment_reply_addresses(
+    request: RecruitmentOfferRequest,
+    current_user: dict,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Reply-To and Bcc addresses, both the signed-in admin's own email when requested."""
+    admin_email = _normalize_email(str(current_user.get("email") or ""))
+    if not recruitment_offers.is_valid_email(admin_email):
+        return None, None
+    return (
+        admin_email if request.reply_to_sender else None,
+        admin_email if request.copy_to_sender else None,
+    )
+
+
+def _build_recruitment_message(
+    *,
+    subject: str,
+    text: str,
+    html_body: str,
+    candidate_name: str,
+    candidate_email: str,
+    reply_to: Optional[str],
+    bcc: Optional[str],
+) -> EmailMessage:
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = formataddr((_MAIL_FROM_NAME, _MAIL_FROM))
+    message["To"] = formataddr((candidate_name, candidate_email))
+    if reply_to:
+        message["Reply-To"] = reply_to
+    if bcc:
+        message["Bcc"] = bcc
+    message["Date"] = formatdate(usegmt=True)
+    message["Message-ID"] = make_msgid(domain=_MAIL_FROM.rpartition("@")[2] or None)
+    message.set_content(text)
+    message.add_alternative(html_body, subtype="html")
+    return message
+
+
+def _describe_mail_error(exc: BaseException) -> str:
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return "The mail server rejected the sender credentials."
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return "The mail server refused the candidate's address."
+    if isinstance(exc, smtplib.SMTPSenderRefused):
+        return "The mail server refused the sender address."
+    if isinstance(exc, smtplib.SMTPResponseException):
+        reply = exc.smtp_error.decode(errors="replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
+        return f"The mail server replied {exc.smtp_code}: {reply[:200]}"
+    if isinstance(exc, smtplib.SMTPException):
+        return f"Email delivery failed ({type(exc).__name__})."
+    if isinstance(exc, TimeoutError):
+        return "The mail server did not respond in time."
+    return "Could not connect to the mail server."
+
+
+async def _deliver_recruitment_offer(
+    db: aiosqlite.Connection,
+    offer_id: str,
+    message: EmailMessage,
+    *,
+    candidate_email: str,
+    mode: str,
+) -> Dict[str, Any]:
+    try:
+        if mode == "log":
+            plain = message.get_body(preferencelist=("plain",))
+            print(
+                f"[recruitment] MAIL_ENABLED=false; offer {offer_id} was not emailed.\n"
+                f"To: {message['To']}\nSubject: {message['Subject']}\n\n{plain.get_content() if plain else ''}"
+            )
+        else:
+            refused = await asyncio.to_thread(_send_mail_message, message) or {}
+            # The server only raises when every recipient is refused; a Bcc copy can hide a refused candidate.
+            if candidate_email.lower() in {str(address).lower() for address in refused}:
+                raise smtplib.SMTPRecipientsRefused(refused)
+    except (smtplib.SMTPException, OSError) as exc:
+        reason = _describe_mail_error(exc)
+        print(f"[recruitment] offer {offer_id} delivery failed: {type(exc).__name__}: {exc}")
+        await recruitment_offers.record_failure(db, offer_id, error=reason)
+        raise HTTPException(status_code=502, detail=f"The offer was not sent. {reason}") from exc
+    offer = await recruitment_offers.record_delivery(db, offer_id, delivery=mode)
+    return {"offer": offer, "delivery": mode}
+
+
+@app.get("/admin/recruitment/offers")
+async def list_recruitment_offers(
+    limit: int = Query(default=200, ge=1, le=500),
+    current_user: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    return {
+        "offers": await recruitment_offers.list_offers(db, limit=limit),
+        "mail": _recruitment_mail_status(),
+    }
+
+
+@app.post("/admin/recruitment/offers/preview")
+async def preview_recruitment_offer(
+    request: RecruitmentOfferRequest,
+    current_user: dict = Depends(require_admin),
+):
+    draft = _recruitment_draft(request, current_user, strict=False)
+    rendered = recruitment_offers.render_offer(draft)
+    reply_to, bcc = _recruitment_reply_addresses(request, current_user)
+    recipient = draft.candidate_email
+    if recipient and draft.candidate_name:
+        recipient = f"{draft.candidate_name} <{recipient}>"
+    return {
+        "subject": rendered.subject,
+        "html": rendered.html,
+        "text": rendered.text,
+        "from": _recruitment_mail_status()["sender"],
+        "to": recipient,
+        "reply_to": reply_to,
+        "bcc": bcc,
+        "missing": rendered.missing,
+        "unknown": rendered.unknown,
+        "warnings": recruitment_offers.date_warnings(draft),
+    }
+
+
+@app.post("/admin/recruitment/offers")
+async def send_recruitment_offer(
+    request: RecruitmentOfferRequest,
+    current_user: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    draft = _recruitment_draft(request, current_user, strict=True)
+    rendered = recruitment_offers.render_offer(draft)
+    problems = recruitment_offers.missing_placeholder_messages(rendered)
+    if problems:
+        raise HTTPException(status_code=400, detail=" ".join(problems))
+    mode = _recruitment_mail_mode()
+    duplicate = await recruitment_offers.find_recent_duplicate(
+        db,
+        candidate_email=draft.candidate_email,
+        position=draft.position,
+    )
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail=f"An offer for {draft.position} was sent to {draft.candidate_email} less than a minute ago.",
+        )
+    reply_to, bcc = _recruitment_reply_addresses(request, current_user)
+    offer = await recruitment_offers.insert_offer(
+        db,
+        draft=draft,
+        rendered=rendered,
+        reply_to=reply_to,
+        bcc=bcc,
+        created_by_user_id=str(current_user.get("id") or ""),
+        created_by_email=_normalize_email(str(current_user.get("email") or "")),
+    )
+    message = _build_recruitment_message(
+        subject=rendered.subject,
+        text=rendered.text,
+        html_body=rendered.html,
+        candidate_name=draft.candidate_name,
+        candidate_email=draft.candidate_email,
+        reply_to=reply_to,
+        bcc=bcc,
+    )
+    return await _deliver_recruitment_offer(
+        db,
+        offer["id"],
+        message,
+        candidate_email=draft.candidate_email,
+        mode=mode,
+    )
+
+
+@app.post("/admin/recruitment/offers/{offer_id}/resend")
+async def resend_recruitment_offer(
+    offer_id: str,
+    current_user: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    stored = await recruitment_offers.get_offer_row(db, offer_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    if stored["status"] not in recruitment_offers.RESENDABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="Only offers that are awaiting a reply or were not delivered can be sent again.",
+        )
+    if stored["status"] == "sent" and stored["sent_at"]:
+        elapsed = (datetime.now(timezone.utc) - _parse_utc_iso(stored["sent_at"])).total_seconds()
+        if elapsed < _RECRUITMENT_RESEND_COOLDOWN_SECONDS:
+            raise HTTPException(status_code=429, detail="This offer was sent less than a minute ago.")
+    mode = _recruitment_mail_mode()
+    text, html_body = recruitment_offers.compose_email_bodies(
+        candidate_name=stored["candidate_name"],
+        position=stored["position"],
+        start_date=stored["start_date"] or "",
+        respond_by=stored["respond_by"] or "",
+        language=stored["language"],
+        sender_name=stored["sender_name"],
+        subject=stored["subject"],
+        letter_segments=[("text", stored["letter"])],
+    )
+    message = _build_recruitment_message(
+        subject=stored["subject"],
+        text=text,
+        html_body=html_body,
+        candidate_name=stored["candidate_name"],
+        candidate_email=stored["candidate_email"],
+        reply_to=stored["reply_to"],
+        bcc=stored["bcc"],
+    )
+    return await _deliver_recruitment_offer(
+        db,
+        offer_id,
+        message,
+        candidate_email=stored["candidate_email"],
+        mode=mode,
+    )
+
+
+@app.patch("/admin/recruitment/offers/{offer_id}")
+async def update_recruitment_offer_status(
+    offer_id: str,
+    request: RecruitmentOfferStatusRequest,
+    current_user: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    status = str(request.status or "").strip().lower()
+    if status not in recruitment_offers.MANUAL_STATUSES:
+        raise HTTPException(status_code=400, detail="Status must be sent, accepted, declined or withdrawn.")
+    offer = await recruitment_offers.get_offer(db, offer_id)
+    if offer is None:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    if not offer.get("sent_at") and status != "withdrawn":
+        raise HTTPException(
+            status_code=409,
+            detail="This offer has not reached the candidate yet. Send it again or withdraw it.",
+        )
+    return {"offer": await recruitment_offers.update_status(db, offer_id, status)}
+
+
+@app.delete("/admin/recruitment/offers/{offer_id}")
+async def delete_recruitment_offer(
+    offer_id: str,
+    current_user: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(_get_db),
+):
+    if not await recruitment_offers.delete_offer(db, offer_id):
+        raise HTTPException(status_code=404, detail="Offer not found")
+    return {"deleted": True, "id": offer_id}
 
 
 class AdminUploadUpdateRequest(BaseModel):

@@ -8,6 +8,7 @@ import {
   AlertCircle,
   ArrowUp,
   BrainCircuit,
+  Briefcase,
   Check,
   CheckCircle2,
   ChevronsUpDown,
@@ -3092,10 +3093,16 @@ const Agent: React.FC = () => {
                 Desktop app
               </Link>
               {isAdmin && (
-                <Link to="/admin" className="menu-item" role="menuitem">
-                  <ShieldCheck className="h-4 w-4 text-ink-4" />
-                  Admin console
-                </Link>
+                <>
+                  <Link to="/admin" className="menu-item" role="menuitem">
+                    <ShieldCheck className="h-4 w-4 text-ink-4" />
+                    Admin console
+                  </Link>
+                  <Link to="/admin/recruitment" className="menu-item" role="menuitem">
+                    <Briefcase className="h-4 w-4 text-ink-4" />
+                    Recruitment
+                  </Link>
+                </>
               )}
               <div className="menu-sep" />
               <button

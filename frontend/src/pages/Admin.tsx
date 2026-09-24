@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import AdminTabs from '../components/AdminTabs';
 import useDocumentTitle from '../utils/useDocumentTitle';
 
 interface UploadAudit {
@@ -312,7 +313,9 @@ const Admin: React.FC = () => {
 
   return (
     <div className="mx-auto max-w-content px-5 pb-24 pt-10 sm:px-8 lg:pt-14">
-      <header className="flex flex-wrap items-end justify-between gap-4">
+      <AdminTabs />
+
+      <header className="mt-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="page-title">Document operations</h1>
           <p className="mt-1 text-sm text-ink-3">Uploads, processing status and corpus growth across the workspace.</p>

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
-import { ChevronDown, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
+import { Briefcase, ChevronDown, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import BrandLogo from './BrandLogo';
 
@@ -99,10 +99,16 @@ const Navbar: React.FC = () => {
                     </div>
                     <div className="menu-sep" />
                     {isAdmin && (
-                      <Link to="/admin" className="menu-item" role="menuitem">
-                        <ShieldCheck className="h-4 w-4 text-ink-4" />
-                        Admin console
-                      </Link>
+                      <>
+                        <Link to="/admin" className="menu-item" role="menuitem">
+                          <ShieldCheck className="h-4 w-4 text-ink-4" />
+                          Admin console
+                        </Link>
+                        <Link to="/admin/recruitment" className="menu-item" role="menuitem">
+                          <Briefcase className="h-4 w-4 text-ink-4" />
+                          Recruitment
+                        </Link>
+                      </>
                     )}
                     <button type="button" onClick={handleLogout} className="menu-item" role="menuitem">
                       <LogOut className="h-4 w-4 text-ink-4" />
@@ -167,6 +173,7 @@ const Navbar: React.FC = () => {
                 <div className="flex flex-wrap gap-2">
                   <Link to="/agent" className="btn btn-primary">Open research desk</Link>
                   {isAdmin && <Link to="/admin" className="btn btn-secondary">Admin console</Link>}
+                  {isAdmin && <Link to="/admin/recruitment" className="btn btn-secondary">Recruitment</Link>}
                   <button type="button" onClick={handleLogout} className="btn btn-secondary">Sign out</button>
                 </div>
               </div>

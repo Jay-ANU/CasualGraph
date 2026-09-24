@@ -1,0 +1,430 @@
+from __future__ import annotations
+
+import asyncio
+import smtplib
+import uuid
+from contextlib import ExitStack, contextmanager
+from datetime import date
+from unittest.mock import patch
+
+import aiosqlite
+import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
+import app as api
+import recruitment_offers as offers
+
+
+ADMIN = {"id": "admin-1", "email": "Hiring@Example.com", "username": "Jay", "role": "admin"}
+LETTER = (
+    "Dear {{candidate_name}},\n\n"
+    "We are pleased to offer you the position of {{position}}.\n"
+    "Please reply by {{respond_by}}.\n\n"
+    "Kind regards,\n{{sender_name}}"
+)
+
+
+def _offer_request(**overrides) -> api.RecruitmentOfferRequest:
+    fields = {
+        "candidate_name": "Ada Lovelace",
+        "candidate_email": "Ada@Example.org",
+        "position": "Research assistant",
+        "start_date": "2099-10-05",
+        "respond_by": "2099-09-28",
+        "language": "en",
+        "subject": "Offer: {{position}} at CausalGraph AI",
+        "letter": LETTER,
+        "reply_to_sender": True,
+        "copy_to_sender": False,
+    }
+    fields.update(overrides)
+    return api.RecruitmentOfferRequest(**fields)
+
+
+class FakeMailer:
+    def __init__(self, error: Exception | None = None, refused: dict | None = None):
+        self.error = error
+        self.refused = refused or {}
+        self.messages = []
+
+    def __call__(self, message):
+        if self.error is not None:
+            raise self.error
+        self.messages.append(message)
+        return self.refused
+
+
+@contextmanager
+def _backend(tmp_path, *, mailer: FakeMailer | None = None, mail_enabled: bool = True, app_env: str = "development"):
+    with ExitStack() as stack:
+        stack.enter_context(patch("app._DB_PATH", str(tmp_path / "auth.db")))
+        stack.enter_context(patch("app._APP_ENV", app_env))
+        stack.enter_context(patch("app._MAIL_ENABLED", mail_enabled))
+        stack.enter_context(patch("app._MAIL_SMTP_HOST", "smtp.example.com"))
+        stack.enter_context(patch("app._MAIL_SMTP_USER", "offers@example.com"))
+        stack.enter_context(patch("app._MAIL_SMTP_PASSWORD", "secret"))
+        stack.enter_context(patch("app._MAIL_FROM", "offers@example.com"))
+        stack.enter_context(patch("app._MAIL_FROM_NAME", "CausalGraph AI"))
+        stack.enter_context(patch("app._send_mail_message", mailer or FakeMailer()))
+        yield
+
+
+def _draft(**overrides) -> offers.OfferDraft:
+    fields = {
+        "candidate_name": "Ada Lovelace",
+        "candidate_email": "ada@example.org",
+        "position": "Research assistant",
+        "start_date": "2026-10-05",
+        "respond_by": "",
+        "language": "en",
+        "subject": "Offer: {{position}}",
+        "letter": LETTER,
+        "sender_name": "Jay",
+        "strict": True,
+    }
+    fields.update(overrides)
+    return offers.build_draft(**fields)
+
+
+def test_render_fills_placeholders_and_escapes_html():
+    rendered = offers.render_offer(
+        _draft(candidate_name="Ada <script>alert(1)</script>", respond_by="2026-09-28")
+    )
+
+    assert rendered.subject == "Offer: Research assistant"
+    assert rendered.missing == [] and rendered.unknown == []
+    assert "Dear Ada <script>alert(1)</script>," in rendered.letter
+    assert "Please reply by Monday 28 September 2026." in rendered.text
+    assert "Start date: Monday 5 October 2026" in rendered.text
+    assert "<script>" not in rendered.html
+    assert "Dear Ada &lt;script&gt;alert(1)&lt;/script&gt;," in rendered.html
+    assert "{{" not in rendered.html
+
+
+def test_chinese_offer_uses_chinese_dates_and_labels():
+    rendered = offers.render_offer(
+        _draft(language="zh", letter="{{candidate_name}}，您好：\n\n请于{{respond_by}}前回复。", respond_by="2026-10-01")
+    )
+
+    assert "请于2026年10月1日（星期四）前回复。" in rendered.letter
+    assert "入职日期：2026年10月5日（星期一）" in rendered.text
+    assert 'lang="zh-CN"' in rendered.html
+    assert "录用通知" in rendered.html
+
+
+def test_render_reports_missing_and_unknown_placeholders():
+    rendered = offers.render_offer(
+        _draft(start_date="", letter="Hi {{candidate_name}}, you start {{ start_date }}. Pay: {{salary}}.")
+    )
+
+    assert rendered.missing == ["start_date"]
+    assert rendered.unknown == ["{{salary}}"]
+    assert "you start [start date]. Pay: {{salary}}." in rendered.letter
+    assert offers.missing_placeholder_messages(rendered) == [
+        "Add the start date or remove {{start_date}} from the email.",
+        "{{salary}} is not a placeholder this page can fill.",
+    ]
+
+
+def test_strict_draft_validation_and_header_safety():
+    with pytest.raises(offers.OfferValidationError, match="valid email"):
+        _draft(candidate_email="not-an-email")
+    with pytest.raises(offers.OfferValidationError, match="candidate's name"):
+        _draft(candidate_name="   ")
+    with pytest.raises(offers.OfferValidationError, match="YYYY-MM-DD"):
+        _draft(start_date="next Monday")
+    with pytest.raises(offers.OfferValidationError, match="Language"):
+        _draft(language="fr")
+    with pytest.raises(offers.OfferValidationError, match="160 characters"):
+        _draft(position="x" * 161)
+
+    draft = _draft(subject="Offer\r\nBcc: attacker@example.com", candidate_name="Ada\nLovelace")
+    assert draft.subject == "Offer Bcc: attacker@example.com"
+    assert draft.candidate_name == "Ada Lovelace"
+
+    lenient = _draft(candidate_name="", candidate_email="", position="", strict=False)
+    assert lenient.candidate_email == ""
+
+
+def test_date_warnings_are_advisory():
+    draft = _draft(start_date="2026-09-01", respond_by="2026-09-10")
+    assert offers.date_warnings(draft, today=date(2026, 9, 24)) == [
+        "The start date is in the past.",
+        "The reply date is in the past.",
+        "The reply date is after the start date.",
+    ]
+    assert offers.date_warnings(_draft(start_date="2026-10-05", respond_by="2026-09-28"), today=date(2026, 9, 24)) == []
+
+
+def test_send_offer_delivers_multipart_email_and_records_it(tmp_path):
+    asyncio.run(_send_offer_delivers_multipart_email_and_records_it(tmp_path))
+
+
+async def _send_offer_delivers_multipart_email_and_records_it(tmp_path):
+    mailer = FakeMailer()
+    with _backend(tmp_path, mailer=mailer):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            result = await api.send_recruitment_offer(_offer_request(copy_to_sender=True), ADMIN, db)
+            listed = await api.list_recruitment_offers(200, ADMIN, db)
+
+    offer = result["offer"]
+    assert result["delivery"] == "smtp"
+    assert offer["status"] == "sent"
+    assert offer["candidate_email"] == "ada@example.org"
+    assert offer["subject"] == "Offer: Research assistant at CausalGraph AI"
+    assert offer["send_count"] == 1
+    assert offer["sent_at"]
+    assert offer["reply_to"] == "hiring@example.com"
+    assert offer["copy_to_sender"] is True
+    assert offer["created_by_email"] == "hiring@example.com"
+    assert "Please reply by Monday 28 September 2099." in offer["letter"]
+
+    assert len(mailer.messages) == 1
+    message = mailer.messages[0]
+    assert message["To"] == "Ada Lovelace <ada@example.org>"
+    assert message["From"] == "CausalGraph AI <offers@example.com>"
+    assert message["Reply-To"] == "hiring@example.com"
+    assert message["Bcc"] == "hiring@example.com"
+    assert message["Subject"] == "Offer: Research assistant at CausalGraph AI"
+    assert message["Message-ID"].endswith("@example.com>")
+    assert message.get_body(("plain",)).get_content().startswith("Dear Ada Lovelace,")
+    assert "Research assistant</h1>" in message.get_body(("html",)).get_content()
+
+    assert [item["id"] for item in listed["offers"]] == [offer["id"]]
+    assert listed["mail"] == {"mode": "smtp", "sender": "CausalGraph AI <offers@example.com>", "detail": ""}
+
+
+def test_failed_delivery_is_recorded_and_can_be_retried(tmp_path):
+    asyncio.run(_failed_delivery_is_recorded_and_can_be_retried(tmp_path))
+
+
+async def _failed_delivery_is_recorded_and_can_be_retried(tmp_path):
+    failing = FakeMailer(error=smtplib.SMTPAuthenticationError(535, b"Login fail"))
+    with _backend(tmp_path, mailer=failing):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            with pytest.raises(HTTPException) as exc:
+                await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+            [failed] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
+
+            with pytest.raises(HTTPException) as accept_exc:
+                await api.update_recruitment_offer_status(
+                    failed["id"], api.RecruitmentOfferStatusRequest(status="accepted"), ADMIN, db
+                )
+
+            working = FakeMailer()
+            with patch("app._send_mail_message", working):
+                retried = await api.resend_recruitment_offer(failed["id"], ADMIN, db)
+
+    assert exc.value.status_code == 502
+    assert "rejected the sender credentials" in exc.value.detail
+    assert failed["status"] == "failed"
+    assert failed["sent_at"] is None
+    assert failed["last_error"] == "The mail server rejected the sender credentials."
+    assert accept_exc.value.status_code == 409
+
+    assert retried["offer"]["status"] == "sent"
+    assert retried["offer"]["last_error"] is None
+    assert retried["offer"]["send_count"] == 1
+    message = working.messages[0]
+    assert message["To"] == "Ada Lovelace <ada@example.org>"
+    assert message["Reply-To"] == "hiring@example.com"
+    assert message["Bcc"] is None
+    assert "Dear Ada Lovelace," in message.get_body(("plain",)).get_content()
+
+
+def test_refused_candidate_is_a_failure_even_when_the_bcc_copy_is_accepted(tmp_path):
+    asyncio.run(_refused_candidate_is_a_failure_even_when_the_bcc_copy_is_accepted(tmp_path))
+
+
+async def _refused_candidate_is_a_failure_even_when_the_bcc_copy_is_accepted(tmp_path):
+    mailer = FakeMailer(refused={"ada@example.org": (550, b"No such user")})
+    with _backend(tmp_path, mailer=mailer):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            with pytest.raises(HTTPException) as exc:
+                await api.send_recruitment_offer(_offer_request(copy_to_sender=True), ADMIN, db)
+            [offer] = (await api.list_recruitment_offers(200, ADMIN, db))["offers"]
+
+    assert exc.value.status_code == 502
+    assert "refused the candidate's address" in exc.value.detail
+    assert offer["status"] == "failed"
+
+
+def test_offer_with_unfilled_placeholders_is_not_sent(tmp_path):
+    asyncio.run(_offer_with_unfilled_placeholders_is_not_sent(tmp_path))
+
+
+async def _offer_with_unfilled_placeholders_is_not_sent(tmp_path):
+    mailer = FakeMailer()
+    with _backend(tmp_path, mailer=mailer):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            with pytest.raises(HTTPException) as exc:
+                await api.send_recruitment_offer(_offer_request(respond_by=""), ADMIN, db)
+            with pytest.raises(HTTPException) as invalid:
+                await api.send_recruitment_offer(_offer_request(candidate_email="ada@"), ADMIN, db)
+            listed = await api.list_recruitment_offers(200, ADMIN, db)
+
+    assert exc.value.status_code == 400
+    assert "{{respond_by}}" in exc.value.detail
+    assert invalid.value.status_code == 400
+    assert mailer.messages == []
+    assert listed["offers"] == []
+
+
+def test_double_submit_is_rejected(tmp_path):
+    asyncio.run(_double_submit_is_rejected(tmp_path))
+
+
+async def _double_submit_is_rejected(tmp_path):
+    mailer = FakeMailer()
+    with _backend(tmp_path, mailer=mailer):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+            with pytest.raises(HTTPException) as exc:
+                await api.send_recruitment_offer(_offer_request(position="research ASSISTANT"), ADMIN, db)
+            other_role = await api.send_recruitment_offer(_offer_request(position="Data engineer"), ADMIN, db)
+
+    assert exc.value.status_code == 409
+    assert other_role["offer"]["status"] == "sent"
+    assert len(mailer.messages) == 2
+
+
+def test_production_without_mail_refuses_to_send(tmp_path):
+    asyncio.run(_production_without_mail_refuses_to_send(tmp_path))
+
+
+async def _production_without_mail_refuses_to_send(tmp_path):
+    mailer = FakeMailer()
+    with _backend(tmp_path, mailer=mailer, mail_enabled=False, app_env="production"):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            with pytest.raises(HTTPException) as exc:
+                await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+            listed = await api.list_recruitment_offers(200, ADMIN, db)
+
+    assert exc.value.status_code == 503
+    assert listed["offers"] == []
+    assert listed["mail"]["mode"] == "unavailable"
+    assert mailer.messages == []
+
+
+def test_development_without_mail_logs_the_offer(tmp_path, capsys):
+    asyncio.run(_development_without_mail_logs_the_offer(tmp_path))
+    assert "offer" in capsys.readouterr().out
+
+
+async def _development_without_mail_logs_the_offer(tmp_path):
+    mailer = FakeMailer()
+    with _backend(tmp_path, mailer=mailer, mail_enabled=False, app_env="development"):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            result = await api.send_recruitment_offer(_offer_request(), ADMIN, db)
+            listed = await api.list_recruitment_offers(200, ADMIN, db)
+
+    assert result["delivery"] == "log"
+    assert result["offer"]["status"] == "sent"
+    assert listed["mail"]["mode"] == "log"
+    assert mailer.messages == []
+
+
+def test_status_updates_resend_rules_and_delete(tmp_path):
+    asyncio.run(_status_updates_resend_rules_and_delete(tmp_path))
+
+
+async def _status_updates_resend_rules_and_delete(tmp_path):
+    with _backend(tmp_path):
+        await api._init_auth_db()
+        async with aiosqlite.connect(tmp_path / "auth.db") as db:
+            offer = (await api.send_recruitment_offer(_offer_request(), ADMIN, db))["offer"]
+
+            with pytest.raises(HTTPException) as cooldown:
+                await api.resend_recruitment_offer(offer["id"], ADMIN, db)
+            with pytest.raises(HTTPException) as bad_status:
+                await api.update_recruitment_offer_status(
+                    offer["id"], api.RecruitmentOfferStatusRequest(status="failed"), ADMIN, db
+                )
+            accepted = await api.update_recruitment_offer_status(
+                offer["id"], api.RecruitmentOfferStatusRequest(status="Accepted"), ADMIN, db
+            )
+            with pytest.raises(HTTPException) as resend_accepted:
+                await api.resend_recruitment_offer(offer["id"], ADMIN, db)
+
+            deleted = await api.delete_recruitment_offer(offer["id"], ADMIN, db)
+            with pytest.raises(HTTPException) as missing:
+                await api.delete_recruitment_offer(offer["id"], ADMIN, db)
+
+    assert cooldown.value.status_code == 429
+    assert bad_status.value.status_code == 400
+    assert accepted["offer"]["status"] == "accepted"
+    assert resend_accepted.value.status_code == 409
+    assert deleted == {"deleted": True, "id": offer["id"]}
+    assert missing.value.status_code == 404
+
+
+def test_preview_shows_the_email_without_sending(tmp_path):
+    asyncio.run(_preview_shows_the_email_without_sending(tmp_path))
+
+
+async def _preview_shows_the_email_without_sending(tmp_path):
+    mailer = FakeMailer()
+    with _backend(tmp_path, mailer=mailer):
+        preview = await api.preview_recruitment_offer(
+            _offer_request(candidate_name="", candidate_email="", respond_by="", start_date="2000-01-03"),
+            ADMIN,
+        )
+
+    assert preview["subject"] == "Offer: Research assistant at CausalGraph AI"
+    assert preview["from"] == "CausalGraph AI <offers@example.com>"
+    assert preview["to"] == ""
+    assert preview["reply_to"] == "hiring@example.com"
+    assert preview["bcc"] is None
+    assert preview["missing"] == ["candidate_name", "respond_by"]
+    assert preview["unknown"] == []
+    assert preview["warnings"] == ["The start date is in the past."]
+    assert "[candidate name]" in preview["html"]
+    assert mailer.messages == []
+
+
+def test_recruitment_routes_require_admin():
+    routes = [route for route in api.app.routes if getattr(route, "path", "").startswith("/admin/recruitment")]
+    assert len(routes) == 6
+    for route in routes:
+        assert api.require_admin in {dependency.call for dependency in route.dependant.dependencies}, route.path
+
+
+def test_http_admin_can_send_and_regular_user_is_forbidden(tmp_path):
+    mailer = FakeMailer()
+    with _backend(tmp_path, mailer=mailer):
+        asyncio.run(api._init_auth_db())
+        asyncio.run(_insert_user(tmp_path, "admin-1", "hiring@example.com", "admin"))
+        asyncio.run(_insert_user(tmp_path, "user-1", "someone@example.com", "user"))
+        client = TestClient(api.app)
+        admin_headers = {"Authorization": f"Bearer {api._make_token('admin-1', 'hiring@example.com')}"}
+        user_headers = {"Authorization": f"Bearer {api._make_token('user-1', 'someone@example.com')}"}
+        payload = _offer_request().model_dump()
+
+        forbidden = client.post("/admin/recruitment/offers", json=payload, headers=user_headers)
+        anonymous = client.get("/admin/recruitment/offers")
+        sent = client.post("/admin/recruitment/offers", json=payload, headers=admin_headers)
+        listed = client.get("/admin/recruitment/offers", headers=admin_headers)
+
+    assert forbidden.status_code == 403
+    assert anonymous.status_code == 401
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["offer"]["status"] == "sent"
+    assert [item["candidate_email"] for item in listed.json()["offers"]] == ["ada@example.org"]
+    assert len(mailer.messages) == 1
+
+
+async def _insert_user(tmp_path, user_id: str, email: str, role: str) -> None:
+    async with aiosqlite.connect(tmp_path / "auth.db") as db:
+        await db.execute(
+            "INSERT INTO users (id, email, username, password_hash, role, created_at) VALUES (?,?,?,?,?,?)",
+            (user_id, email, email.split("@")[0], "x", role, "2026-01-01T00:00:00+00:00"),
+        )
+        await db.commit()
