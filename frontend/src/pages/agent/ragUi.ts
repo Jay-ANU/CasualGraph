@@ -148,25 +148,36 @@ export const normalizeStreamingMarkdown = (value: string): string => {
 
 const CITATION_PATTERN = /\[([^[\]\n]{1,200})\](?!\()/g;
 const CITATION_SEPARATOR = /\s*[,;，；]\s*/;
+const CODE_FENCE = /((?:```|~~~)[\s\S]*?(?:```|~~~|$))/g;
+const INLINE_CODE = /(`[^`\n]*`)/g;
 
 /**
  * Turn inline evidence markers such as `[chunk_3]` or `[chunk_3, chunk_7]`
  * into numbered markdown links (`[1](#cite-1)`) that the answer renderer
- * shows as citation buttons. Only markers whose ids all match a cited source
- * are rewritten; anything else — graph markers, prose in brackets, fenced
- * code — is left untouched.
+ * shows as citation buttons. Only markers whose ids all match exactly one
+ * cited source are rewritten. Chunk ids are numbered per report, so an id
+ * shared by passages from two reports is ambiguous and stays as written, as
+ * do graph markers, prose in brackets, images, link definitions and code.
  */
 export const linkCitations = (markdown: string, sources: RagSource[]): string => {
   if (!markdown || !sources.length) return markdown;
+  const occurrences = new Map<string, number>();
+  sources.forEach((source) => {
+    const id = String(source.chunk_id || '').trim();
+    if (id) occurrences.set(id, (occurrences.get(id) || 0) + 1);
+  });
   const numberById = new Map<string, number>();
   sources.forEach((source, index) => {
     const id = String(source.chunk_id || '').trim();
-    if (id && !numberById.has(id)) numberById.set(id, index + 1);
+    if (id && occurrences.get(id) === 1) numberById.set(id, index + 1);
   });
   if (numberById.size === 0) return markdown;
 
   const linkSegment = (segment: string) =>
-    segment.replace(CITATION_PATTERN, (match, inner: string) => {
+    segment.replace(CITATION_PATTERN, (match: string, inner: string, offset: number, whole: string) => {
+      if (offset > 0 && whole[offset - 1] === '!') return match;
+      const atLineStart = offset === 0 || whole[offset - 1] === '\n';
+      if (atLineStart && whole[offset + match.length] === ':') return match;
       const ids = inner.split(CITATION_SEPARATOR).map((id) => id.trim()).filter(Boolean);
       if (!ids.length || !ids.every((id) => numberById.has(id))) return match;
       return ids.map((id) => `[${numberById.get(id)}](#cite-${numberById.get(id)})`).join('');
@@ -174,12 +185,12 @@ export const linkCitations = (markdown: string, sources: RagSource[]): string =>
 
   // Leave fenced code blocks and inline code spans exactly as written.
   return markdown
-    .split(/(```[\s\S]*?(?:```|$))/g)
+    .split(CODE_FENCE)
     .map((block) => (
-      block.startsWith('```')
+      block.startsWith('```') || block.startsWith('~~~')
         ? block
         : block
-          .split(/(`[^`\n]*`)/g)
+          .split(INLINE_CODE)
           .map((part) => (part.startsWith('`') ? part : linkSegment(part)))
           .join('')
     ))

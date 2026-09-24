@@ -51,6 +51,20 @@ describe('linkCitations', () => {
     );
   });
 
+  it('leaves ids that more than one report uses unlinked', () => {
+    const shared = [
+      { chunk_id: 'chunk_3', document_id: 'report-a', text: 'a' },
+      { chunk_id: 'chunk_3', document_id: 'report-b', text: 'b' },
+      { chunk_id: 'chunk_4', document_id: 'report-b', text: 'c' },
+    ];
+    expect(linkCitations('Both [chunk_3], one [chunk_4].', shared)).toBe('Both [chunk_3], one [3](#cite-3).');
+  });
+
+  it('does not turn images, link definitions or tilde fences into citations', () => {
+    const text = 'Chart ![chunk_0]\n[chunk_1]: https://example.test\n~~~\n[chunk_0]\n~~~';
+    expect(linkCitations(text, sources)).toBe(text);
+  });
+
   it('returns the input when there are no sources', () => {
     expect(linkCitations('See [chunk_0].', [])).toBe('See [chunk_0].');
   });

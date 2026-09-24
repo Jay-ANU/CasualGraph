@@ -938,7 +938,7 @@ const AgentWorkspaceDrawer: React.FC<{
     if (!open || tab !== 'files' || !highlightedSource) return;
     const target = bodyRef.current?.querySelector(`[data-source-number="${highlightedSource}"]`);
     target?.scrollIntoView({ block: 'nearest' });
-  }, [open, tab, highlightedSource]);
+  }, [open, tab, highlightedSource, sources]);
 
   if (!open) return null;
   const currentStep = [...steps].reverse().find(step => getTraceStatus(step) === 'running') || [...steps].reverse()[0];
@@ -1065,25 +1065,34 @@ const REHYPE_PLUGINS: NonNullable<React.ComponentProps<typeof ReactMarkdown>['re
   [rehypeKatex, { throwOnError: false, strict: 'ignore' }],
 ];
 
-// Answer markdown: citation links become buttons, other links open in a new tab.
-const buildAnswerComponents = (onCite: (sourceNumber: number) => void): Components => ({
-  a: ({ href, children, node, ...rest }) => {
-    const citation = /^#cite-(\d+)$/.exec(href || '');
-    if (citation) {
-      const sourceNumber = Number(citation[1]);
-      return (
-        <button type="button" className="cg-cite" onClick={() => onCite(sourceNumber)} aria-label={`Source ${sourceNumber}`}>
-          {children}
-        </button>
-      );
-    }
+// Citation clicks are routed through context so the markdown components stay
+// the same between renders; a new component type would remount every link.
+const CitationContext = React.createContext<(sourceNumber: number) => void>(() => undefined);
+
+type AnswerLinkProps = React.ComponentPropsWithoutRef<'a'> & { node?: unknown };
+
+// Answer markdown links: citations become buttons that open the cited passage,
+// web links open in a new tab, in-page links (such as footnotes) stay in place.
+const AnswerLink = ({ href, children, node, ...rest }: AnswerLinkProps) => {
+  const openCitation = React.useContext(CitationContext);
+  const citation = /^#cite-(\d+)$/.exec(href || '');
+  if (citation) {
+    const sourceNumber = Number(citation[1]);
     return (
-      <a href={href} target="_blank" rel="noreferrer noopener" {...rest}>
+      <button type="button" className="cg-cite" onClick={() => openCitation(sourceNumber)} aria-label={`Source ${sourceNumber}`}>
         {children}
-      </a>
+      </button>
     );
-  },
-});
+  }
+  const external = /^https?:\/\//i.test(href || '');
+  return (
+    <a href={href} {...(external ? { target: '_blank', rel: 'noreferrer noopener' } : {})} {...rest}>
+      {children}
+    </a>
+  );
+};
+
+const ANSWER_COMPONENTS: Components = { a: AnswerLink };
 
 // On narrow screens the process drawer covers the conversation, so it only
 // opens on its own where there is room to show it beside the answer.
@@ -1123,6 +1132,8 @@ const Agent: React.FC = () => {
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [copiedMessageKey, setCopiedMessageKey] = useState<string | null>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  // Id of a session created for a first question whose answer is still streaming.
+  const pendingFirstTurnSessionIdRef = useRef('');
   // Fast disables thinking; Deep enables reasoning with layered retrieval and
   // graph context on the configured provider. URL accepts ?tier=deep; legacy
   // ?mode=predict is honored as Deep so old bookmarks still work.
@@ -2377,6 +2388,7 @@ const Agent: React.FC = () => {
         }
       }
 
+      pendingFirstTurnSessionIdRef.current = sessionIdToActivateAfterFirstTurn;
       await processUserQuery(
         query,
         nextHistory,
@@ -2389,6 +2401,7 @@ const Agent: React.FC = () => {
         persistCurrentSessionId(sessionIdToActivateAfterFirstTurn);
       }
     } finally {
+      pendingFirstTurnSessionIdRef.current = '';
       setIsLoading(false);
       setShowPipelineStatus(false);
     }
@@ -2406,6 +2419,12 @@ const Agent: React.FC = () => {
     setActiveTab('chat');
   };
   const handleSelectSession = (id: string) => {
+    // Reloading the open session (or one whose first answer is still
+    // streaming) would replace the live conversation, so just return to it.
+    if (id === currentSessionId || (id !== '' && id === pendingFirstTurnSessionIdRef.current)) {
+      setActiveTab('chat');
+      return;
+    }
     setCurrentSessionId(id);
     setActiveAgentPath(null);
     setPipelineTrace([]);
@@ -2957,6 +2976,15 @@ const Agent: React.FC = () => {
         </button>
         <button
           type="button"
+          onClick={() => showTab('chat')}
+          aria-current={activeTab === 'chat' && !currentSessionId ? 'page' : undefined}
+          className="nav-item"
+        >
+          <MessageSquare className="h-4 w-4" />
+          Chat
+        </button>
+        <button
+          type="button"
           onClick={() => showTab('documents')}
           aria-current={activeTab === 'documents' ? 'page' : undefined}
           className="nav-item"
@@ -2987,10 +3015,6 @@ const Agent: React.FC = () => {
           <Zap className="h-4 w-4" />
           Skills
         </button>
-        <Link to="/causal-inference" className="nav-item">
-          <Network className="h-4 w-4" />
-          Graph
-        </Link>
       </nav>
 
       <div className="cg-scroll mt-6 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
@@ -3058,6 +3082,10 @@ const Agent: React.FC = () => {
               <Link to="/" className="menu-item" role="menuitem">
                 <Home className="h-4 w-4 text-ink-4" />
                 Home
+              </Link>
+              <Link to="/causal-inference" className="menu-item" role="menuitem">
+                <Network className="h-4 w-4 text-ink-4" />
+                Knowledge graph
               </Link>
               <Link to="/desktop" className="menu-item" role="menuitem">
                 <Download className="h-4 w-4 text-ink-4" />
@@ -3128,7 +3156,15 @@ const Agent: React.FC = () => {
             aria-label="Search your research"
             className="h-12 min-w-0 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-ink-5"
           />
-          <span className="kbd">Esc</span>
+          <span className="kbd hidden sm:inline-flex">Esc</span>
+          <button
+            type="button"
+            onClick={() => setIsSearchPaletteOpen(false)}
+            className="icon-btn -mr-2 sm:hidden"
+            aria-label="Close search"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
         <div className="cg-scroll max-h-[400px] overflow-y-auto p-1.5">
           <button
@@ -3363,13 +3399,11 @@ const Agent: React.FC = () => {
 
               {hasAssistantContent && (
                 <div className="cg-prose">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={buildAnswerComponents((sourceNumber) => openSourcesDrawer(messageSources, sourceNumber))}
-                  >
-                    {linkCitations(normalizeStreamingMarkdown(message.content), messageSources)}
-                  </ReactMarkdown>
+                  <CitationContext.Provider value={(sourceNumber) => openSourcesDrawer(messageSources, sourceNumber)}>
+                    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={ANSWER_COMPONENTS}>
+                      {linkCitations(normalizeStreamingMarkdown(message.content), messageSources)}
+                    </ReactMarkdown>
+                  </CitationContext.Provider>
                 </div>
               )}
 
