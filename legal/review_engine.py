@@ -115,6 +115,10 @@ def authorize_job(job: dict, contract: dict):
 
 
 def run_review(rid: str):
+    # Existing jobs retain their original engine; new jobs explicitly pin v2.
+    if store.review(rid)['payload'].get('engine_version') == 2:
+        from legal.review_v2 import run_review as run_v2
+        return run_v2(rid)
     token = store.claim(rid)
     if not token:
         return
