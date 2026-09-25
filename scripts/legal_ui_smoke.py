@@ -94,7 +94,7 @@ try:
             page.get_by_role('button',name='导出审查报告',exact=True).click()
         pending.value.save_as(OUT/'synthetic-review.json')
         page.screenshot(path=str(OUT/'legal-review-desktop.png'),full_page=True)
-        page.get_by_role('button',name='公司规范',exact=False).click()
+        page.get_by_role('navigation',name='法务工作台').get_by_role('button',name='公司规范',exact=False).click()
         page.get_by_label('规范标题').fill('采购付款要求')
         page.get_by_label('审查要求').fill('我方采购时，付款应与交付和验收安排挂钩。')
         page.get_by_role('button',name='保存规范').click()
