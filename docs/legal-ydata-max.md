@@ -33,3 +33,5 @@ Only confirmed redacted blocks and applicable company rules are sent to the conf
 The production frontend gate requires the backend's `max_only=true`, `model_gateway=ydata` and `model_selection_version=1` in addition to its product version. This prevents a model selector from shipping against a backend without Max enforcement. Deploy the backend first, then the frontend. GitHub Actions requires the authorized `FLY_API_TOKEN`; providing a YData inference key does not provide Fly deployment authority.
 
 Validate Free/Pro denial, a non-admin Max account, expiration/revocation, model lists, a confirmed redacted synthetic contract, source-backed review, and tracked DOCX export after deployment. Never infer these live results from mocked CI or from Vercel READY alone.
+
+Revocation retains an expired, versioned membership record; reactivation is an edit at the current version. This prevents stale revoke requests from affecting a new grant.

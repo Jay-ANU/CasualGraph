@@ -321,7 +321,7 @@ def test_api_requires_permission_redaction_and_consent(db, monkeypatch):
     application = FastAPI()
     application.include_router(router_module.router)
     application.dependency_overrides[router_module.get_current_user] = lambda: actor
-    application.dependency_overrides[router_module.require_legal_max] = router_module.get_current_user
+    application.dependency_overrides[router_module.require_legal_max] = lambda: actor  # Plan checks have a separate real-dependency suite.
     monkeypatch.setattr(router_module.ydata, 'select_model', lambda mid: {'provider':'ydata','id':mid,'family':'GLM'})
     def member(mid, user, min_role='viewer', require_active=False):
         if user['id'] != 'u1' or mid != 'm1': raise HTTPException(403, 'no access')

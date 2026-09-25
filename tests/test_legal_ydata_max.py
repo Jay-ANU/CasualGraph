@@ -205,3 +205,13 @@ def test_unauthenticated_and_old_clients_fail_closed(api):
 def test_every_private_legal_route_has_the_guard():
     for route in contract_review.router.routes:
         assert any(d.call is access.require_legal_max for d in route.dependant.dependencies), route.path
+
+def test_regrant_never_reuses_a_revoked_version(api):
+    client,actor,path,_=api
+    actor.update(id='admin',email='admin@example.test',role='admin')
+    assert client.put('/admin/max-memberships',json={'email':'free@example.test'}).json()['version']==1
+    assert client.delete('/admin/max-memberships/free?version=1').status_code==200
+    assert client.put('/admin/max-memberships',json={'email':'free@example.test','expected_version':0}).status_code==409
+    assert client.put('/admin/max-memberships',json={'email':'free@example.test','expected_version':2}).json()['version']==3
+    assert client.delete('/admin/max-memberships/free?version=1').status_code==409
+    access.assert_worker_max('free')

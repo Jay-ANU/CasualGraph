@@ -66,7 +66,11 @@ async def grant_membership(request: MembershipRequest, user=Depends(require_admi
 async def revoke_membership(user_id: str, version: int = Query(ge=1), user=Depends(require_admin), db=Depends(get_db)):
     await init_max_memberships(db)
     try:
-        cursor = await db.execute('DELETE FROM max_memberships WHERE user_id=? AND version=?', (user_id, version))
+        # Keep a versioned tombstone. Deleting/reinserting would reset the version
+        # and allow an old request to revoke a newly granted membership (ABA).
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = await db.execute('''UPDATE max_memberships SET expires_at=?,updated_at=?,granted_by=?,version=version+1
+            WHERE user_id=? AND version=?''', (now, now, user['id'], user_id, version))
         if cursor.rowcount != 1:
             raise HTTPException(409, '会员记录已变化，请刷新后重试。')
         await db.execute('''INSERT INTO audit_events(actor_user_id,action,target_type,target_id,details_json,created_at)

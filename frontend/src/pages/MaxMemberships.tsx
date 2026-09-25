@@ -17,7 +17,13 @@ export default function MaxMemberships() {
     const data = await apiFetch<{ memberships: Membership[] }>('/admin/max-memberships');
     setRows(data.memberships);
   }, []);
-  useEffect(() => { void load().catch(e => setError(e instanceof Error ? e.message : '读取失败。')); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ memberships: Membership[] }>('/admin/max-memberships')
+      .then(data => { if (!cancelled) setRows(data.memberships); })
+      .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : '读取失败。'); });
+    return () => { cancelled = true; };
+  }, []);
   const run = async (fn: () => Promise<void>) => {
     setBusy(true); setError(''); setNotice('');
     try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : '操作失败。'); } finally { setBusy(false); }
