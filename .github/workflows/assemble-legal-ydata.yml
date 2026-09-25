@@ -1,0 +1,24 @@
+name: Assemble legal YData and Max wiring
+on:
+  push:
+    branches: [feat/legal-ydata-max-models]
+    paths: ['scripts/_wire_legal_ydata.py']
+permissions:
+  contents: write
+jobs:
+  assemble:
+    if: github.repository == 'Jay-ANU/CasualGraph' && github.ref == 'refs/heads/feat/legal-ydata-max-models'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Wire this repair branch only
+        run: |
+          set -euo pipefail
+          python scripts/_wire_legal_ydata.py
+          python -m compileall -q legal services api tests
+          git add legal services api app.py frontend tests scripts/legal_ui_smoke.py scripts/verify_legal_release.mjs scripts/verify_legal_release.test.mjs
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Wire YData model selection and authoritative Max-only legal access'
+          git push origin HEAD:refs/heads/feat/legal-ydata-max-models
