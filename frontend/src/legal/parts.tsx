@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Catalog, Finding, Policy, Review } from './types';
 import { diffText } from './diff';
+import { findingStatus } from './findingStatus';
 
 const PATHS: Record<string, string[]> = {
   plus: ['M10 4v12M4 10h12'], close: ['M5 5l10 10M15 5L5 15'], menu: ['M3 5h14M3 10h14M3 15h14'],
@@ -35,15 +36,16 @@ export class FindingCard extends React.Component<FindingProps, { open: boolean; 
     const decision = r.decisions[f.id];
     const done = ['completed', 'partial'].includes(r.status);
     const changed = this.state.text !== f.suggested_text;
+    const status = findingStatus(f);
     const needsLegal = f.requires_legal_confirmation === true || ((r.engine_version || 0) >= 2 && f.kind === 'legal');
     const canAccept = done && !busy && !!f.block_id && !!f.suggested_text && !!this.state.text.trim()
       && f.revision_allowed !== false && f.missing_facts.length === 0 && f.evidence_status !== 'unverified'
       && (!needsLegal || this.state.legalBasis) && (!changed || this.state.manual);
     return <article className={`lv-finding ${decision?.decision === 'accepted' ? 'accepted' : ''}`}>
-      <div className="lv-finding-top"><span className={`lv-risk ${f.severity}`}>{({ high: '重点关注', medium: '需要关注', low: '提示' } as Record<string, string>)[f.severity] || '需关注'}</span><span className="lv-kind">{({ legal: '法律风险', commercial: '商业利益', company_policy: '公司规范' } as Record<string, string>)[f.kind]}</span>{decision?.decision === 'accepted' && <span className="lv-decision"><Icon name="check" />已纳入修订</span>}{decision?.decision === 'rejected' && <span className="lv-decision">已保留原文</span>}</div>
+      <div className="lv-finding-top"><span className={`lv-risk ${status === 'supported' ? f.severity : 'low'}`}>{status === 'rejected' ? '候选已否定' : status === 'unconfirmed' ? '待核实' : ({ high: '重点关注', medium: '需要关注', low: '提示' } as Record<string, string>)[f.severity] || '需关注'}</span><span className="lv-kind">{({ legal: '法律风险', commercial: '商业利益', company_policy: '公司规范' } as Record<string, string>)[f.kind]}</span>{decision?.decision === 'accepted' && <span className="lv-decision"><Icon name="check" />已纳入修订</span>}{decision?.decision === 'draft' && <span className="lv-decision">人工草稿待复核</span>}{decision?.decision === 'rejected' && <span className="lv-decision">已保留原文（不代表风险消失）</span>}</div>
       <h3><button aria-expanded={this.state.open} onClick={() => this.setState({ open: !this.state.open })}>{f.title}<Icon name="chevron" /></button></h3><p className="lv-impact">{f.impact}</p>
       {f.block_id && <button className="lv-source-link" onClick={() => onLocate(f.block_id!)}><Icon name="file" />定位原文 · {f.block_id}<Icon name="arrow-right" /></button>}
-      {this.state.open && <div className="lv-finding-details">{f.agent_title && <p className="lv-muted">提出意见：{f.agent_title} · 经独立复核与全文协调</p>}{f.original_quote && <blockquote>{f.original_quote}</blockquote>}<h4>为什么需要关注</h4><p>{f.reason}</p>
+      {this.state.open && <div className="lv-finding-details">{f.agent_title && <p className="lv-muted">提出意见：{f.agent_title} · 复核状态以本条说明为准</p>}{f.original_quote && <blockquote>{f.original_quote}</blockquote>}<h4>为什么需要关注</h4><p>{f.reason}</p>
         {f.verification_note && <details className="lv-verification"><summary>查看复核说明</summary><p>{f.verification_note}</p></details>}
         {f.missing_facts.length > 0 && <div className="lv-inline-warning"><strong>还需要确认</strong>{f.missing_facts.map((item, i) => <p key={i}>{item}</p>)}</div>}
         {f.validation_warnings?.map((w, i) => <p key={i} className="lv-inline-warning">{w}</p>)}
@@ -53,8 +55,8 @@ export class FindingCard extends React.Component<FindingProps, { open: boolean; 
         {f.evidence_status === 'unverified' && <p className="lv-inline-warning">依据不足或复核未支持，不能直接纳入修订。</p>}
         {f.suggested_text && <div className="lv-suggestion"><div><h4>建议这样改</h4><button className="lv-text-button" onClick={() => this.setState({ editing: !this.state.editing })}>{this.state.editing ? '查看修改对比' : '编辑建议'}</button></div>{this.state.editing ? <label className="lv-edit-label">本段完整替代文本<textarea aria-label="编辑本段建议" rows={5} value={this.state.text} maxLength={12000} onChange={e => this.setState({ text: e.target.value, manual: false, legalBasis: false })} /></label> : <div className="lv-diff" aria-label="原文与建议修改对比">{diffText(original || f.original_quote, this.state.text).map((part, i) => part.kind === 'del' ? <del key={i}>{part.text}</del> : part.kind === 'ins' ? <ins key={i}>{part.text}</ins> : <span key={i}>{part.text}</span>)}</div>}<small>仅展示文字差异。导出 DOCX 会保留 Word 原生修订。</small></div>}
         {needsLegal && f.revision_allowed !== false && f.suggested_text && <label className="lv-consent"><input type="checkbox" checked={this.state.legalBasis} onChange={e => this.setState({ legalBasis: e.target.checked })} />我已核对所引规定的版本和适用性。</label>}
-        {changed && f.suggested_text && <label className="lv-consent"><input type="checkbox" checked={this.state.manual} onChange={e => this.setState({ manual: e.target.checked })} />我已自行复核手动编辑的内容；该版本未经模型重新复核。</label>}
-        <div className="lv-actions"><button className="lv-primary" disabled={!canAccept || decision?.decision === 'accepted'} onClick={() => onDecision('accepted', this.state.text, this.state.legalBasis, this.state.manual)}><Icon name="check" />{decision?.decision === 'accepted' ? '已纳入修订' : '接受修改'}</button><button className="lv-secondary" disabled={busy || !done || decision?.decision === 'rejected'} onClick={() => onDecision('rejected', '', false, false)}>保留原文</button>{decision && <button className="lv-text-button" disabled={busy || !done} onClick={() => onDecision('pending', '', false, false)}>撤销决定</button>}</div>
+        {changed && f.suggested_text && <label className="lv-consent"><input type="checkbox" checked={this.state.manual} onChange={e => this.setState({ manual: e.target.checked })} />我确认保存为待复核人工草稿；不沿用原建议的核验结果。</label>}
+        <div className="lv-actions"><button className="lv-primary" disabled={!canAccept || decision?.decision === 'accepted'} onClick={() => onDecision(changed ? 'draft' : 'accepted', this.state.text, this.state.legalBasis, this.state.manual)}><Icon name="check" />{decision?.decision === 'accepted' ? '已纳入修订' : changed ? '保存人工草稿' : '接受修改'}</button><button className="lv-secondary" disabled={busy || !done || decision?.decision === 'rejected'} onClick={() => onDecision('rejected', '', false, false)}>保留原文</button>{decision && <button className="lv-text-button" disabled={busy || !done} onClick={() => onDecision('pending', '', false, false)}>撤销决定</button>}</div>
       </div>}
     </article>;
   }
@@ -72,7 +74,7 @@ const escaped = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&
 export function ReviewReport(review: Review): string {
   const out = ['# 合同审查报告', '', `审查编号：${review.id}`, `审查状态：${review.status}`, `模型：${review.profile?.model?.id || '历史记录未提供'}`, `我方角色：${review.profile?.our_role || '未记录'}`, `审查方式：${review.profile?.review_mode === 'multi_agent' ? '多 Agent 协作' : '常规审查'}`, '', review.notice, '', '## 逐条意见'];
   for (const [index, f] of review.findings.entries()) {
-    out.push('', `### ${index + 1}. ${escaped(f.title)}`, `类别：${f.kind}；优先级：${f.severity}；原文：${f.block_id || '待确定插入位置'}`, '', '原文：', escaped(f.original_quote), '', '对我方的影响：', escaped(f.impact), '', '判断理由：', escaped(f.reason));
+    out.push('', `### ${index + 1}. ${escaped(f.title)}`, `类别：${f.kind}；证据/复核状态：${findingStatus(f)}；优先级：${findingStatus(f) === 'supported' ? f.severity : '不作为已成立风险计级'}；原文：${f.block_id || '待确定插入位置'}`, '', '原文：', escaped(f.original_quote), '', '对我方的影响：', escaped(f.impact), '', '判断理由：', escaped(f.reason));
     if (f.agent_title) out.push('', `提出意见：${escaped(f.agent_title)}`);
     if (f.missing_facts.length) out.push('', '待确认信息：', ...f.missing_facts.map(escaped));
     if (f.verification_note) out.push('', '模型复核说明（不等于法律认证）：', escaped(f.verification_note));
@@ -82,7 +84,7 @@ export function ReviewReport(review: Review): string {
     out.push('', `处理决定：${decision?.decision || 'pending'}`);
     if (decision?.text || f.suggested_text) out.push('', '建议或已选择的完整替代段落：', escaped(decision?.text || f.suggested_text));
   }
-  out.push('', '## 检查覆盖');
+  out.push('', `修订组合状态：${review.draft_approval ? '用户已确认精确修改组合（非签署或企业授权审批）' : '尚未最终确认'}`, '', '## 检查覆盖');
   for (const c of review.coverage) out.push('', `### ${escaped(c.title)} · ${c.status}`, escaped(c.note), escaped(c.verification_note || ''));
   for (const error of Object.values(review.batch_errors || {})) out.push('', `未完成：${escaped(error)}`);
   out.push('', '本报告不是脱敏质量、法律时效或整份合同安全的保证。导出的 Word 修订稿保留真实内容和删除内容，分享前应再次检查。', '');

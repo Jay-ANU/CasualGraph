@@ -147,11 +147,13 @@ def test_non_max_cannot_use_any_legal_module_endpoint(api,uid,monkeypatch):
     monkeypatch.setattr(contract_review.documents,'parse_contract',lambda *args:pytest.fail('non-Max parsed contract'))
     assert client.get('/legal/access').json()['allowed'] is False
     for path in ['/legal/workspace','/legal/models','/legal/capabilities','/legal/contracts?matter_id=m',
-                 '/legal/contracts/c','/legal/reviews/r','/legal/reviews/r/export','/legal/policies?org_id=o']:
+                 '/legal/contracts/c','/legal/contracts/c/original-text','/legal/reviews/r','/legal/reviews/r/export','/legal/policies?org_id=o']:
         assert client.get(path).status_code==403, path
     assert client.post('/legal/contracts',data={'matter_id':'m'},files={'file':('test.txt',b'test')}).status_code==403
     assert client.post('/legal/contracts/c/reviews',json={'model_id':'glm-5.2','external_processing_provider':'ydata',
         'our_role':'采购方','contract_type':'采购合同','external_processing_confirmed':True}).status_code==403
+    assert client.post('/legal/reviews/r/draft-check',json={'request_id':'test','external_processing_confirmed':True}).status_code==403
+    assert client.post('/legal/reviews/r/draft-approval',json={'fingerprint':'0'*64,'confirmed':True}).status_code==403
     assert client.post('/legal/reviews/r/resume').status_code==403
     assert client.post('/legal/contracts/c/redaction',json={'revision':1,'confirmed':True}).status_code==403
     assert client.patch('/legal/reviews/r/findings/f',json={'decision':'accepted','expected_version':0}).status_code==403

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from api.deps import get_current_user
 from services.db import get_db
 from legal.access import require_legal_max, access_status
-from legal import ydata
+from legal import ydata, data_boundary, draft_release
 from services import matters
 from legal import contract_documents as documents
 from legal import external_law, review_engine as engine, review_store as store
@@ -30,11 +30,18 @@ public_router = APIRouter(prefix='/legal', tags=['contract-review'])
 
 class RedactionRequest(BaseModel):
     additional_terms: list[str] = Field(default_factory=list, max_length=100)
+    excluded_terms: list[str] = Field(default_factory=list, max_length=100)
     confirmed: bool = False
     revision: int = Field(ge=1)
 
 
+class PartyBinding(BaseModel):
+    block_id: str = Field(min_length=1, max_length=100)
+    quote: str = Field(min_length=2, max_length=200)
+
+
 class ReviewRequest(BaseModel):
+    our_party: PartyBinding | None = None
     model_id: str = Field(min_length=1, max_length=160, pattern=r'^[A-Za-z0-9][A-Za-z0-9._/-]*$')
     external_processing_provider: Literal['ydata']
     our_role: Literal['采购方', '供应方', '服务提供方', '服务接受方', '披露方', '接收方']
@@ -55,7 +62,7 @@ class PolicyRequest(BaseModel):
 
 
 class DecisionRequest(BaseModel):
-    decision: Literal['accepted', 'rejected', 'pending']
+    decision: Literal['accepted', 'draft', 'rejected', 'pending']
     text: str = Field(default='', max_length=12000)
     expected_version: int = Field(default=0, ge=0)
     legal_basis_confirmed: bool = False
@@ -85,7 +92,7 @@ def _view(c: dict):
     p = c['payload']
     redacted, mapping = documents.redact_blocks(p['blocks'])
     return {'id': c['id'], 'matter_id': c['matter_id'], 'org_id': c['org_id'], 'name': p['name'],
-            'format': p['format'], 'revision': c['revision'], 'status': c['status'],
+            'format': p['format'], 'redaction_version': p.get('redaction_version', 1), 'revision': c['revision'], 'status': c['status'],
             'blocks': p.get('redacted_blocks', redacted), 'warnings': p['warnings'],
             'replacement_count': len(p.get('mapping', mapping)), 'reviews': store.reviews(c['id'])}
 
@@ -101,6 +108,7 @@ def _review_view(r: dict):
             'findings': p.get('findings', []), 'coverage': p.get('coverage', []), 'sources': all_sources(p),
             'decisions': p.get('decisions', {}), 'profile': p.get('profile', {}), 'policies': p.get('policies', []),
             'engine_version': p.get('engine_version', 1), 'intake': p.get('intake', {'facts': []}),
+            'draft_check': p.get('draft_check'), 'draft_approval': p.get('draft_approval'),
             'collaboration': p.get('collaboration'), 'metrics': p.get('metrics', {}),
             'summary': p.get('summary', {}), 'progress': p.get('progress'), 'batch_errors': p.get('batch_errors', {}),
             'retrieval': [{'rule_id': k, 'status': s['status'], 'provider': s['provider'], 'warnings': s.get('warnings', [])}
@@ -111,7 +119,7 @@ def _review_view(r: dict):
 @public_router.get('/version')
 def version():
     return {'product': 'contract-review', 'version': '1.0.0', 'law_source': 'external', 'rules_source': 'database',
-            'max_only': True, 'model_gateway': 'ydata', 'model_selection_version': 1, 'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1}
+            'max_only': True, 'model_gateway': 'ydata', 'model_selection_version': 1, 'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': 1}
 
 
 @public_router.get('/access')
@@ -140,8 +148,8 @@ def capabilities(user: dict = Depends(get_current_user)):
     except Exception:
         encrypted = False
     return {'product': 'contract-review', 'model_configured': ydata.configured(), 'model_gateway': 'ydata', 'encryption_configured': encrypted,
-            'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1,
-            'law_search': external_law.provider_status(), 'contract_types': ['采购合同', '服务合同', '保密协议', '其他商事合同'],
+            'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': 1,
+            'upload_disclosure': data_boundary.disclosure(), 'law_search': external_law.provider_status(), 'contract_types': ['采购合同', '服务合同', '保密协议', '其他商事合同'],
             'limits': {'max_upload_mb': 10, 'max_characters': documents.MAX_TEXT, 'max_blocks': documents.MAX_BLOCKS}}
 
 
@@ -161,12 +169,17 @@ def list_contracts(matter_id: str, user: dict = Depends(get_current_user)):
 
 
 @router.post('/contracts', status_code=201)
-def upload(matter_id: str = Form(...), file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+def upload(matter_id: str = Form(...), file: UploadFile = File(...),
+           original_upload_confirmed: bool = Form(False), upload_notice_version: str = Form(''),
+           user: dict = Depends(get_current_user)):
     access = matters.require_matter_member(matter_id, user, 'member', require_active=True)
+    if original_upload_confirmed is not True or upload_notice_version != data_boundary.NOTICE_VERSION:
+        raise HTTPException(409, '请在上传前阅读并确认原件将传至后端的处理说明。')
     data = file.file.read(documents.MAX_UPLOAD + 1)
     try:
         parsed = documents.parse_contract(data, file.filename or '')
         parsed.update(name=(file.filename or '合同')[:200], original_b64=base64.b64encode(data).decode())
+        parsed['upload_disclosure'] = {**data_boundary.disclosure(), 'user_id': str(user['id']), 'confirmed_at': time.time()}
         cid = store.create_contract(access['matter'], str(user['id']), parsed)
         return _view(store.contract(cid))
     except (zipfile.BadZipFile, etree.XMLSyntaxError, PdfReadError) as exc:
@@ -187,9 +200,9 @@ def redaction(cid: str, request: RedactionRequest, user: dict = Depends(get_curr
     c = _contract(cid, user, True)
     if c['status'] != 'redaction_pending':
         raise HTTPException(409, '脱敏已确认。需要更改时请上传新的合同版本。')
-    if any(len(x) > 200 for x in request.additional_terms):
+    if any(len(x) > 200 for x in request.additional_terms + request.excluded_terms):
         raise HTTPException(422, '单个脱敏词不能超过 200 字。')
-    blocks, mapping = documents.redact_blocks(c['payload']['blocks'], request.additional_terms)
+    blocks, mapping = documents.redact_blocks(c['payload']['blocks'], request.additional_terms, request.excluded_terms)
     if request.confirmed:
         store.confirm_redaction(cid, str(user['id']), request.revision, blocks, mapping)
     return {'blocks': blocks, 'replacement_count': len(mapping), 'confirmed': request.confirmed}
@@ -221,18 +234,21 @@ def start_review(cid: str, request: ReviewRequest, user: dict = Depends(get_curr
     c = _contract(cid, user, True)
     if c['status'] != 'ready' or not request.external_processing_confirmed:
         raise HTTPException(409, '请先确认脱敏，并授权将脱敏合同及适用公司规范交给已配置模型审查。')
+    if c['payload'].get('redaction_version') != 2:
+        raise HTTPException(409, '此合同仍使用旧版脱敏，请重新上传并检查新脱敏预览。历史报告仍可查看。')
+    party = data_boundary.bind_party(request.our_party.model_dump() if request.our_party else None, c['payload']['redacted_blocks'])
     try:
         selected = ydata.select_model(request.model_id)
     except ydata.GatewayError as exc:
         raise _gateway_failure(exc) from None
     profile = request.model_dump(mode='json', exclude={'external_processing_confirmed', 'fresh_review', 'external_processing_provider', 'model_id'})
-    from legal.review_questions import redact_note
-    profile['instructions'] = redact_note(profile.get('instructions', ''), c['payload'])
+    profile['our_party'] = party
     profile['model'] = selected
     profile['external_processing_provider'] = 'ydata'
     profile['review_date'] = date.today().isoformat()
     policies = [p for p in store.policies(c['org_id'], str(user['id'])) if p['contract_type'] in ('全部', request.contract_type)]
-    snapshot = {'engine_version': 2, 'contract_revision': c['revision'], 'profile': profile, 'policies': policies, 'stage': '等待执行', 'findings': [], 'coverage': []}
+    policies, profile['instructions'] = data_boundary.redact_materials(c['payload'], policies, profile.get('instructions', ''))
+    snapshot = {'audit_foundation_version': 1, 'engine_version': 2, 'contract_revision': c['revision'], 'profile': profile, 'policies': policies, 'stage': '等待执行', 'findings': [], 'coverage': []}
     fingerprint = hashlib.sha256(json.dumps({'contract': cid, **snapshot, 'nonce': uuid.uuid4().hex if request.fresh_review else ''},
                                                sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     rid, created = store.create_review(c, str(user['id']), fingerprint, snapshot)
@@ -284,6 +300,7 @@ def export(rid: str, format: Literal['json', 'docx', 'txt'] | None = None, user:
         mime, filename = 'application/json', f'review-{rid[:8]}.json'
     else:
         _access(c, user, True)
+        export_snapshot = draft_release.assert_exportable(r, c)
         changes = {d['block_id']: documents.restore(d['text'], cp.get('mapping', {}))
                    for d in p.get('decisions', {}).values() if d['decision'] == 'accepted'}
         if format == 'docx':
@@ -300,7 +317,14 @@ def export(rid: str, format: Literal['json', 'docx', 'txt'] | None = None, user:
             content = '\n\n'.join(changes.get(b['id'], b['text']) for b in cp['blocks']).encode('utf-8-sig')
             mime, filename = 'text/plain; charset=utf-8', f'revised-{rid[:8]}.txt'
     with store.transaction() as conn:
-        store.audit(conn, str(user['id']), c['matter_id'], c['org_id'], 'review.exported', rid, {'format': format})
+        details = {'format': format}
+        if format != 'json':
+            latest, latest_contract = draft_release.current(conn, rid)
+            if draft_release.assert_exportable(latest, latest_contract)['fingerprint'] != export_snapshot['fingerprint']:
+                raise HTTPException(409, '生成文件期间修订发生变化，未导出旧稿。')
+            details.update(fingerprint=export_snapshot['fingerprint'], final_hash=export_snapshot['final_hash'],
+                           file_hash=hashlib.sha256(content).hexdigest())
+        store.audit(conn, str(user['id']), c['matter_id'], c['org_id'], 'review.exported', rid, details)
     return Response(content=content, media_type=mime, headers={'Content-Disposition': f'attachment; filename="{filename}"', 'Cache-Control': 'no-store'})
 
 class QuestionRequest(BaseModel):
@@ -335,3 +359,46 @@ def ask_question(rid: str, request: QuestionRequest, user: dict = Depends(get_cu
     except ydata.GatewayError as exc:
         raise _gateway_failure(exc) from None
 
+
+
+@router.get('/contracts/{cid}/original-text')
+def original_text(cid: str, user: dict = Depends(get_current_user)):
+    # Editing permission is mandatory; never include original text in routine views.
+    c = _contract(cid, user, True)
+    with store.transaction() as conn:
+        store.audit(conn, str(user['id']), c['matter_id'], c['org_id'], 'contract.original_viewed', cid)
+    return Response(json.dumps({'blocks': c['payload']['blocks']}, ensure_ascii=False),
+                    media_type='application/json', headers={'Cache-Control': 'no-store'})
+
+
+class DraftCheckRequest(BaseModel):
+    request_id: str = Field(min_length=1, max_length=80, pattern=r'^[A-Za-z0-9_-]+$')
+    external_processing_confirmed: bool = False
+
+
+class DraftApprovalRequest(BaseModel):
+    fingerprint: str = Field(pattern=r'^[a-f0-9]{64}$')
+    confirmed: bool = False
+
+
+@router.post('/reviews/{rid}/draft-check')
+def check_draft(rid: str, request: DraftCheckRequest, user: dict = Depends(get_current_user)):
+    from legal.access import assert_worker_max
+    _review(rid, user, True)
+    if not request.external_processing_confirmed:
+        raise HTTPException(409, '请授权将当前脱敏修订组合交给原审查模型复核。')
+    def authorize():
+        assert_worker_max(str(user['id']))
+        _review(rid, user, True)
+    try:
+        draft_release.check(rid, str(user['id']), request.request_id, authorize)
+    except ydata.GatewayError as exc:
+        raise _gateway_failure(exc) from None
+    return _review_view(store.review(rid))
+
+
+@router.post('/reviews/{rid}/draft-approval')
+def approve_draft(rid: str, request: DraftApprovalRequest, user: dict = Depends(get_current_user)):
+    _review(rid, user, True)
+    draft_release.approve(rid, str(user['id']), request.fingerprint, request.confirmed)
+    return _review_view(store.review(rid))
