@@ -1,8 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../api/client';
+import '../legal/LegalDesk.css';
 
 type Access = { allowed: boolean; plan: string; required_plan: string };
+
+const BENEFITS = ['上传合同，自动脱敏公司名称、联系人和账户', '按你的立场逐条找出风险，附依据和修改建议', '导出审查报告；Word 合同可导出带修订痕迹的版本'];
 
 export default function LegalAccessGate({ children }: { children: ReactNode }) {
   const [access, setAccess] = useState<Access | null>(null);
@@ -15,7 +18,7 @@ export default function LegalAccessGate({ children }: { children: ReactNode }) {
         setAccess(result); setError('');
       }
     }).catch(() => {
-      if (!cancelled) { setAccess(null); setError('暂时无法确认法务权限，请稍后重试或联系管理员。'); }
+      if (!cancelled) { setAccess(null); setError('暂时无法确认会员状态，请稍后重试。'); }
     });
     void check();
     const timer = window.setInterval(() => void check(), 60000);
@@ -23,12 +26,18 @@ export default function LegalAccessGate({ children }: { children: ReactNode }) {
   }, [attempt]);
   // Never use localStorage's plan/role as authorization, even for the initial mount.
   if (access?.allowed === true && access.required_plan === 'max') return <>{children}</>;
-  return <div className="mx-auto max-w-content px-5 py-24 sm:px-8">
-    <Link to="/" className="text-sm text-ink-3">CausalGraph</Link>
-    <p className="mt-12 font-mono text-xs text-ink-4">LEGAL / MAX</p>
-    <h1 className="display mt-4 text-display-sm">{access ? '法务 Agent · Max 专属' : error ? '法务服务暂不可用' : '正在确认访问权限'}</h1>
-    <p className="mt-5 max-w-xl leading-relaxed text-ink-3" role="status">{error || (access ? '合同上传、脱敏、审查、模型选择与修订稿导出仅向有效的 Max 用户开放。Free 和 Pro 用户仍可使用原有研究工作台。请联系管理员开通 Max。' : '正在向服务器核验会员状态。')}</p>
-    <div className="mt-8 flex flex-wrap gap-3"><Link to="/agent" className="btn btn-primary">返回研究工作台</Link><Link to="/" className="btn btn-secondary">网站首页</Link>
-      <button className="btn btn-secondary" onClick={() => { setAccess(null); setError(''); setAttempt(x => x + 1); }}>重新检查权限</button></div>
+  const checking = !access && !error;
+  return <div className="lv-gate">
+    <main className="lv-gate-card">
+      <Link to="/" className="lv-gate-brand"><img src="/brand/logo-mark.svg" alt="" width={24} height={24} />CausalGraph</Link>
+      <h1>{checking ? '正在确认会员状态' : error ? '合同审查暂时不可用' : '合同审查是 Max 会员功能'}</h1>
+      <p role="status">{error || (checking ? '正在向服务器核验你的会员状态…' : 'Free 和 Pro 会员可以继续使用研究工作台。如需开通 Max，请联系管理员。')}</p>
+      {access && !error && <ul>{BENEFITS.map(item => <li key={item}>{item}</li>)}</ul>}
+      {!checking && <div className="lv-gate-actions">
+        <Link to="/agent" className="lv-primary">返回研究工作台</Link>
+        <button className="lv-secondary" onClick={() => { setAccess(null); setError(''); setAttempt(x => x + 1); }}>重新检查</button>
+        <Link to="/" className="lv-text-button">网站首页</Link>
+      </div>}
+    </main>
   </div>;
 }
