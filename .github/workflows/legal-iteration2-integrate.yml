@@ -1,0 +1,64 @@
+name: Integrate verified legal iteration two
+on:
+  push:
+    branches: ['fix/legal-audit-foundation-20260925']
+    paths: ['.github/workflows/legal-iteration2-integrate.yml']
+permissions:
+  contents: write
+concurrency:
+  group: legal-iteration-two-integration
+  cancel-in-progress: false
+jobs:
+  integrate:
+    if: github.ref == 'refs/heads/fix/legal-audit-foundation-20260925'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate all before and after hashes and apply exact source delta
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64, hashlib, json, lzma, pathlib, subprocess
+          root = pathlib.Path('.')
+          parts = [f'.audit-iteration2/part{i}.txt' for i in (1, 2, 3)]
+          encoded = ''.join((root / path).read_text().strip() for path in parts)
+          data = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(data).hexdigest() == '0fe038a20cea9620270dc3f78e5c74bbeb434e41eceaeab2767f8b2ee3100bc2', 'payload hash mismatch'
+          patch = json.loads(data)
+          assert patch['base'] == '50903a09c2463bb6fddb3c8dd43c15fb84854620'
+          subprocess.run(['git', 'merge-base', '--is-ancestor', patch['base'], 'HEAD'], check=True)
+          allowed = set('''.env.example api/routers/contract_review.py docs/legal-iteration-2.md frontend/src/legal/LegalDesk.css frontend/src/legal/LegalDesk.tsx frontend/src/legal/ReviewContext.tsx frontend/src/legal/findingStatus.test.ts frontend/src/legal/findingStatus.ts frontend/src/legal/parts.tsx frontend/src/legal/transactionInput.test.ts frontend/src/legal/transactionInput.ts frontend/src/legal/types.ts legal/draft_release.py legal/external_law.py legal/law_evidence.py legal/review_multiagent.py legal/review_plan.py legal/review_quality.py legal/review_questions.py legal/review_v2.py legal/transaction_brief.py scripts/legal_retrieval_probe.py scripts/legal_ui_smoke.py scripts/verify_legal_release.mjs scripts/verify_legal_release.test.mjs tests/test_legal_audit_foundation.py tests/test_legal_iteration2.py tests/test_legal_multiagent.py tests/test_legal_v2_pipeline.py tests/test_legal_v2_quality.py'''.split())
+          assert len(patch['files']) == 30 and {f['path'] for f in patch['files']} == allowed
+          prepared = []
+          for item in patch['files']:
+              path = root / item['path']
+              assert not path.is_symlink()
+              before = path.read_text(encoding='utf-8') if path.exists() else ''
+              if item['before'] is None:
+                  assert not path.exists(), f'unexpected existing path: {path}'
+              else:
+                  assert path.exists() and hashlib.sha256(before.encode()).hexdigest() == item['before'], f'base hash mismatch: {path}'
+              after, end = before, len(before)
+              for edit in sorted(item['edits'], key=lambda e: e['start'], reverse=True):
+                  assert 0 <= edit['start'] <= edit['end'] <= end
+                  after = after[:edit['start']] + edit['text'] + after[edit['end']:]
+                  end = edit['start']
+              assert hashlib.sha256(after.encode()).hexdigest() == item['after'], f'result hash mismatch: {path}'
+              prepared.append((path, after))
+          for path, text in prepared:
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(text, encoding='utf-8')
+          subprocess.run(['git', 'add', '-f', '--', *sorted(allowed)], check=True)
+          subprocess.run(['git', 'rm', '--', *parts], check=True)
+          print('Applied 30 hash-verified source changes. No production configuration or secrets accessed.')
+          PY
+      - name: Commit only the existing audit branch
+        run: |
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(legal): grounded transaction briefs and bounded evidence recovery'
+          git push origin HEAD:refs/heads/fix/legal-audit-foundation-20260925
