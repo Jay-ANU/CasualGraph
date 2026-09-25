@@ -16,3 +16,20 @@ s=p.read_text(); assert 'transition: transform .18s ease, visibility .18s ease;'
 s=s.replace('transition: transform .18s ease, visibility .18s ease;', 'transition: transform .18s ease;')
 p.write_text(s)
 print('Fixed off-canvas visibility/focus timing without relaxing keyboard assertions')
+p=Path('frontend/src/legal/LegalDesk.tsx')
+lines=p.read_text().splitlines()
+i=next(i for i,line in enumerate(lines) if '{r && <section className="lv-assistant-response">' in line)
+header='              {r && <section className="lv-assistant-response">'
+assert lines[i].startswith(header)
+process=lines[i][len(header):]
+lines[i]=header
+j=next(i for i,line in enumerate(lines) if '<details className="lv-review-details">' in line)
+lines.insert(j, '                '+process)
+p.write_text('\n'.join(lines)+'\n')
+p=Path('frontend/src/legal/LegalDesk.css')
+s=p.read_text()
+s=s.replace('padding: 15px 0; margin-top: 20px;', 'padding: 10px 0; margin-top: 12px;')
+s=s.replace('.lv-export { position: sticky; bottom: -24px;', '.lv-export { position: relative; bottom: auto;')
+s += '\n/* Keep the first finding ahead of execution metadata and unobscured by export controls. */\n.lv-results + .lv-assistant-label { margin-top: 28px; }\n.lv-result-summary { margin-bottom: 16px; }\n.lv-export { bottom: auto; }\n'
+p.write_text(s)
+print('Prioritized substantive findings and removed occluding floating export panel')
