@@ -24,6 +24,7 @@ import { FollowUp } from './FollowUp';
 import { ReleasePanel } from './ReleasePanel';
 import { DocumentPane } from './DocumentPane';
 import { PolicyEditor } from './PolicyEditor';
+import { ContractSheet } from './art';
 
 type Props = { user: User | null; logout: () => void; request?: Api };
 type State = {
@@ -429,7 +430,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     const statusKey = r ? r.status : c?.status || '';
     const statusTone = ({ redaction_pending: 'is-mid', running: 'is-low', queued: 'is-low', completed: 'is-ink', partial: 'is-mid', failed: 'is-high', cancelled: 'is-high' } as Record<string, string>)[statusKey] || '';
     if (s.denied) return <div className="legal-v2"><main className="lv-denied">
-      <img src="/brand/logo-mark.svg" alt="" width={32} height={32} />
+      <ContractSheet size={64} intro={false} />
       <h1>会员权限已变更</h1><p>合同审查为 Max 会员专享，合同内容已从页面移除。</p>
       <a className="lv-primary" href="/agent">返回研究工作台</a>
     </main></div>;

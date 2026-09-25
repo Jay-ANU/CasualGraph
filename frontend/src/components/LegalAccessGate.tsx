@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import '../legal/LegalDesk.css';
+import { ContractSheet } from '../legal/art';
 
 type Access = { allowed: boolean; plan: string; required_plan: string };
 
@@ -30,6 +31,7 @@ export default function LegalAccessGate({ children }: { children: ReactNode }) {
   return <div className="lv-gate">
     <main className="lv-gate-card">
       <Link to="/" className="lv-gate-brand"><img src="/brand/logo-mark.svg" alt="" width={24} height={24} />CausalGraph</Link>
+      <ContractSheet size={64} />
       <h1>{checking ? '正在验证会员权限' : error ? '服务暂不可用' : '合同审查为 Max 会员专享'}</h1>
       <p role="status">{error || (checking ? '请稍候…' : '如需开通，请联系管理员。')}</p>
       {access && !error && <ul>{BENEFITS.map(item => <li key={item}>{item}</li>)}</ul>}

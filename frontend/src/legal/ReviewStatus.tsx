@@ -3,7 +3,7 @@ import type { Collaboration, Review } from './types';
 import { findingCounts, findingStatus } from './findingStatus';
 import { AGENT_STATUS, findingTone, TONE_LABEL } from './labels';
 import type { Tone } from './labels';
-import { Spinner } from './ui';
+import { ReviewingSheet } from './art';
 import { ic } from './icon';
 
 export function Lanes({ collaboration, label }: { collaboration: Collaboration; label?: string }) {
@@ -22,7 +22,7 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
   const total = progress?.total || 0;
   return <section className="lv-progress-card" aria-label="审查进度">
     <div className="lv-progress-head">
-      <Spinner />
+      <ReviewingSheet paused={review.status === 'queued'} />
       <div role="status"><h2>{review.status === 'queued' ? '排队中' : '审查中'}</h2><p>{review.stage}</p></div>
       {total > 0 && <span className="lv-progress-count">{progress?.completed}/{total}</span>}
     </div>

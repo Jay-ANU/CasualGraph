@@ -1,0 +1,90 @@
+/* Contract desk illustrations: ink on paper, drawn like an annotated contract,
+   at most one accent (risk red) per piece. Desk tokens with identical fallbacks,
+   so the art also renders outside .legal-v2. CSS motion only; none when reduced. */
+
+.lv-art {
+  --lv-art-ink: var(--lv-ink, #1A1915);
+  --lv-art-ink-2: var(--lv-ink-2, #3D3B36);
+  --lv-art-ink-3: var(--lv-ink-3, #5E5B54);
+  --lv-art-ink-4: var(--lv-ink-4, #6F6B63);
+  --lv-art-ink-5: var(--lv-ink-5, #A19C92);
+  --lv-art-rule: var(--lv-line-strong, #D5D1C8);
+  --lv-art-paper: var(--lv-surface, #FFFFFF);
+  --lv-art-under: var(--lv-sunken, #F5F3EF);
+  --lv-art-accent: var(--lv-high, #B3261E);
+  --lv-art-accent-wash: var(--lv-high-bg, #FBECEA);
+  display: block;
+  flex-shrink: 0;
+  overflow: visible;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---------- Shared marks ---------- */
+.lv-art-sheet { fill: var(--lv-art-paper); stroke: var(--lv-art-ink-2); stroke-width: 1; }
+.lv-art-under { fill: var(--lv-art-under); stroke: var(--lv-art-rule); stroke-width: 1; }
+.lv-art-title { stroke: var(--lv-art-ink-2); stroke-width: 2; }
+.lv-art-head { stroke: var(--lv-art-ink-3); stroke-width: 1.25; }
+.lv-art-rule { stroke: var(--lv-art-rule); stroke-width: 1; }
+.lv-art-label { stroke: var(--lv-art-ink-5); stroke-width: 1; }
+.lv-art-sign { stroke: var(--lv-art-ink-4); stroke-width: 1; }
+.lv-art-redact { fill: var(--lv-art-ink); }
+.lv-art-flag { fill: var(--lv-art-accent-wash); }
+.lv-art-flag-rule { stroke: var(--lv-art-accent); stroke-width: 2; stroke-linecap: butt; }
+.lv-art-flag-dot { fill: var(--lv-art-accent); }
+.lv-art-blank { stroke: var(--lv-art-ink-5); stroke-width: 1; stroke-dasharray: 0 2.5; }
+.lv-art-slot { stroke: var(--lv-art-ink-5); stroke-width: 1; stroke-dasharray: 2 2; }
+.lv-art-ink { stroke: var(--lv-art-ink); stroke-width: 1.1; }
+.lv-art-pen { stroke: var(--lv-art-ink); stroke-width: 1; }
+.lv-art-pen-body { fill: var(--lv-art-paper); }
+.lv-art-pen-hole { fill: var(--lv-art-ink); stroke: none; }
+
+/* ---------- ContractSheet: marks drawn in once, sheet lifts on drag-over ---------- */
+.lv-art-contract .lv-art-lift { transition: transform .2s cubic-bezier(.3, 0, .2, 1); }
+.lv-art-contract.lv-art-active .lv-art-lift { transform: translateY(-3px); }
+.lv-art-contract.lv-art-intro .lv-art-redact { transform-box: fill-box; transform-origin: 0 50%; animation: lv-art-wipe .42s cubic-bezier(.3, 0, .2, 1) .15s backwards; }
+.lv-art-contract.lv-art-intro .lv-art-redact.lv-art-later { animation-delay: .28s; }
+.lv-art-contract.lv-art-intro .lv-art-flag { animation: lv-art-fade .5s ease .5s backwards; }
+.lv-art-contract.lv-art-intro .lv-art-flag-rule { transform-box: fill-box; transform-origin: 50% 0; animation: lv-art-grow .45s cubic-bezier(.3, 0, .2, 1) .5s backwards; }
+.lv-art-contract.lv-art-intro .lv-art-flag-dot { transform-box: fill-box; transform-origin: 50% 50%; animation: lv-art-pop .3s cubic-bezier(.3, 0, .2, 1) .9s backwards; }
+
+/* ---------- ReviewingSheet: lines inked in reading order, 3.6 s loop ---------- */
+.lv-art-review .lv-art-base-head { stroke: var(--lv-art-ink-5); stroke-width: 1.25; }
+.lv-art-review .lv-art-read {
+  stroke: var(--lv-art-ink-4); stroke-width: 1; transform-box: fill-box; transform-origin: 0 50%; transform: scaleX(0);
+  animation: 3.6s cubic-bezier(.45, 0, .25, 1) infinite;
+}
+.lv-art-review .lv-art-read.lv-art-headline { stroke: var(--lv-art-ink-2); stroke-width: 1.25; }
+.lv-art-review .lv-art-reading { animation: lv-art-read-fade 3.6s linear infinite; }
+/* Two classes so these win over the shorthand above, which resets animation-name. */
+.lv-art-review .lv-art-r0 { animation-name: lv-art-r0; } .lv-art-review .lv-art-r1 { animation-name: lv-art-r1; }
+.lv-art-review .lv-art-r2 { animation-name: lv-art-r2; } .lv-art-review .lv-art-r3 { animation-name: lv-art-r3; }
+.lv-art-review .lv-art-r4 { animation-name: lv-art-r4; } .lv-art-review .lv-art-r5 { animation-name: lv-art-r5; }
+.lv-art-review .lv-art-r6 { animation-name: lv-art-r6; }
+.lv-art-review.lv-art-paused .lv-art-reading, .lv-art-review.lv-art-paused .lv-art-read { animation: none; }
+@keyframes lv-art-r0 { 0%, 5.56% { transform: scaleX(0); } 12.78%, 100% { transform: scaleX(1); } }
+@keyframes lv-art-r1 { 0%, 13.89% { transform: scaleX(0); } 21.11%, 100% { transform: scaleX(1); } }
+@keyframes lv-art-r2 { 0%, 22.22% { transform: scaleX(0); } 29.44%, 100% { transform: scaleX(1); } }
+@keyframes lv-art-r3 { 0%, 30.56% { transform: scaleX(0); } 37.78%, 100% { transform: scaleX(1); } }
+@keyframes lv-art-r4 { 0%, 38.89% { transform: scaleX(0); } 46.11%, 100% { transform: scaleX(1); } }
+@keyframes lv-art-r5 { 0%, 47.22% { transform: scaleX(0); } 54.44%, 100% { transform: scaleX(1); } }
+@keyframes lv-art-r6 { 0%, 55.56% { transform: scaleX(0); } 62.78%, 100% { transform: scaleX(1); } }
+@keyframes lv-art-read-fade { 0%, 80.56% { opacity: 1; } 91.67%, 100% { opacity: 0; } }
+
+/* ---------- PolicySheet: the first rule is written once on mount ---------- */
+.lv-art-policy.lv-art-intro .lv-art-ink { animation: lv-art-write .9s cubic-bezier(.4, 0, .3, 1) .3s backwards; }
+.lv-art-policy.lv-art-intro .lv-art-pen-move { animation: lv-art-glide .9s cubic-bezier(.4, 0, .3, 1) .3s backwards; }
+
+@keyframes lv-art-wipe { from { transform: scaleX(0); } }
+@keyframes lv-art-grow { from { transform: scaleY(0); } }
+@keyframes lv-art-fade { from { opacity: 0; } }
+@keyframes lv-art-pop { from { transform: scale(0); opacity: 0; } }
+@keyframes lv-art-write { from { stroke-dasharray: 0 1.2; } to { stroke-dasharray: 1 .2; } }
+@keyframes lv-art-glide { from { transform: translateX(-14.4px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-art, .lv-art * { animation: none !important; transition: none !important; }
+  /* A still, half-read sheet still says "in progress" without motion. */
+  .lv-art-review:not(.lv-art-paused) :is(.lv-art-r0, .lv-art-r1, .lv-art-r2) { transform: none; }
+}

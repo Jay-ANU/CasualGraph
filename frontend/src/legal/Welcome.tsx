@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Lock, ShieldCheck, Upload, UserCheck } from 'lucide-react';
+import { Lock, ShieldCheck, UserCheck } from 'lucide-react';
 import { ic } from './icon';
+import { ContractSheet } from './art';
 
 export function Welcome({ disabled, onUpload, onDrop }: {
   disabled: boolean; onUpload: () => void; onDrop: (files: FileList) => void;
@@ -14,7 +15,7 @@ export function Welcome({ disabled, onUpload, onDrop }: {
         onDragOver={e => { e.preventDefault(); if (!disabled && e.dataTransfer.types.includes('Files')) setDragging(true); }}
         onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
         onDrop={e => { e.preventDefault(); setDragging(false); if (!disabled) onDrop(e.dataTransfer.files); }}>
-        <Upload {...ic} size={22} strokeWidth={1.5} />
+        <ContractSheet active={dragging} />
         <p className="lv-upload-title">{dragging ? '松开以上传' : '将合同文件拖拽至此处'}</p>
         <button type="button" className="lv-primary lv-upload-cta" disabled={disabled} onClick={onUpload} aria-label="选择一份合同开始">选择文件</button>
         <p className="lv-upload-spec">支持 .docx、.pdf（文本型）、.txt，单个文件不超过 10 MB</p>

@@ -4,6 +4,7 @@ import { findingStatus } from './findingStatus';
 import { KIND_FILTERS } from './labels';
 import { FindingCard } from './FindingCard';
 import { ic } from './icon';
+import { NoMatchSheet } from './art';
 
 type Props = {
   review: Review; findings: Finding[]; blocks: Block[]; busy: boolean; active: boolean;
@@ -39,6 +40,7 @@ export function FindingList(p: Props) {
       {excluded.map(f => card(f, false))}
     </details>}
     {!p.findings.length && <div className="lv-empty-result">
+      {!p.active && <NoMatchSheet />}
       <h3>{p.active ? '暂无审查意见' : '没有符合条件的意见'}</h3>
       {!p.active && <button className="lv-secondary lv-btn-sm" onClick={p.onClear}>清除筛选</button>}
     </div>}

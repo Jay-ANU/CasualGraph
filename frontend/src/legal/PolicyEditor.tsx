@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { BookOpen } from 'lucide-react';
 import type { Policy, ScenarioCatalog } from './types';
 import { ScenarioOptions } from './ScenarioPicker';
 import { currentScenario, usableCatalog } from './scenarioInput';
-import { ic } from './icon';
+import { PolicySheet } from './art';
 
 type Draft = { title: string; text: string; contract_type: string; our_roles: string[] };
 const EMPTY: Draft = { title: '', text: '', contract_type: '全部', our_roles: [] };
@@ -23,7 +22,7 @@ export function PolicyEditor({ catalog, policies, busy, onSave, onArchive }: {
       <div className="lv-policy-layout">
         <section className="lv-policy-list" aria-labelledby="legal-policy-list-title">
           <div className="lv-section-head"><h2 id="legal-policy-list-title">已启用</h2><span>{policies.length}</span></div>
-          {!policies.length && <div className="lv-policy-empty"><BookOpen {...ic} size={20} /><p>暂无公司规范</p></div>}
+          {!policies.length && <div className="lv-policy-empty"><PolicySheet /><p>暂无公司规范</p></div>}
           {policies.map(p => <article key={p.id}>
             <div className="lv-policy-title"><h3>{p.title}</h3><small>v{p.version}</small></div>
             <span className="lv-policy-type">{p.contract_type === '全部' ? '全部合同' : p.contract_type} · {p.our_roles?.length ? p.our_roles.join(' / ') : '全部身份'}</span>
