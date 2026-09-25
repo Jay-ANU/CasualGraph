@@ -14,7 +14,7 @@ from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 import aiosqlite
 import smtplib
-from services.db import _DB_PATH
+from services import db as db_service
 from services.auth import _MAIL_ENABLED
 from services.auth import _MAIL_FROM
 from services.auth import _MAIL_FROM_NAME
@@ -37,10 +37,12 @@ _CORS_ALLOW_ORIGINS = _parse_cors_origins(os.getenv('CORS_ALLOW_ORIGINS', ''))
 
 _CORS_ALLOW_ORIGIN_REGEX = os.getenv('CORS_ALLOW_ORIGIN_REGEX', 'https://.*\\.ngrok-free\\.app|https://.*\\.ngrok\\.app').strip() or None
 
-async def _get_db():
-    Path(_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    async with aiosqlite.connect(_DB_PATH) as db:
-        yield db
+_get_db = db_service.get_db
+
+async def initialize_recruitment():
+    async for db in db_service.get_db():
+        await recruitment_offers.init_recruitment_db(db)
+        await db.commit()
 
 _RECRUITMENT_RESEND_COOLDOWN_SECONDS = 60
 

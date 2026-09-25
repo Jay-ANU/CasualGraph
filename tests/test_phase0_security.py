@@ -32,7 +32,7 @@ from services import document_access, rag_context
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Built from fragments so that a repository-wide grep for the removed features stays empty.
+# Unsafe or unsupported legacy endpoints remain absent; restored offer routes have separate authorization tests.
 REMOVED_ROUTE_PREFIXES = (
     "/documents/rebuild" + "-graph",
     "/pipeline" + "/pdf",
@@ -42,8 +42,6 @@ REMOVED_ROUTE_PREFIXES = (
     "/api/",
     "/kg-api/",
     "/public/knowledge-graph",
-    "/offers",
-    "/admin/recruit" + "ment",
     "/desktop/",
 )
 LEGACY_GRAPH_KEYS = {"graph", "relationships", "relationship_count", "paths"}

@@ -26,52 +26,30 @@ const getApiBase = () => {
   return restoredApiBase() || (localApiHost ? `http://${host}:8000` : '');
 };
 
-const normalizeGraphPayload = (payload: any): GraphData => {
-  const rawNodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
-  const nodes: GraphData['nodes'] = rawNodes
-    .map((node: any) => ({
-      id: String(node?.id || '').trim(),
-      label: String(node?.label || node?.name || node?.id || '').trim(),
-      domain: String(node?.domain || node?.esg_domain || 'general'),
-      type: String(node?.type || 'Entity'),
-      confidence: Number(node?.confidence ?? 0.75),
-      description: String(node?.description || ''),
-      company: String(node?.company || ''),
-      year: String(node?.year || ''),
-      normalizedName: String(node?.normalizedName || node?.normalized_name || node?.id || ''),
-      metadata: node?.metadata || {},
-    }))
-    .filter((node: GraphData['nodes'][number]) => node.id && node.label);
+const objectOf = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
-  const nodeIds = new Set(nodes.map((node) => node.id));
-  const rawEdges = Array.isArray(payload?.edges) ? payload.edges : [];
-  const edges: GraphData['edges'] = rawEdges
-    .map((edge: any) => ({
-      source: String(edge?.source || '').trim(),
-      target: String(edge?.target || '').trim(),
-      relationship_type: String(edge?.relationship_type || edge?.relation || edge?.type || 'RELATED_TO'),
-      confidence: Number(edge?.confidence ?? 0.75),
-      evidence: String(edge?.evidence || ''),
-      domain: String(edge?.domain || 'general'),
-      relationship_action: String(edge?.relationship_action || ''),
-      relationship_nature: String(edge?.relationship_nature || ''),
-      documentId: String(edge?.documentId || edge?.document_id || ''),
-      chunkId: String(edge?.chunkId || edge?.chunk_id || ''),
-      metadata: edge?.metadata || {},
-    }))
-    .filter((edge: GraphData['edges'][number]) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
-
-  return {
-    nodes,
-    edges,
-    metadata: {
-      ...(payload?.metadata || {}),
-      node_count: nodes.length,
-      edge_count: edges.length,
-      is_directed: payload?.metadata?.is_directed ?? true,
-      is_acyclic: payload?.metadata?.is_acyclic ?? false,
-    },
-  };
+const normalizeGraphPayload = (input: unknown): GraphData => {
+  const payload = objectOf(input);
+  const nodes = (Array.isArray(payload.nodes) ? payload.nodes : []).map(objectOf).map(node => ({
+    id: String(node.id || '').trim(), label: String(node.label || node.name || node.id || '').trim(),
+    domain: String(node.domain || node.esg_domain || 'general'), type: String(node.type || 'Entity'),
+    confidence: Number(node.confidence ?? 0.75), description: String(node.description || ''),
+    company: String(node.company || ''), year: String(node.year || ''),
+    normalizedName: String(node.normalizedName || node.normalized_name || node.id || ''), metadata: objectOf(node.metadata),
+  })).filter(node => node.id && node.label);
+  const ids = new Set(nodes.map(node => node.id));
+  const edges = (Array.isArray(payload.edges) ? payload.edges : []).map(objectOf).map(edge => ({
+    source: String(edge.source || '').trim(), target: String(edge.target || '').trim(),
+    relationship_type: String(edge.relationship_type || edge.relation || edge.type || 'RELATED_TO'),
+    confidence: Number(edge.confidence ?? 0.75), evidence: String(edge.evidence || ''), domain: String(edge.domain || 'general'),
+    relationship_action: String(edge.relationship_action || ''), relationship_nature: String(edge.relationship_nature || ''),
+    documentId: String(edge.documentId || edge.document_id || ''), chunkId: String(edge.chunkId || edge.chunk_id || ''), metadata: objectOf(edge.metadata),
+  })).filter(edge => ids.has(edge.source) && ids.has(edge.target));
+  const meta = objectOf(payload.metadata);
+  return { nodes, edges, metadata: { ...meta, node_count: nodes.length, edge_count: edges.length,
+    is_directed: typeof meta.is_directed === 'boolean' ? meta.is_directed : true,
+    is_acyclic: typeof meta.is_acyclic === 'boolean' ? meta.is_acyclic : false } };
 };
 
 const GRAPH_OVERVIEW_NODE_LIMIT = 1500;
@@ -90,7 +68,7 @@ const CausalInference: React.FC = () => {
   useDocumentTitle('Knowledge graph');
 
   const fetchKnowledgeGraph = useCallback(async (nodeLimit: number, edgeLimit: number) => {
-    const response = await fetch(`${apiBase}/public/knowledge-graph?limit=${nodeLimit}&edge_limit=${edgeLimit}`, {
+    const response = await fetch(`${apiBase}/graph/${token ? 'workspace' : 'public'}?limit=${nodeLimit}&edge_limit=${edgeLimit}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     const payload = await response.json().catch(() => null);

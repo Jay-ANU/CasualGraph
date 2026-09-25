@@ -80,14 +80,11 @@ const BrandMark: React.FC<{ size?: number }> = ({ size = 22 }) => (
 const CodeStrip: React.FC<{ seed: string }> = ({ seed }) => {
   const bars = useMemo(() => referenceBars(seed), [seed]);
   const total = bars.reduce((sum, [bar, gap]) => sum + bar + gap, 0);
-  let x = 0;
   return (
     <svg className="of-code" width={total} height="22" aria-hidden="true" shapeRendering="crispEdges">
-      {bars.map(([bar, gap], index) => {
-        const rect = <rect key={index} x={x} y="0" width={bar} height="22" />;
-        x += bar + gap;
-        return rect;
-      })}
+      {bars.map(([bar], index) => (
+        <rect key={index} x={bars.slice(0, index).reduce((sum, [width, gap]) => sum + width + gap, 0)} y="0" width={bar} height="22" />
+      ))}
     </svg>
   );
 };
@@ -140,7 +137,6 @@ const ROLL = '01234567890123456789'.split('');
 /** Digits roll into place like a mechanical counter; the amount is read out in full by screen readers. */
 const Odometer: React.FC<{ value: string; run: boolean; animate: boolean }> = ({ value, run, animate }) => {
   if (!animate) return <span className="of-odo">{value}</span>;
-  let digitIndex = 0;
   return (
     <span className="of-odo" aria-hidden="true">
       {value.split('').map((character, index) => {
@@ -151,8 +147,7 @@ const Odometer: React.FC<{ value: string; run: boolean; animate: boolean }> = ({
             </span>
           );
         }
-        const order = digitIndex;
-        digitIndex += 1;
+        const order = (value.slice(0, index).match(/\d/g) || []).length;
         const target = run ? 10 + Number(character) : 0;
         return (
           <span key={index} className="of-odo-digit">

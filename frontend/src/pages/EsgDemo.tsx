@@ -1,4 +1,5 @@
 import { apiBase as restoredApiBase } from '../api/config';
+import { withAuth } from '../api/client';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { RagResponse, RagStreamEvent } from '../types/api';
@@ -52,7 +53,7 @@ const EsgDemo: React.FC = () => {
   const host = useMemo(() => window.location.hostname || '127.0.0.1', []);
   const localApiHost = host === 'localhost' || host === '127.0.0.1';
   const esgApiBase = restoredApiBase() || (localApiHost ? `http://${host}:8000` : '');
-  const platformApiBase = `http://${host}:8001`;
+  const platformApiBase = esgApiBase;
 
   const [health, setHealth] = useState<HealthState[]>([
     { label: 'Evidence API', url: `${esgApiBase}/health`, ok: null, detail: 'Checking...' },
@@ -60,12 +61,11 @@ const EsgDemo: React.FC = () => {
   ]);
 
   const [extractText, setExtractText] = useState(SAMPLE_TEXT);
-  const [extractLoading, setExtractLoading] = useState(false);
-  const [extractResult, setExtractResult] = useState<any>(null);
+  const extractResult: { entities?: unknown[]; relations?: unknown[] } = {};
 
   const [question, setQuestion] = useState(SAMPLE_QUESTION);
   const [ragLoading, setRagLoading] = useState(false);
-  const [ragResult, setRagResult] = useState<any>(null);
+  const [ragResult, setRagResult] = useState<(Partial<RagResponse> & { error?: string; message?: string }) | null>(null);
   const [activeDemoTab, setActiveDemoTab] = useState<'ask' | 'extract'>('ask');
   useDocumentTitle('Pipeline check');
 
@@ -76,10 +76,6 @@ const EsgDemo: React.FC = () => {
     ],
     [esgApiBase, platformApiBase]
   );
-
-  useEffect(() => {
-    setHealth(serviceTargets);
-  }, [serviceTargets]);
 
   useEffect(() => {
     const check = async () => {
@@ -108,36 +104,13 @@ const EsgDemo: React.FC = () => {
     check();
   }, [serviceTargets]);
 
-  const runExtraction = async () => {
-    setExtractLoading(true);
-    setExtractResult(null);
-    try {
-      const response = await fetch(`${esgApiBase}/extract`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: extractText }),
-      });
-      const payload = await response.json();
-      setExtractResult(payload);
-    } catch (error) {
-      setExtractResult({
-        entities: [],
-        relations: [],
-        error: 'request_failed',
-        message: error instanceof Error ? error.message : 'Network error',
-      });
-    } finally {
-      setExtractLoading(false);
-    }
-  };
-
   const runRag = async () => {
     setRagLoading(true);
     setRagResult(null);
     try {
       const response = await fetch(`${esgApiBase}/rag/ask/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: withAuth({ headers: { 'Content-Type': 'application/json' } }).headers,
         body: JSON.stringify({ question, top_k: 3 }),
       });
       if (!response.ok) {
@@ -199,7 +172,7 @@ const EsgDemo: React.FC = () => {
       <header className="max-w-2xl">
         <h1 className="page-title">Pipeline check</h1>
         <p className="mt-1 text-sm leading-6 text-ink-3">
-          Check that the services respond, extract entities and relationships from a passage, and run a cited query
+          Check that the services respond, open the research upload desk, and run an authenticated cited query
           against the active report index. Intended for development and demos.
         </p>
       </header>
@@ -254,10 +227,8 @@ const EsgDemo: React.FC = () => {
                   onChange={(e) => setExtractText(e.target.value)}
                   className="input min-h-[260px] resize-y text-sm"
                 />
-                <button type="button" onClick={runExtraction} disabled={extractLoading} className="btn btn-primary mt-4">
-                  {extractLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {extractLoading ? 'Extracting…' : 'Run extraction'}
-                </button>
+                <p className="mt-4 text-sm text-ink-3">The old standalone extraction endpoint is no longer exposed. Use the authenticated research desk to upload and query reports.</p>
+                <a href="/agent" className="btn btn-primary mt-4">Open research desk</a>
               </div>
               <div className="rounded-xl border border-line bg-white p-4">
                 <h3 className="text-sm font-medium text-ink">Result</h3>

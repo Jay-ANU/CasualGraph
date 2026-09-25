@@ -122,14 +122,19 @@ const readJson = async (response: Response) => {
   }
 };
 
-const errorMessage = (payload: any, fallback: string) => {
-  const detail = payload?.detail;
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) {
-    const messages = detail.map((item) => item?.msg).filter(Boolean);
+const errorMessage = (payload: unknown, fallback: string): string => {
+  if (!payload || typeof payload !== 'object') return fallback;
+  const data = payload as { detail?: unknown; message?: unknown };
+  if (typeof data.detail === 'string') return data.detail;
+  if (Array.isArray(data.detail)) {
+    const messages = data.detail.map((item: unknown) => {
+      if (!item || typeof item !== 'object') return '';
+      const message = (item as { msg?: unknown }).msg;
+      return typeof message === 'string' ? message : '';
+    }).filter(Boolean);
     if (messages.length) return messages.join(' ');
   }
-  return payload?.message || fallback;
+  return typeof data.message === 'string' ? data.message : fallback;
 };
 
 // Fields the backend fills from the form itself; a missing one is reported as a required field instead.
@@ -137,7 +142,7 @@ const FORM_PLACEHOLDERS = new Set(['candidate_name', 'position']);
 
 const Recruitment: React.FC = () => {
   const { token, user } = useAuth();
-  const base = useMemo(apiBase, []);
+  const base = useMemo(() => apiBase(), []);
   useDocumentTitle('Recruitment');
 
   const [initialLetter] = useState(() => {
@@ -220,7 +225,8 @@ const Recruitment: React.FC = () => {
   }, [authHeaders, base]);
 
   useEffect(() => {
-    loadOffers();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async load also resets the visible loading state
+    void loadOffers();
   }, [loadOffers]);
 
   useEffect(() => {

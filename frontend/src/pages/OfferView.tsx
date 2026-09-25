@@ -32,7 +32,7 @@ const useOfferPageChrome = () => {
 /** Public page a candidate reaches from the link in their offer email. */
 const OfferView: React.FC = () => {
   const { token = '' } = useParams();
-  const base = useMemo(apiBase, []);
+  const base = useMemo(() => apiBase(), []);
   const [state, setState] = useState<LoadState>('loading');
   const [offer, setOffer] = useState<PublicOffer | null>(null);
   useDocumentTitle(offer ? `${offer.position} offer` : 'Your offer');
@@ -55,7 +55,8 @@ const OfferView: React.FC = () => {
   }, [base, token]);
 
   useEffect(() => {
-    load();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async load also resets the visible loading state
+    void load();
   }, [load]);
 
   const respond = useCallback(
@@ -65,13 +66,13 @@ const OfferView: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision, note }),
       });
-      let payload: any = {};
+      let payload: Partial<PublicOffer> & { detail?: string | { offer?: PublicOffer } };
       try {
         payload = await response.json();
       } catch {
         payload = {};
       }
-      if (response.status === 409 && payload?.detail?.offer) {
+      if (response.status === 409 && typeof payload.detail === 'object' && payload.detail?.offer) {
         // Someone already answered (or the offer was withdrawn); show where things stand.
         setOffer(payload.detail.offer as PublicOffer);
         return;

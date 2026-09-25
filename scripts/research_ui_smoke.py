@@ -105,6 +105,12 @@ try:
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
         check('Home heading', page.get_by_role('heading', name='Answers from sustainability reports, with the page they came from.').count() == 1)
+        check('Independent Legal navigation', page.get_by_role('navigation', name='Primary').get_by_role('link', name='法务 Agent', exact=True).get_attribute('href') == '/legal')
+        for path, heading in [('/about', 'A reading tool, not a verdict.'), ('/desktop', 'Your research, a little closer.')]:
+            # Assert the real restored page renders, without hard-coding copy that might evolve.
+            page.goto('http://127.0.0.1:4173' + path, wait_until='networkidle')
+            check('Restored page ' + path, page.get_by_role('heading', level=1).count() == 1 and 'doesn’t exist' not in page.locator('body').inner_text())
+        page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
         check('Home action empty disabled', page.get_by_role('button', name='Start research', exact=True).is_disabled())
         no_overflow(page, 'Desktop homepage no horizontal overflow')
         page.screenshot(path=str(OUT / 'home-desktop.png'), full_page=True)

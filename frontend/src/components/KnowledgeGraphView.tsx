@@ -430,6 +430,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
     const node = graph.nodes.find((item) => item.id === effectiveSelectedNodeId);
     const domain = node ? inferNodeDomain(node) : 'general';
     if (domain !== 'general') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- synchronize externally selected node with the existing graph tabs
       setInspectedCluster(domain);
       setActiveTab(domain);
     }
@@ -475,6 +476,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
   const handleNodeSelect = (node: GraphNode) => {
     const domain = inferNodeDomain(node);
     if (domain !== 'general') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- synchronize externally selected node with the existing graph tabs
       setInspectedCluster(domain);
       setActiveTab(domain);
     }

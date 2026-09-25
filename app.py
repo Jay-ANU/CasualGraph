@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 load_dotenv(Path(__file__).resolve().parent / ".env")
 from admin_audit import init_admin_db  # noqa: E402
-from api.routers.recruitment import router as recruitment_router
+from api.routers.recruitment import router as recruitment_router, initialize_recruitment
+from api.routers.research_graph import router as research_graph_router
 from api.routers.admin import router as admin_router  # noqa: E402
 from api.routers.auth import router as auth_router  # noqa: E402
 from api.routers.chat import router as chat_router  # noqa: E402
@@ -26,7 +27,7 @@ from rag.embeddings import embedding_backend_is_real, get_embedding_backend, get
 from services.auth import _APP_ENV, _DEFAULT_JWT_SECRET, _JWT_SECRET, _is_production_like_env  # noqa: E402
 from services.db import _init_auth_db, _init_feedback_db  # noqa: E402
 
-ROUTERS = (system_router, auth_router, admin_router, recruitment_router, feedback_router, chat_router,
+ROUTERS = (system_router, auth_router, admin_router, recruitment_router, research_graph_router, feedback_router, chat_router,
            memory_router, graph_router, rag_router, documents_router, contract_review_router)
 OPTIONAL_ROUTER_MODULES = (
     "api.routers.document_content", "api.routers.redaction", "api.routers.matters",
@@ -87,6 +88,7 @@ def _ensure_neo4j_schema_startup() -> None:
 async def startup():
     _validate_startup_security_config()
     await _init_auth_db()
+    await initialize_recruitment()
     await _init_feedback_db()
     init_admin_db()
     warm_bm25_index()
