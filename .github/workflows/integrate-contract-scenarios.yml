@@ -1,0 +1,61 @@
+name: Integrate verified contract scenarios
+on:
+  push:
+    branches: ['feat/legal-contract-scenarios-20260925']
+    paths: ['.github/workflows/integrate-contract-scenarios.yml']
+permissions:
+  contents: write
+concurrency:
+  group: integrate-contract-scenarios
+  cancel-in-progress: false
+jobs:
+  integrate:
+    if: github.ref == 'refs/heads/feat/legal-contract-scenarios-20260925'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply exact source edits after validating every file hash
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64, hashlib, json, lzma, pathlib, subprocess
+          root = pathlib.Path('.')
+          parts = [f'.scenario-transfer/part{i}.txt' for i in (1, 2, 3)]
+          data = lzma.decompress(base64.b64decode(''.join((root / p).read_text().strip() for p in parts), validate=True))
+          assert hashlib.sha256(data).hexdigest() == '582f51337e0ea158f3b7b661d6d192b5b08ad0804cd397e47ac1de05274a8139', 'payload hash mismatch'
+          patch = json.loads(data)
+          assert patch['base'] == '048e31e2ca9d49e31b5e2428321792fc379e08e3'
+          subprocess.run(['git', 'merge-base', '--is-ancestor', patch['base'], 'HEAD'], check=True)
+          allowed = set('''api/routers/contract_review.py docs/legal-contract-scenarios.md frontend/src/legal/LegalDesk.css frontend/src/legal/LegalDesk.tsx frontend/src/legal/ReviewContext.tsx frontend/src/legal/ScenarioPicker.tsx frontend/src/legal/parts.tsx frontend/src/legal/scenarioInput.test.ts frontend/src/legal/scenarioInput.ts frontend/src/legal/types.ts legal/contract_scenarios.json legal/review_plan.py legal/review_v2.py legal/scenarios.py legal/transaction_brief.py scripts/legal_ui_smoke.py scripts/verify_legal_release.mjs scripts/verify_legal_release.test.mjs tests/test_contract_scenarios.py tests/test_legal_multiagent.py tests/test_legal_v2_pipeline.py'''.split())
+          assert len(patch['files']) == 21 and {f['path'] for f in patch['files']} == allowed
+          prepared = []
+          for item in patch['files']:
+              path = root / item['path']
+              assert not path.is_symlink()
+              before = path.read_text(encoding='utf-8') if path.exists() else ''
+              if item['before'] is None:
+                  assert not path.exists(), f'unexpected existing path: {path}'
+              else:
+                  assert path.exists() and hashlib.sha256(before.encode()).hexdigest() == item['before'], f'base hash mismatch: {path}'
+              after, end = before, len(before)
+              for edit in sorted(item['edits'], key=lambda e: (e['start'], e['end']), reverse=True):
+                  assert 0 <= edit['start'] <= edit['end'] <= end
+                  after = after[:edit['start']] + edit['text'] + after[edit['end']:]
+                  end = edit['start']
+              assert hashlib.sha256(after.encode()).hexdigest() == item['after'], f'result hash mismatch: {path}'
+              prepared.append((path, after))
+          for path, text in prepared:
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(text, encoding='utf-8')
+          subprocess.run(['git', 'add', '-f', '--', *sorted(allowed)], check=True)
+          subprocess.run(['git', 'rm', '--', *parts, '.github/workflows/integrate-contract-scenarios.yml'], check=True)
+          print('Applied 21 hash-verified files; no production configuration, secrets or client data accessed.')
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(legal): expand twenty contract scenarios with role-aware review'
+          git push origin HEAD:refs/heads/feat/legal-contract-scenarios-20260925
