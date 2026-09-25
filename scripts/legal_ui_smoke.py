@@ -6,7 +6,7 @@ from pathlib import Path
 import threading
 from urllib.parse import urlparse
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'ui-artifacts'
@@ -81,7 +81,7 @@ try:
         page.add_init_script("localStorage.setItem('token','synthetic-test-token');localStorage.setItem('user',JSON.stringify({id:'u1',username:'测试法务',role:'user'}));")
         page.goto('http://127.0.0.1:4173/agent')
         page.get_by_role('button',name='选择一份合同开始').wait_for()
-        assert page.get_by_role('button',name='＋ 上传合同').is_enabled()
+        expect(page.get_by_role('button',name='＋ 上传合同')).to_be_enabled()
         page.locator('input[type=file]').set_input_files({'name':'测试采购合同.txt','mimeType':'text/plain','buffer':'测试采购合同'.encode()})
         page.get_by_role('button',name='已检查，确认脱敏').click()
         page.get_by_label('我方角色').select_option('采购方')
