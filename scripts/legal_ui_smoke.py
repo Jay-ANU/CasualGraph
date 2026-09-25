@@ -6,6 +6,7 @@ import http.server
 import json
 import os
 from pathlib import Path
+import re
 import threading
 from urllib.parse import urlparse
 from playwright.sync_api import expect, sync_playwright
@@ -129,7 +130,7 @@ try:
             context.add_init_script("localStorage.setItem('token','synthetic');localStorage.setItem('user',JSON.stringify({id:'u1',role:'user',plan:'max'}));")
             page=context.new_page();page.route('http://127.0.0.1:8000/**',route_api)
             start=len(calls);page.goto('http://127.0.0.1:4173/legal');page.wait_for_timeout(800)
-            expect(page.get_by_role('button',name='选择一份合同开始')).to_have_count(0)
+            expect(page.get_by_role('button',name='选择文件',exact=True)).to_have_count(0)
             assert not any(path in ('/legal/workspace','/legal/models','/legal/contracts') for _,path in calls[start:])
             context.close()
         allowed.update(value=True,plan='max',unavailable=False)
@@ -139,6 +140,7 @@ try:
         page.on('dialog',lambda d:d.accept());page.route('http://127.0.0.1:8000/**',route_api)
         page.goto('http://127.0.0.1:4173/legal')
         page.get_by_role('heading',name='合同风险审查').wait_for()
+        expect(page.get_by_role('button',name='选择文件',exact=True)).to_be_enabled()
         # Model choice is not a first-screen decision; it lives in the review settings.
         expect(page.get_by_label('审查模型')).to_have_count(0)
         page.screenshot(path=str(OUT/'legal-v2-welcome-desktop.png'),full_page=True)
@@ -180,6 +182,8 @@ try:
         page.get_by_role('radiogroup',name='我方身份').get_by_role('radio',name='销售方',exact=True).check()
         # Party suggestions quote the contract verbatim; nothing is pre-selected.
         expect(page.get_by_role('group',name='从原文选择主体片段').get_by_role('button',pressed=True)).to_have_count(0)
+        # The quote names the button; the line it came from describes it.
+        expect(page.get_by_role('group', name='从原文选择主体片段').get_by_role('button', name='【脱敏1】', exact=True)).to_have_accessible_description(re.compile('应在签约后支付'))
         page.get_by_role('group', name='从原文选择主体片段').get_by_role('button', name='【脱敏1】', exact=True).click()
         expect(page.get_by_role('group', name='从原文选择主体片段').get_by_role('button', name='【脱敏1】', exact=True)).to_have_attribute('aria-pressed','true')
         page.get_by_label('审查重点',exact=True).fill('重点关注付款安排')
@@ -275,6 +279,7 @@ try:
         expect(page.locator('.lv-policy-type').filter(has_text='销售方')).to_be_visible()
         page.screenshot(path=str(OUT/'legal-scenario-policy.png'),full_page=True)
         page.get_by_role('button',name='新建审查').click()
+        expect(page.get_by_role('button',name='选择文件',exact=True)).to_be_focused()
         page.set_viewport_size({'width':390,'height':844})
         page.locator('input[type=file]').set_input_files({'name':'new.txt','mimeType':'text/plain','buffer':'第二份合成合同'.encode()})
         page.get_by_role('button', name='同意并上传', exact=True).click()

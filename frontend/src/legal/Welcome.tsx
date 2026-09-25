@@ -17,7 +17,7 @@ export function Welcome({ disabled, onUpload, onDrop }: {
         onDrop={e => { e.preventDefault(); setDragging(false); if (!disabled) onDrop(e.dataTransfer.files); }}>
         <ContractSheet active={dragging} />
         <p className="lv-upload-title">{dragging ? '松开以上传' : '将合同文件拖拽至此处'}</p>
-        <button type="button" className="lv-primary lv-upload-cta" disabled={disabled} onClick={onUpload} aria-label="选择一份合同开始">选择文件</button>
+        <button type="button" id="legal-upload-button" className="lv-primary lv-upload-cta" disabled={disabled} onClick={onUpload}>选择文件</button>
         <p className="lv-upload-spec">支持 .docx、.pdf（文本型）、.txt，单个文件不超过 10 MB</p>
       </section>
       <ul className="lv-assurances" aria-label="隐私保护">

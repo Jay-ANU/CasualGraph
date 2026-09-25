@@ -143,7 +143,7 @@ export default class LegalDesk extends React.Component<Props, State> {
       preview: null, terms: '', consent: false, selectedBlock: null, instructions: '', date: '', performanceStage: '未知', attachmentsStatus: '未知',
       businessPriority: '综合审查', dealValue: '', currency: 'CNY', question: '', answers: [], showDocument: false, setupOpen: true,
       tab: 'review', error: '', notice: '', mobileMenu: false, questionConsent: false }, () => {
-      document.querySelector<HTMLButtonElement>('[aria-label="选择一份合同开始"]')?.focus();
+      document.getElementById('legal-upload-button')?.focus();
     });
     history.replaceState(null, '', '/legal');
   };
