@@ -28,7 +28,14 @@ const PATHS: Record<string, string[]> = {
 export function Icon({ name }: { name: string }) { return <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{(PATHS[name] || PATHS.file).map((d, i) => <path key={i} d={d} />)}</svg>; }
 
 export function ModelSelect({ catalog, value, loading, disabled, onChange, onRefresh }: { catalog: Catalog | null; value: string; loading: boolean; disabled: boolean; onChange: (id: string) => void; onRefresh: () => void }) {
-  return <div className="lv-model"><Icon name="settings" /><select aria-label="审查模型" value={value} disabled={disabled || loading || !catalog} onChange={e => onChange(e.target.value)}><option value="" disabled>{loading ? '读取模型…' : '选择审查模型'}</option>{catalog?.families.map(family => <optgroup key={family} label={family}>{catalog.models.filter(m => m.family === family).map(m => <option value={m.id} key={m.id}>{m.id}</option>)}</optgroup>)}</select><button type="button" className="lv-icon" disabled={disabled || loading} title="刷新网关型号" aria-label="刷新模型列表" onClick={onRefresh}><Icon name="refresh" /></button></div>;
+  const families = catalog?.families.filter(family => catalog.models.some(m => m.family === family)) || [];
+  return <div className="lv-model-control"><div className="lv-model"><Icon name="settings" />
+    <select aria-label="审查模型" value={value} disabled={disabled || loading || !catalog} onChange={e => onChange(e.target.value)}>
+      <option value="" disabled>{loading ? '读取模型…' : '选择审查模型'}</option>
+      {families.map(family => <optgroup key={family} label={family}>{catalog?.models.filter(m => m.family === family).map(m => <option value={m.id} key={m.id}>{m.id}</option>)}</optgroup>)}
+    </select><button type="button" className="lv-icon" disabled={disabled || loading} title="重新读取已配置的模型" aria-label="刷新模型列表" onClick={onRefresh}><Icon name="refresh" /></button>
+    </div>{!!catalog?.unavailable_families?.length && <p className="lv-model-unavailable" role="status">{catalog.unavailable_families.join('、')} 暂不可用，其他模型仍可选择。</p>}
+  </div>;
 }
 
 type FindingProps = { finding: Finding; review: Review; original: string; busy: boolean; initiallyOpen: boolean;
@@ -42,10 +49,18 @@ export class FindingCard extends React.Component<FindingProps, { open: boolean; 
     const changed = this.state.text !== f.suggested_text;
     const status = findingStatus(f);
     const needsLegal = f.requires_legal_confirmation === true || ((r.engine_version || 0) >= 2 && f.kind === 'legal');
-    const canAccept = done && !busy && !!f.block_id && !!f.suggested_text && !!this.state.text.trim()
+    const canAccept = status !== 'rejected' && done && !busy && !!f.block_id && !!f.suggested_text && !!this.state.text.trim()
       && f.revision_allowed !== false && f.missing_facts.length === 0 && f.evidence_status !== 'unverified'
       && (!needsLegal || this.state.legalBasis) && (!changed || this.state.manual);
-    return <article className={`lv-finding ${decision?.decision === 'accepted' ? 'accepted' : ''}`}>
+    const acceptIssue = !done ? '本轮仍在进行，完成后才能处理修改。'
+      : status === 'rejected' || f.revision_allowed === false ? '这条建议未通过复核，不能直接纳入修订。'
+      : !f.block_id || !f.suggested_text ? '这条意见没有可直接替换的段落，请先人工核实。'
+      : f.missing_facts.length ? '请先核实上方列出的缺失信息。'
+      : f.evidence_status === 'unverified' ? '当前依据未核实，不能直接采用。'
+      : !this.state.text.trim() ? '替代段落不能为空。'
+      : needsLegal && !this.state.legalBasis ? '请先确认已核对所引规定的版本和适用性。'
+      : changed && !this.state.manual ? '请确认将编辑内容保存为待复核的人工草稿。' : '';
+    return <article id={`legal-finding-${f.id}`} tabIndex={-1} data-block-id={f.block_id || undefined} className={`lv-finding ${decision?.decision === 'accepted' ? 'accepted' : ''}`}>
       <div className="lv-finding-top"><span className={`lv-risk ${status === 'supported' ? f.severity : 'low'}`}>{status === 'rejected' ? '候选已否定' : status === 'unconfirmed' ? '待核实' : ({ high: '重点关注', medium: '需要关注', low: '提示' } as Record<string, string>)[f.severity] || '需关注'}</span><span className="lv-kind">{({ legal: '法律风险', commercial: '商业利益', company_policy: '公司规范' } as Record<string, string>)[f.kind]}</span>{decision?.decision === 'accepted' && <span className="lv-decision"><Icon name="check" />已纳入修订</span>}{decision?.decision === 'draft' && <span className="lv-decision">人工草稿待复核</span>}{decision?.decision === 'rejected' && <span className="lv-decision">已保留原文（不代表风险消失）</span>}</div>
       <h3><button aria-expanded={this.state.open} onClick={() => this.setState({ open: !this.state.open })}>{f.title}<Icon name="chevron" /></button></h3><p className="lv-impact">{f.impact}</p>
       {f.block_id && <button className="lv-source-link" onClick={() => onLocate(f.block_id!)}><Icon name="file" />定位原文 · {f.block_id}<Icon name="arrow-right" /></button>}
@@ -60,7 +75,8 @@ export class FindingCard extends React.Component<FindingProps, { open: boolean; 
         {f.suggested_text && <div className="lv-suggestion"><div><h4>建议这样改</h4><button className="lv-text-button" onClick={() => this.setState({ editing: !this.state.editing })}>{this.state.editing ? '查看修改对比' : '编辑建议'}</button></div>{this.state.editing ? <label className="lv-edit-label">本段完整替代文本<textarea aria-label="编辑本段建议" rows={5} value={this.state.text} maxLength={12000} onChange={e => this.setState({ text: e.target.value, manual: false, legalBasis: false })} /></label> : <div className="lv-diff" aria-label="原文与建议修改对比">{diffText(original || f.original_quote, this.state.text).map((part, i) => part.kind === 'del' ? <del key={i}>{part.text}</del> : part.kind === 'ins' ? <ins key={i}>{part.text}</ins> : <span key={i}>{part.text}</span>)}</div>}<small>仅展示文字差异。导出 DOCX 会保留 Word 原生修订。</small></div>}
         {needsLegal && f.revision_allowed !== false && f.suggested_text && <label className="lv-consent"><input type="checkbox" checked={this.state.legalBasis} onChange={e => this.setState({ legalBasis: e.target.checked })} />我已核对所引规定的版本和适用性。</label>}
         {changed && f.suggested_text && <label className="lv-consent"><input type="checkbox" checked={this.state.manual} onChange={e => this.setState({ manual: e.target.checked })} />我确认保存为待复核人工草稿；不沿用原建议的核验结果。</label>}
-        <div className="lv-actions"><button className="lv-primary" disabled={!canAccept || decision?.decision === 'accepted'} onClick={() => onDecision(changed ? 'draft' : 'accepted', this.state.text, this.state.legalBasis, this.state.manual)}><Icon name="check" />{decision?.decision === 'accepted' ? '已纳入修订' : changed ? '保存人工草稿' : '接受修改'}</button><button className="lv-secondary" disabled={busy || !done || decision?.decision === 'rejected'} onClick={() => onDecision('rejected', '', false, false)}>保留原文</button>{decision && <button className="lv-text-button" disabled={busy || !done} onClick={() => onDecision('pending', '', false, false)}>撤销决定</button>}</div>
+        {acceptIssue && decision?.decision !== 'accepted' && <p id={`finding-help-${f.id}`} className="lv-start-help">{acceptIssue}</p>}
+        <div className="lv-actions"><button className="lv-primary" aria-describedby={acceptIssue ? `finding-help-${f.id}` : undefined} disabled={!canAccept || decision?.decision === 'accepted'} onClick={() => onDecision(changed ? 'draft' : 'accepted', this.state.text, this.state.legalBasis, this.state.manual)}><Icon name="check" />{decision?.decision === 'accepted' ? '已纳入修订' : changed ? '保存人工草稿' : '接受修改'}</button><button className="lv-secondary" disabled={busy || !done || decision?.decision === 'rejected'} onClick={() => onDecision('rejected', '', false, false)}>保留原文</button>{decision && <button className="lv-text-button" disabled={busy || !done} onClick={() => onDecision('pending', '', false, false)}>撤销决定</button>}</div>
       </div>}
     </article>;
   }

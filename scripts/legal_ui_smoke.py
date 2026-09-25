@@ -1,7 +1,10 @@
 """Actual React build regression with synthetic APIs, never production credentials."""
+import traceback
+from contextlib import contextmanager
 import functools
 import http.server
 import json
+import os
 from pathlib import Path
 import threading
 from urllib.parse import urlparse
@@ -75,7 +78,10 @@ def route_api(route):
         assert req.post_data_json=={'fingerprint':'a'*64,'confirmed':True}
         review['draft_approval']={'fingerprint':'a'*64,'final_hash':'b'*64,'user_id':'u1'}
         data=review
-    elif path=='/legal/reviews/r1/export':data=review
+    elif path=='/legal/reviews/r1/export':
+        if urlparse(req.url).query == 'format=txt':
+            route.fulfill(status=200, headers=headers, content_type='text/plain; charset=utf-8', body='合成修订稿，不是法律结论。'); return
+        data=review
     elif path=='/legal/reviews/r1/questions':data={'messages':[]}
     elif path=='/legal/policies' and method=='GET':data={'policies':policies}
     elif path=='/legal/policies' and method=='POST':
@@ -83,9 +89,39 @@ def route_api(route):
         data={**req.post_data_json,'id':'policy1','version':1}; policies.append(data)
     else:status,data=404,{'detail':'Unhandled synthetic route: '+path}
     route.fulfill(status=status,headers=headers,content_type='application/json',body=json.dumps(data,ensure_ascii=False))
+@contextmanager
+def capture_failure():
+    try:
+        yield
+    except Exception:
+        try:
+            (OUT/'failure.txt').write_text(traceback.format_exc() + '\nACTIVE: ' + str(page.evaluate('document.activeElement.outerHTML')), encoding='utf-8')
+            page.screenshot(path=str(OUT/'failure.png'), full_page=True)
+            (OUT/'failure.html').write_text(page.content(), encoding='utf-8')
+        except Exception:
+            pass
+        raise
+
+AXE_VIOLATIONS = []
+def audit_layout(page, label):
+    """Real DOM reflow and optional axe checks; synthetic data only."""
+    widths = (320, 390, 768, 1024, 1440)
+    for width in widths:
+        page.set_viewport_size({'width': width, 'height': 960 if width >= 768 else 844})
+        page.wait_for_timeout(80)
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 2'), (label, width)
+        page.screenshot(path=str(OUT/f'{label}-{width}.png'), full_page=True)
+    axe_path = os.getenv('AXE_CORE_PATH')
+    if axe_path:
+        page.add_script_tag(path=axe_path)
+        result = page.evaluate("""async () => await axe.run('.legal-v2', {runOnly: {type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']}})""")
+        (OUT/f'{label}-axe.json').write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
+        violations = [{ 'id': v['id'], 'impact': v['impact'], 'nodes': [n['target'] for n in v['nodes']] } for v in result['violations']]
+        AXE_VIOLATIONS.extend([{'state': label, **v} for v in violations])
+
 try:
-    with sync_playwright() as p:
-        browser=p.chromium.launch()
+    with sync_playwright() as p, capture_failure():
+        browser=p.chromium.launch(executable_path=os.getenv('PLAYWRIGHT_CHROMIUM_EXECUTABLE') or None)
         for plan in ('free','pro','unavailable'):
             allowed.update(value=False,plan=plan,unavailable=plan=='unavailable')
             context=browser.new_context()
@@ -104,13 +140,29 @@ try:
         page.get_by_role('heading',name='今天需要审查哪份合同？').wait_for()
         expect(page.get_by_label('审查模型')).to_have_value('glm-5.2');assert page.locator('optgroup').count()==5
         page.screenshot(path=str(OUT/'legal-v2-welcome-desktop.png'),full_page=True)
+        audit_layout(page, 'legal-welcome')
+        page.set_viewport_size({'width':1440,'height':1000})
         page.get_by_role('button',name='销售合同',exact=True).click()
         page.get_by_label('审查关注点').fill('重点关注付款安排')
         page.locator('input[type=file]').set_input_files({'name':'test.txt','mimeType':'text/plain','buffer':'合成合同'.encode()})
+        dialog = page.get_by_role('dialog', name='上传前，确认这份原件的处理方式')
+        expect(dialog).to_be_visible()
+        assert not any(method == 'POST' and path == '/legal/contracts' for method, path in calls)
+        expect(dialog.get_by_role('button', name='取消', exact=True)).to_be_focused()
+        for _ in range(6):
+            page.keyboard.press('Tab')
+            assert page.evaluate("document.querySelector('dialog').contains(document.activeElement)")
+        page.keyboard.press('Escape')
+        expect(dialog).to_have_count(0)
+        assert not any(method == 'POST' and path == '/legal/contracts' for method, path in calls)
+        page.locator('input[type=file]').set_input_files({'name':'test.txt','mimeType':'text/plain','buffer':'合成合同'.encode()})
+        page.screenshot(path=str(OUT/'legal-upload-consent.png'), full_page=True)
+        page.get_by_role('button', name='确认授权并上传', exact=True).click()
         page.get_by_role('button',name='对照真实原文（仅有编辑权限可见）').click()
         expect(page.get_by_text('原件对照合成姓名：张三',exact=False)).to_be_visible()
         page.get_by_role('button',name='关闭真实原文对照').click()
         page.get_by_role('button',name='已检查，确认脱敏',exact=True).click()
+        page.get_by_role('button',name='确认脱敏并继续',exact=True).click()
         expect(page.get_by_label('我方角色')).to_have_value('')
         # All configured routes and role sets render from the backend catalogue.
         expect(page.get_by_label('合同类型',exact=True)).to_have_value('销售合同')
@@ -123,7 +175,8 @@ try:
         expect(page.get_by_label('我方角色')).to_have_value('')
         page.get_by_label('我方角色').select_option('销售方')
         page.get_by_label('我方主体所在段落').select_option('p1')
-        page.get_by_label('我方主体原文').fill('【脱敏1】')
+        page.get_by_role('group', name='从原文选择主体片段').get_by_role('button', name='【脱敏1】', exact=True).click()
+        expect(page.get_by_label('我方主体原文')).to_have_value('【脱敏1】')
         page.get_by_text('交易背景与法律适用',exact=True).click()
         page.get_by_label('履行阶段').select_option('谈判中')
         page.get_by_label('关键附件状态').select_option('未知')
@@ -145,11 +198,19 @@ try:
         page.get_by_role('button',name='开始审查',exact=True).click()
         page.get_by_role('heading',name='有 1 项值得进一步处理').wait_for()
         expect(page.get_by_label('协作进度')).to_be_visible()
+        page.get_by_text('查看交易背景、检索依据与检查过程', exact=True).click()
         expect(page.get_by_label('交易背景与资料缺口')).to_be_visible()
         expect(page.get_by_text('1000000.05 CNY',exact=True)).to_be_visible()
         expect(page.get_by_text('有 2 项检索未取得来源，不能据此排除法律风险。',exact=True)).to_be_visible()
         expect(page.get_by_label('本轮场景清单')).to_contain_text('销售合同')
         expect(page.get_by_label('本轮场景清单')).to_contain_text('账期、对账与扣款')
+        page.get_by_text('查看交易背景、检索依据与检查过程', exact=True).click()
+        page.get_by_label('查找审查意见').fill('不存在的条件')
+        expect(page.get_by_text('没有符合条件的意见', exact=True)).to_be_visible()
+        page.get_by_role('button', name='清除筛选', exact=True).click()
+        page.locator('.lv-conversation').evaluate('(el) => { el.scrollTop = 0; }')
+        audit_layout(page, 'legal-results')
+        page.set_viewport_size({'width':1440,'height':1000})
         page.get_by_role('button',name='接受修改',exact=True).click()
         page.locator('.lv-decision').filter(has_text='已纳入修订').wait_for()
         expect(page.get_by_role('button',name='导出文字修改稿',exact=True)).to_be_disabled()
@@ -158,8 +219,19 @@ try:
         page.get_by_label('我已核对当前完整修改组合、法律适用及剩余风险，确认生成这份修订稿。').check()
         page.get_by_role('button',name='确认当前修订组合',exact=True).click()
         expect(page.get_by_role('button',name='导出文字修改稿',exact=True)).to_be_enabled()
+        export_count = sum(path == '/legal/reviews/r1/export' for _, path in calls)
+        page.get_by_role('button',name='导出文字修改稿',exact=True).click()
+        expect(page.get_by_role('dialog', name='导出前，检查文件中的敏感信息')).to_be_visible()
+        assert sum(path == '/legal/reviews/r1/export' for _, path in calls) == export_count
+        page.keyboard.press('Escape')
+        expect(page.get_by_role('dialog')).to_have_count(0)
+        page.get_by_role('button',name='导出文字修改稿',exact=True).click()
+        with page.expect_download() as revision:
+            page.get_by_role('button',name='确认并导出修订稿',exact=True).click()
+        revision.value.save_as(OUT/'synthetic-revision.txt')
         with page.expect_download() as download:page.get_by_role('button',name='导出审查报告',exact=True).click()
         download.value.save_as(OUT/'synthetic-review.md')
+        page.locator('.lv-conversation').evaluate('(el) => { el.scrollTop = 0; }')
         page.screenshot(path=str(OUT/'legal-v2-review-desktop.png'),full_page=True)
         page.set_viewport_size({'width':390,'height':844})
         page.get_by_role('button',name='关闭原文面板').click()
@@ -196,13 +268,24 @@ try:
         expect(page.locator('.lv-policy-type').filter(has_text='销售方')).to_be_visible()
         page.screenshot(path=str(OUT/'legal-scenario-policy.png'),full_page=True)
         page.get_by_role('button',name='新建审查').click()
+        page.set_viewport_size({'width':390,'height':844})
         page.locator('input[type=file]').set_input_files({'name':'new.txt','mimeType':'text/plain','buffer':'第二份合成合同'.encode()})
+        page.get_by_role('button', name='确认授权并上传', exact=True).click()
         page.get_by_text('交易背景与法律适用',exact=True).click()
         expect(page.get_by_label('合同类型',exact=True)).to_have_value('采购合同')
         expect(page.get_by_label('我方角色')).to_have_value('')
+        expect(page.get_by_label('脱敏合同正文')).to_have_count(0)
         expect(page.get_by_label('履行阶段')).to_have_value('未知')
         expect(page.get_by_label('交易金额',exact=True)).to_have_value('')
         assert not errors,errors
+        assert not AXE_VIOLATIONS, AXE_VIOLATIONS
         browser.close()
     print('PASS: actual built UI with synthetic APIs: Max gate, 20 scenarios, role scopes, frozen settings, policies, decisions, report, mobile.')
+except Exception:
+    try:
+        page.screenshot(path=str(OUT/'failure.png'), full_page=True)
+        (OUT/'failure.html').write_text(page.content(), encoding='utf-8')
+    except Exception:
+        pass
+    raise
 finally:server.shutdown()
