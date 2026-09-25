@@ -1,0 +1,39 @@
+name: Correct scenario start-button validation
+on:
+  push:
+    branches: ['feat/legal-contract-scenarios-20260925']
+    paths: ['.github/workflows/fix-scenario-button.yml']
+permissions:
+  contents: write
+jobs:
+  correct:
+    if: github.ref == 'refs/heads/feat/legal-contract-scenarios-20260925'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply exact UI and regression edits
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, subprocess
+          p=Path('frontend/src/legal/LegalDesk.tsx'); s=p.read_text()
+          assert hashlib.sha256(s.encode()).hexdigest()=='636e7d1d634cb5502102d80e20f74f5d3f9ed2a617a4f9a3e913633f80f779e5'
+          assert s.count('!s.ourRole || !partyValid ||')==1
+          s=s.replace('!s.ourRole || !partyValid ||','!scenarioValid || !partyValid ||')
+          assert hashlib.sha256(s.encode()).hexdigest()=='38ffe3733c631322f7c498bc9ec1a677dfeb40c3858cae131dbf903f03e699c0'
+          q=Path('scripts/legal_ui_smoke.py'); t=q.read_text()
+          assert hashlib.sha256(t.encode()).hexdigest()=='b3266a57c2e7af068decac1ad3e57e625198713d64f304512f74b255548053e8'
+          a="        expect(page.get_by_label('我方角色')).to_have_value('')\n        page.get_by_label('合同类型',exact=True).select_option('销售合同');page.get_by_label('我方角色').select_option('销售方')"
+          b="        expect(page.get_by_label('我方角色')).to_have_value('')\n        consent.check()\n        expect(page.get_by_role('button',name='开始审查',exact=True)).to_be_disabled()\n        page.get_by_label('合同类型',exact=True).select_option('销售合同');page.get_by_label('我方角色').select_option('销售方')"
+          assert t.count(a)==1
+          t=t.replace(a,b)
+          assert hashlib.sha256(t.encode()).hexdigest()=='a4751db02b671dd30b9e06e767047dbff4e5f6866aa93838d5345a3e37fb8b45'
+          p.write_text(s); q.write_text(t)
+          subprocess.run(['git','add','--',str(p),str(q)],check=True)
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(legal): require valid scenario role before starting review'
+          git push origin HEAD:refs/heads/feat/legal-contract-scenarios-20260925
