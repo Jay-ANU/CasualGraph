@@ -59,3 +59,35 @@ edit(p, "        with page.expect_download() as download:page.get_by_role('butto
         with page.expect_download() as download:page.get_by_role('button',name='导出审查报告',exact=True).click()''')
 edit(p, '        assert not errors,errors', "        assert not errors,errors\n        assert not AXE_VIOLATIONS, AXE_VIOLATIONS")
 print('Applied browser-audit corrections and explicit sensitive-export dialog')
+
+p='frontend/src/legal/DeskExperience.tsx'
+edit(p, '  const ref = useRef<HTMLDialogElement>(null);', '  const ref = useRef<HTMLDialogElement>(null);\n  const cancelRef = useRef<HTMLButtonElement>(null);')
+edit(p, '    dialog?.showModal();\n    return () => { dialog?.close(); if (previous?.isConnected) previous.focus(); };', '''    dialog?.showModal();
+    // React autofocus runs while the native dialog is still closed. Focus after showModal.
+    cancelRef.current?.focus();
+    const frame = requestAnimationFrame(() => cancelRef.current?.focus());
+    return () => { cancelAnimationFrame(frame); dialog?.close(); if (previous?.isConnected) previous.focus(); };''')
+edit(p, 'aria-labelledby="lv-dialog-title"\n    onCancel=', '''aria-labelledby="lv-dialog-title"
+    onKeyDown={event => {
+      if (event.key !== 'Tab') return;
+      const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]'));
+      if (!items.length) { event.preventDefault(); return; }
+      const index = items.indexOf(document.activeElement as HTMLElement);
+      if ((event.shiftKey && index <= 0) || (!event.shiftKey && (index === items.length - 1 || index < 0))) {
+        event.preventDefault(); items[event.shiftKey ? items.length - 1 : 0].focus();
+      }
+    }}
+    onCancel=''')
+edit(p, '<button type="button" className="lv-secondary" disabled={busy} onClick={onCancel} autoFocus>', '<button ref={cancelRef} type="button" className="lv-secondary" disabled={busy} onClick={onCancel}>')
+css=Path('frontend/src/legal/LegalDesk.css')
+s=css.read_text()
+for color in ['#65738c','#657590','#657690','#67778e','#68778c','#69748a','#69758b','#6a7587','#6a7890','#6a7d9b','#6b778b','#6b7b96','#6c7688','#6c7d98','#7382a0','#747e8f','#75829a','#788293']:
+    s=s.replace(color, '#586880')
+css.write_text(s)
+p='frontend/src/legal/LegalDesk.tsx'
+edit(p, "format === 'md' ? '合同审查报告' : '合同修订稿（含修订痕迹）'", "format === 'md' ? '合同审查报告' : format === 'docx' ? '合同修订稿（含修订痕迹）' : '合同文字修改稿'")
+edit(p, "'修订稿已导出，请在 Word「审阅」中逐项确认。'", "format === 'docx' ? '修订稿已导出，请在 Word「审阅」中逐项确认。' : '文字修改稿已导出，请对照原合同复核，不包含 Word 修订标记。'")
+p='scripts/legal_ui_smoke.py'
+edit(p, 'from contextlib import contextmanager', 'import traceback\nfrom contextlib import contextmanager')
+edit(p, "            page.screenshot(path=str(OUT/'failure.png'), full_page=True)", "            (OUT/'failure.txt').write_text(traceback.format_exc() + '\\nACTIVE: ' + str(page.evaluate('document.activeElement.outerHTML')), encoding='utf-8')\n            page.screenshot(path=str(OUT/'failure.png'), full_page=True)")
+print('Applied explicit modal focus, keyboard containment and legible muted text')
