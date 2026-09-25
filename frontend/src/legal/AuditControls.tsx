@@ -6,14 +6,16 @@ export function PartyBinding({ blocks, blockId, quote, disabled, onChange }: {
   onChange: (blockId: string, quote: string) => void;
 }) {
   const selected = blocks.find(b => b.id === blockId);
+  const fragments = [...new Set(selected?.text.match(/(?:甲方|乙方|丙方|丁方)[^，。；\n]{0,45}|【[^】]{1,30}】/g) || [])].filter(text => text.length >= 2);
   const valid = quote.trim().length >= 2 && !!selected?.text.includes(quote);
   return <fieldset className="lv-party-binding" disabled={disabled}>
     <legend>我方对应合同中的哪一个主体？</legend>
-    <p className="lv-muted">角色不等于主体。请从脱敏正文选择一段，并逐字填写能识别我方的片段，例如「乙方【脱敏2】」。多方合同不要只填共同角色。</p>
+    <p className="lv-muted">先选择主体所在段落，再选择或填写代表我方的原文片段。下方快捷片段只摘自正文，不是系统对主体的判断；请你核对后选择。</p>
     <label>主体所在段落<select aria-label="我方主体所在段落" value={blockId} onChange={e => onChange(e.target.value, '')}>
       <option value="">选择原文段落</option>{blocks.map(b => <option key={b.id} value={b.id}>{b.id} · {b.text.slice(0, 65)}</option>)}
     </select></label>
     {selected && <blockquote>{selected.text}</blockquote>}
+    {fragments.length > 0 && <div className="lv-party-snippets" role="group" aria-label="从原文选择主体片段">{fragments.map(text => <button key={text} type="button" aria-pressed={quote === text} onClick={() => onChange(blockId, text)}>{text}</button>)}</div>}
     <label>我方主体原文<input aria-label="我方主体原文" maxLength={200} value={quote} onChange={e => onChange(blockId, e.target.value)} placeholder="从所选段落逐字填写" /></label>
     {quote && !valid && <p className="lv-inline-warning">未匹配所选段落，不能使用猜测或其他版本的主体信息。</p>}
   </fieldset>;
