@@ -12,17 +12,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: e2fc028277561b804f139a49a8386646d880a386
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm ci --no-audit --no-fund
-        working-directory: frontend
-      - name: Package public source and isolated frontend dependencies
+      - name: Prepare browser audit tools
+        run: npm install --prefix /tmp/legal-tools --no-audit --no-fund agent-browser @axe-core/playwright
+      - name: Package current public source and browser tools
         run: |
           mkdir -p /tmp/legal-ui-workbench
           git archive --format=tar HEAD | gzip > /tmp/legal-ui-workbench/source.tar.gz
-          tar -czf /tmp/legal-ui-workbench/frontend-dependencies.tar.gz frontend/node_modules
+          tar -czf /tmp/legal-ui-workbench/browser-tools.tar.gz -C /tmp legal-tools
       - uses: actions/upload-artifact@v4
         with:
           name: legal-ui-workbench
