@@ -1,0 +1,25 @@
+name: Compatibility source snapshots
+on:
+  push:
+    branches: ['fix/preserve-pages-word-redlines']
+    paths: ['.github/workflows/compat-source.yml']
+permissions:
+  contents: read
+jobs:
+  snapshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked sources only
+        run: |
+          git archive --format=zip HEAD -o current-source.zip
+          git fetch --depth=1 https://github.com/Jay-ANU/CasualGraph.git d3ea3fb953b618ade9483f84f82b37a21b2c0d8d
+          git archive --format=zip d3ea3fb953b618ade9483f84f82b37a21b2c0d8d frontend app.py recruitment_offers.py -o original-source.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-sources
+          path: '*-source.zip'
+          retention-days: 1
