@@ -1,0 +1,30 @@
+name: Legal UI workbench
+on:
+  push:
+    branches: ['claude/legal-ui-refactor']
+    paths: ['.github/workflows/legal-ui-workbench.yml']
+permissions:
+  contents: read
+jobs:
+  workbench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - name: Package public source and isolated frontend dependencies
+        run: |
+          mkdir -p /tmp/legal-ui-workbench
+          git archive --format=tar HEAD | gzip > /tmp/legal-ui-workbench/source.tar.gz
+          tar -czf /tmp/legal-ui-workbench/frontend-dependencies.tar.gz frontend/node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legal-ui-workbench
+          path: /tmp/legal-ui-workbench/
+          retention-days: 1
