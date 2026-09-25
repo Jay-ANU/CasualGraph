@@ -19,32 +19,15 @@ def _resolve_project_path(value: str) -> Path:
     return (PROJECT_ROOT / candidate).resolve()
 
 
-BASE_MODEL = "Qwen/Qwen2.5-7B-Instruct"
-DEFAULT_ADAPTER_PATH = PROJECT_ROOT / "esg_qlora_adapter"
-BASE_MODEL_PATH = os.getenv("ESG_BASE_MODEL_PATH", BASE_MODEL)
-HF_LOCAL_FILES_ONLY = os.getenv("HF_LOCAL_FILES_ONLY", "False").lower() == "true"
-MODEL_ALLOW_DOWNLOAD = os.getenv("ESG_MODEL_ALLOW_DOWNLOAD", "False").lower() == "true"
-
 DATA_DIR = _resolve_project_path(os.getenv("DATA_DIR", "data"))
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 CHUNK_DIR = DATA_DIR / "chunks"
-EXTRACTION_DIR = DATA_DIR / "extractions"
 GRAPH_DIR = DATA_DIR / "graph"
 VECTOR_DIR = DATA_DIR / "vector_store"
 
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1500"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
-EXTRACTION_CACHE_ENABLED = os.getenv("EXTRACTION_CACHE_ENABLED", "True").lower() == "true"
-EXTRACTION_CACHE_PATH = Path(os.getenv("EXTRACTION_CACHE_PATH", "./data/extraction_cache.sqlite"))
-
-
-def _default_extraction_workers() -> str:
-    extraction_backend = os.getenv("ESG_EXTRACTION_BACKEND", "remote").strip().lower()
-    return "4" if extraction_backend == "remote" else "1"
-
-
-EXTRACTION_MAX_WORKERS = max(1, int(os.getenv("EXTRACTION_MAX_WORKERS", _default_extraction_workers())))
 INGESTION_JOB_MAX_WORKERS = max(1, int(os.getenv("INGESTION_JOB_MAX_WORKERS", "4")))
 INGESTION_MAX_QUEUED_JOBS = max(1, int(os.getenv("INGESTION_MAX_QUEUED_JOBS", "16")))
 INGESTION_AUDIT_THROTTLE_SECONDS = max(0.0, float(os.getenv("INGESTION_AUDIT_THROTTLE_SECONDS", "2.0")))
@@ -79,47 +62,6 @@ ACTIVE_VECTOR_STORE_FILE = VECTOR_DIR / "active_store_path.txt"
 
 DOCUMENT_REGISTRY_FILE = DATA_DIR / "documents" / "registry.json"
 DOCUMENT_DEDUP_ENABLED = os.getenv("DOCUMENT_DEDUP_ENABLED", "true").lower() == "true"
-
-
-def resolve_adapter_path() -> Path:
-    """Resolve the best available local adapter directory.
-
-    Resolution order:
-    1. `ESG_ADAPTER_PATH` env var, if valid
-    2. `./esg_qlora_adapter`
-    3. `./qlora_model/esg-qwen2.5-7b-qlora`
-    4. latest checkpoint under `./qlora_model/esg-qwen2.5-7b-qlora/checkpoint-*`
-    """
-    env_path = os.getenv("ESG_ADAPTER_PATH")
-    candidates = []
-    if env_path:
-        candidates.append(_resolve_project_path(env_path))
-
-    primary_adapter = DEFAULT_ADAPTER_PATH
-    qlora_root = PROJECT_ROOT / "qlora_model" / "esg-qwen2.5-7b-qlora"
-
-    candidates.extend([primary_adapter, qlora_root])
-
-    if qlora_root.exists():
-        checkpoints = sorted(
-            [path for path in qlora_root.glob("checkpoint-*") if path.is_dir()],
-            key=lambda item: item.name,
-            reverse=True,
-        )
-        candidates.extend(checkpoints)
-
-    for candidate in candidates:
-        if _is_valid_adapter_dir(candidate):
-            return candidate
-
-    return primary_adapter
-
-
-def _is_valid_adapter_dir(path: Path) -> bool:
-    return path.exists() and (path / "adapter_config.json").exists() and (path / "adapter_model.safetensors").exists()
-
-
-ADAPTER_PATH = str(resolve_adapter_path())
 
 
 def resolve_embedding_model_path() -> str:
@@ -171,12 +113,6 @@ RAG_ANSWER_MODE = os.getenv("RAG_ANSWER_MODE", LLM_PROVIDER).strip().lower()
 if LLM_PROVIDER == "deepseek" and RAG_ANSWER_MODE in {"auto", "openai"}:
     RAG_ANSWER_MODE = "deepseek"
 
-# V4 Pro is text-only. Vision has an independent opt-in transport; no hidden
-# switch to another model and no sharing a key with an unrelated provider.
-VISION_API_KEY = os.getenv("VISION_API_KEY", "").strip()
-VISION_BASE_URL = os.getenv("VISION_BASE_URL", "").strip()
-VISION_MODEL = os.getenv("VISION_MODEL", "").strip()
-
 RAG_ALLOW_SPECULATION = os.getenv("RAG_ALLOW_SPECULATION", "False").lower() == "true"
 RAG_USE_GRAPH_CONTEXT = os.getenv("RAG_USE_GRAPH_CONTEXT", "True").lower() == "true"
 RAG_GRAPH_CONTEXT_HOPS = int(os.getenv("RAG_GRAPH_CONTEXT_HOPS", "2"))
@@ -184,10 +120,6 @@ RAG_GRAPH_CONTEXT_LIMIT = int(os.getenv("RAG_GRAPH_CONTEXT_LIMIT", "10"))
 RAG_GRAPH_CONTEXT_MAX_TRIPLES = int(os.getenv("RAG_GRAPH_CONTEXT_MAX_TRIPLES", "25"))
 RAG_GRAPH_CONTEXT_MIN_SOURCES = max(0, int(os.getenv("RAG_GRAPH_CONTEXT_MIN_SOURCES", "0")))
 RAG_MIN_SOURCE_RELEVANCE = max(0.0, min(1.0, float(os.getenv("RAG_MIN_SOURCE_RELEVANCE", "0.35"))))
-RAG_PREDICTION_ENABLED = os.getenv("RAG_PREDICTION_ENABLED", "True").lower() == "true"
-RAG_PREDICTION_MODEL = chat_model_override("RAG_PREDICTION_MODEL", OPENAI_MODEL)
-RAG_PREDICTION_MAX_TOKENS = int(os.getenv("RAG_PREDICTION_MAX_TOKENS", "1500"))
-RAG_PREDICTION_TEMPERATURE = float(os.getenv("RAG_PREDICTION_TEMPERATURE", "0.2"))
 RAG_MULTI_QUERY_ENABLED = os.getenv("RAG_MULTI_QUERY_ENABLED", "false").lower() == "true"
 RAG_MULTI_QUERY_N = max(1, int(os.getenv("RAG_MULTI_QUERY_N", "3")))
 RAG_HYBRID_ENABLED = os.getenv("RAG_HYBRID_ENABLED", "false").lower() == "true"
@@ -214,7 +146,7 @@ RAG_CHITCHAT_ENABLED = os.getenv("RAG_CHITCHAT_ENABLED", "true").lower() == "tru
 RAG_ANSWER_INTENT_ROUTER_ENABLED = os.getenv("RAG_ANSWER_INTENT_ROUTER_ENABLED", "true").lower() == "true"
 
 NOTIFICATIONS_ENABLED = os.getenv("NOTIFICATIONS_ENABLED", "false").lower() == "true"
-NOTIFICATIONS_DB_PATH = os.getenv("NOTIFICATIONS_DB_PATH", "backend/notifications.db")
+NOTIFICATIONS_DB_PATH = os.getenv("NOTIFICATIONS_DB_PATH", "").strip() or str(DATA_DIR / "notifications.db")
 NOTIFICATIONS_DEDUP_WINDOW_MINUTES = int(os.getenv("NOTIFICATIONS_DEDUP_WINDOW_MINUTES", "60"))
 NOTIFICATIONS_DAILY_EMAIL_CAP = int(os.getenv("NOTIFICATIONS_DAILY_EMAIL_CAP", "8"))
 NOTIFICATIONS_SMTP_URL = os.getenv("NOTIFICATIONS_SMTP_URL")
@@ -233,14 +165,6 @@ REDIS_CHAT_SESSION_TTL_SECONDS = max(3600, int(os.getenv("REDIS_CHAT_SESSION_TTL
 REDIS_CHAT_MAX_MESSAGES = max(6, int(os.getenv("REDIS_CHAT_MAX_MESSAGES", "20")))
 REDIS_CHAT_HISTORY_LIMIT = max(4, int(os.getenv("REDIS_CHAT_HISTORY_LIMIT", "8")))
 
-TRACE_ENABLED = os.getenv("TRACE_ENABLED", "false").lower() == "true"
-TRACE_PATH = Path(os.getenv("TRACE_PATH", "./data/traces.jsonl"))
-
-ESG_METRICS_EXTRACTION_ENABLED = os.getenv("ESG_METRICS_EXTRACTION_ENABLED", "false").lower() == "true"
-ESG_METRICS_DB_PATH = Path(os.getenv("ESG_METRICS_DB_PATH", "./data/esg_metrics.sqlite"))
-ESG_METRICS_TAXONOMY_PATH = Path(os.getenv("ESG_METRICS_TAXONOMY_PATH", "./data/taxonomy/esg_metrics.yaml"))
-ESG_METRICS_MIN_CONFIDENCE = max(0.0, min(1.0, float(os.getenv("ESG_METRICS_MIN_CONFIDENCE", "0.5"))))
-
 
 def openai_configured() -> bool:
     """Return whether the selected chat transport has credentials."""
@@ -251,8 +175,6 @@ def openai_configured() -> bool:
 # Fast / Deep share DeepSeek V4 Pro by default; Deep enables reasoning.
 # Legacy Anthropic code is retained only for explicit LLM_PROVIDER=openai rollback.
 # -----------------------------------------------------------------------------
-RAG_FLASH_MODEL = chat_model_override("RAG_FLASH_MODEL", OPENAI_MODEL)
-
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "").strip()
 RAG_DEEP_MODEL = chat_model_override("RAG_DEEP_MODEL", DEEPSEEK_MODEL if LLM_PROVIDER == "deepseek" else "claude-opus-4-7")
@@ -269,8 +191,6 @@ def anthropic_configured() -> bool:
     return bool(ANTHROPIC_API_KEY)
 
 
-DEEPSEEK_EXTRACTION_MODEL = os.getenv("DEEPSEEK_EXTRACTION_MODEL", DEEPSEEK_MODEL).strip()
-DEEPSEEK_EXTRACTION_MAX_TOKENS = int(os.getenv("DEEPSEEK_EXTRACTION_MAX_TOKENS", "8000"))
 DEEPSEEK_CACHE_ENABLED = os.getenv("DEEPSEEK_CACHE_ENABLED", "true").lower() == "true"
 DEEPSEEK_CACHE_TTL_SECONDS = max(1, int(os.getenv("DEEPSEEK_CACHE_TTL_SECONDS", "1800")))
 DEEPSEEK_FAILURE_CACHE_TTL_SECONDS = max(1, int(os.getenv("DEEPSEEK_FAILURE_CACHE_TTL_SECONDS", "60")))
@@ -286,13 +206,37 @@ RAG_HYBRID_AGENT_ROUTER_MAX_TOKENS = int(os.getenv("RAG_HYBRID_AGENT_ROUTER_MAX_
 RAG_ROUTER_MODEL = os.getenv("RAG_ROUTER_MODEL", DEEPSEEK_MODEL).strip()
 RAG_ROUTER_TIMEOUT = float(os.getenv("RAG_ROUTER_TIMEOUT", "2"))
 RAG_ROUTER_MAX_TOKENS = int(os.getenv("RAG_ROUTER_MAX_TOKENS", "160"))
-ESG_EXTRACTION_BACKEND = os.getenv("ESG_EXTRACTION_BACKEND", "remote").strip().lower()
-INGESTION_ENABLED = os.getenv("INGESTION_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def deepseek_configured() -> bool:
     """Return whether the root pipeline has a DeepSeek extraction backend configured."""
     return bool(DEEPSEEK_API_KEY and DEEPSEEK_BASE_URL and DEEPSEEK_MODEL)
+
+
+# --- Phase 1: document model directories --------------------------------------------------
+PARSED_DIR = DATA_DIR / "parsed"  # ParsedDocument JSON: <id>.original.json.enc (encrypted), <id>.redacted.json
+CLAUSES_DIR = DATA_DIR / "clauses"  # ClauseTree JSON per document
+REDACTION_DIR = DATA_DIR / "redaction"  # <id>.review.json.enc, <id>.mapping.json.enc (both encrypted)
+
+# --- Phase 1: de-identification ------------------------------------------------------------
+# Fernet key for everything at rest that still contains original client text.
+# Development falls back to a generated key at DATA_DIR/.redaction_key; production requires it.
+REDACTION_KEY = os.getenv("REDACTION_KEY", "").strip()
+# False (current default): detections are auto-accepted and the document is finalised without a
+# human step, so the existing UI keeps working. Flip to true once the redaction preview UI ships.
+REDACTION_REQUIRE_CONFIRMATION = os.getenv("REDACTION_REQUIRE_CONFIRMATION", "false").strip().lower() in {"1", "true", "yes", "on"}
+REDACTION_DEFAULT_CATEGORIES = [
+    item.strip()
+    for item in os.getenv(
+        "REDACTION_DEFAULT_CATEGORIES",
+        "org,person,id_number,uscc,phone,email,address,bank_account,passport",
+    ).split(",")
+    if item.strip()
+]
+
+# --- Phase 1: multi-document index -----------------------------------------------------------
+VECTOR_SHARD_CACHE_SIZE = int(os.getenv("VECTOR_SHARD_CACHE_SIZE", "32"))  # per-document shards kept in memory
+BM25_MERGE_MAX_CHUNKS = int(os.getenv("BM25_MERGE_MAX_CHUNKS", "50000"))  # cap for on-demand merged BM25 corpora
 
 
 def ensure_directories() -> None:
@@ -302,9 +246,11 @@ def ensure_directories() -> None:
         RAW_DIR,
         PROCESSED_DIR,
         CHUNK_DIR,
-        EXTRACTION_DIR,
         GRAPH_DIR,
         VECTOR_DIR,
+        PARSED_DIR,
+        CLAUSES_DIR,
+        REDACTION_DIR,
         DOCUMENT_REGISTRY_FILE.parent,
     ):
         directory.mkdir(parents=True, exist_ok=True)

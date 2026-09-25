@@ -18,12 +18,9 @@ __pycache__/
 
 frontend/node_modules/
 frontend/build/
+frontend/dist/
 frontend/.cache/
 frontend/node_modules/.cache/
-
-desktop/node_modules/
-desktop/dist/
-desktop/out/
 
 node_modules/
 tmp/

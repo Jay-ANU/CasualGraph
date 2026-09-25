@@ -1,11 +1,13 @@
 {
+  "framework": "vite",
   "installCommand": "npm --prefix frontend ci",
-  "buildCommand": "npm --prefix frontend run build",
-  "outputDirectory": "frontend/build",
+  "buildCommand": "node --test scripts/verify_legal_release.test.mjs && node scripts/verify_legal_release.mjs && npm --prefix frontend run build",
+  "outputDirectory": "frontend/dist",
   "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "source": "/api/:path*", "destination": "https://casualgraph.fly.dev/:path*" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    { "source": "/api/:path*", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
   ]
 }

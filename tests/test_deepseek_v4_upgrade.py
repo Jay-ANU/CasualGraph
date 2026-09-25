@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def configured_settings(tmp_path, **overrides):
     env = dict(os.environ)
     for name in list(env):
-        if name.startswith(('LLM_', 'OPENAI_', 'ANTHROPIC_', 'DEEPSEEK_', 'RAG_', 'VISION_', 'HYDE_', 'CHAT_')):
+        if name.startswith(('LLM_', 'OPENAI_', 'ANTHROPIC_', 'DEEPSEEK_', 'RAG_', 'HYDE_', 'CHAT_')):
             env.pop(name)
     env.update(DATA_DIR=str(tmp_path), **overrides)
     output = subprocess.check_output([sys.executable, '-c', '''
@@ -30,7 +30,7 @@ print(json.dumps({
     "provider": s.LLM_PROVIDER, "key": s.OPENAI_API_KEY,
     "base": s.OPENAI_BASE_URL, "model": s.OPENAI_MODEL,
     "deep_model": s.RAG_DEEP_MODEL, "mode": s.RAG_ANSWER_MODE,
-    "hyde": s.HYDE_MODEL, "prediction": s.RAG_PREDICTION_MODEL,
+    "hyde": s.HYDE_MODEL,
     "configured": s.openai_configured(), "deep_budget": s.RAG_DEEP_MAX_TOKENS,
 }))
 '''], cwd=ROOT, env=env, text=True)
@@ -41,11 +41,11 @@ def test_default_migration_ignores_old_provider_keys_and_model_names(tmp_path):
     data = configured_settings(tmp_path, DEEPSEEK_API_KEY='unit-deepseek', OPENAI_API_KEY='unit-old',
                                ANTHROPIC_API_KEY='unit-claude', OPENAI_MODEL='gpt-old',
                                RAG_DEEP_MODEL='claude-old', HYDE_MODEL='gpt-old',
-                               RAG_PREDICTION_MODEL='gpt-old', RAG_ANSWER_MODE='openai')
+                               RAG_ANSWER_MODE='openai')
     assert data['provider'] == 'deepseek'
     assert data['key'] == 'unit-deepseek'
     assert data['base'] == 'https://api.deepseek.com'
-    assert {data[k] for k in ['model', 'deep_model', 'hyde', 'prediction']} == {'deepseek-v4-pro'}
+    assert {data[k] for k in ['model', 'deep_model', 'hyde']} == {'deepseek-v4-pro'}
     assert data['mode'] == 'deepseek'
     assert data['deep_budget'] == 16384
 
@@ -168,14 +168,7 @@ def test_status_exposes_configuration_not_credentials_or_connectivity(monkeypatc
     assert 'unit-secret-not-public' not in serialized
     assert 'api_key' not in serialized.lower()
     assert 'base_url' not in serialized.lower()
-
-
-def test_vision_requires_independent_explicit_configuration(monkeypatch):
-    from rag.openai_client import get_vision_client
-    monkeypatch.setattr(settings, 'VISION_API_KEY', '')
-    monkeypatch.setattr(settings, 'VISION_BASE_URL', '')
-    monkeypatch.setattr(settings, 'VISION_MODEL', '')
-    assert get_vision_client() is None
+    assert 'vision' not in status and 'extraction' not in status
 
 
 def test_blank_deepseek_endpoint_cannot_send_its_key_to_openai(tmp_path):

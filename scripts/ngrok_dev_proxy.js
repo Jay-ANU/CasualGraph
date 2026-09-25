@@ -7,13 +7,8 @@ const PORT = Number(process.env.NGROK_PROXY_PORT || 3001);
 const BACKEND_PREFIXES = [
   '/auth',
   '/documents',
-  '/extract',
   '/graph',
   '/health',
-  '/kg-api',
-  '/kg-static',
-  '/kg-view',
-  '/pipeline',
   '/rag',
 ];
 

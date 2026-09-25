@@ -199,13 +199,11 @@ def _remove_locked(data: Dict[str, Any], document_id: Optional[str]) -> bool:
 
 
 def _verify_paths(entry: Dict[str, Any]) -> bool:
+    # Ingestion no longer writes a graph JSON; older entries may still list one, which is ignored.
     paths = entry.get("paths") or {}
     chunks_path = Path(str(paths.get("chunks") or ""))
-    graph_path = Path(str(paths.get("graph") or ""))
     vector_dir = Path(str(paths.get("vector_store") or ""))
     if not chunks_path.is_file():
-        return False
-    if not graph_path.is_file():
         return False
     if not vector_dir.is_dir():
         return False

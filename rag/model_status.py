@@ -14,6 +14,4 @@ def get_model_status() -> dict:
             "flash": {"model": settings.OPENAI_MODEL, "configured": configured, "thinking": False},
             "deep": {"model": settings.RAG_DEEP_MODEL, "configured": deep_configured, "thinking": settings.LLM_PROVIDER == "deepseek"},
         },
-        "extraction": {"model": settings.DEEPSEEK_EXTRACTION_MODEL, "configured": settings.deepseek_configured()},
-        "vision": {"model": settings.VISION_MODEL or None, "configured": bool(settings.VISION_API_KEY and settings.VISION_BASE_URL and settings.VISION_MODEL)},
     }

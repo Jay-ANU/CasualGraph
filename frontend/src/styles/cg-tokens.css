@@ -2,9 +2,8 @@
    CausalGraph design tokens.
 
    Warm paper, graphite ink, hairline rules. The interface itself stays
-   monochrome; colour is reserved for data (ESG domains in the graph) and
-   for status. Tailwind reads the same values from tailwind.config.js —
-   keep the two in sync.
+   monochrome; colour is reserved for status. Tailwind reads the same
+   values from tailwind.config.js — keep the two in sync.
    ========================================================================= */
 
 :root {
@@ -41,13 +40,6 @@
   --cg-info:           #2F5AA8;
   --cg-info-bg:        #EAF0FA;
   --cg-info-line:      #C9D7F0;
-
-  /* Data: ESG domains ------------------------------------------------- */
-  --cg-domain-e:       #2F7D5B;
-  --cg-domain-s:       #3D64C4;
-  --cg-domain-g:       #B07A1E;
-  --cg-domain-ai:      #7B5BC0;
-  --cg-domain-general: #6F6B63;
 
   /* Shape ------------------------------------------------------------- */
   --cg-radius-sm:      6px;

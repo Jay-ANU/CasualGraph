@@ -1,7 +1,7 @@
-import app
 import json
 
 from rag import retriever
+from services import document_access, rag_context
 
 
 def _user(user_id: str = "user_1"):
@@ -60,26 +60,26 @@ def _global_entry(document_id: str = "costco_sustainability_report_2025"):
 def test_legacy_ownerless_user_upload_is_retrievable_for_logged_in_users():
     entry = _legacy_aa_entry()
 
-    assert app._can_retrieve_entry(_user(), entry)
+    assert document_access._can_retrieve_entry(_user(), entry)
 
 
-def test_exact_document_scope_does_not_require_vector_owner_metadata(monkeypatch):
+def test_exact_document_scope_still_carries_the_owner_filter(monkeypatch):
     entry = _legacy_aa_entry()
-    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: [entry])
+    monkeypatch.setattr(rag_context, "_retrievable_registry_entries", lambda current_user, include_invalid=False: [entry])
     monkeypatch.setattr(
-        app,
+        rag_context,
         "_resolve_document_ids_with_deepseek",
         lambda question, candidates, query_terms: ["aa_sustainability_report_2022_20260501043104"],
     )
 
-    context = app._resolve_rag_request_context(
-        app.RagAskRequest(question="Hi, What should I notice about American Flight?"),
+    context = rag_context._resolve_rag_request_context(
+        rag_context.RagAskRequest(question="Hi, What should I notice about American Flight?"),
         _user(),
     )
 
     assert context["error_response"] is None
     assert context["filters"]["document_ids"] == ["aa_sustainability_report_2022_20260501043104"]
-    assert "owner_user_id" not in context["filters"]
+    assert context["filters"]["owner_user_id"] == "user_1"
 
 
 def test_duplicate_entity_candidates_do_not_fall_back_to_unrelated_global_documents(monkeypatch):
@@ -91,11 +91,11 @@ def test_duplicate_entity_candidates_do_not_fall_back_to_unrelated_global_docume
         _legacy_nvidia_entry("20260501022523"),
     ]
     entries = [*nvidia_entries, _global_entry()]
-    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
-    monkeypatch.setattr(app, "_resolve_document_ids_with_deepseek", lambda question, candidates, query_terms: [])
+    monkeypatch.setattr(rag_context, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
+    monkeypatch.setattr(rag_context, "_resolve_document_ids_with_deepseek", lambda question, candidates, query_terms: [])
 
-    context = app._resolve_rag_request_context(
-        app.RagAskRequest(question="What is NVIDIA ESG strategy?"),
+    context = rag_context._resolve_rag_request_context(
+        rag_context.RagAskRequest(question="What is NVIDIA ESG strategy?"),
         _user(),
     )
 
@@ -107,11 +107,11 @@ def test_duplicate_entity_candidates_do_not_fall_back_to_unrelated_global_docume
 
 def test_multi_entity_comparison_resolves_each_target_document(monkeypatch):
     entries = [_legacy_aa_entry(), _apple_entry()]
-    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
-    monkeypatch.setattr(app, "_resolve_document_ids_with_deepseek", lambda question, candidates, query_terms: [])
+    monkeypatch.setattr(rag_context, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
+    monkeypatch.setattr(rag_context, "_resolve_document_ids_with_deepseek", lambda question, candidates, query_terms: [])
 
-    context = app._resolve_rag_request_context(
-        app.RagAskRequest(
+    context = rag_context._resolve_rag_request_context(
+        rag_context.RagAskRequest(
             question="Across between American Airlines and Apple, what would be the main difference in carbon emission and why is that?"
         ),
         _user(),
@@ -127,11 +127,11 @@ def test_multi_entity_comparison_resolves_each_target_document(monkeypatch):
 
 def test_multi_entity_comparison_context_forces_agent_route(monkeypatch):
     entries = [_legacy_aa_entry(), _apple_entry()]
-    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
-    monkeypatch.setattr(app, "_resolve_document_ids_with_deepseek", lambda question, candidates, query_terms: [])
+    monkeypatch.setattr(rag_context, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
+    monkeypatch.setattr(rag_context, "_resolve_document_ids_with_deepseek", lambda question, candidates, query_terms: [])
 
-    context = app._resolve_rag_request_context(
-        app.RagAskRequest(
+    context = rag_context._resolve_rag_request_context(
+        rag_context.RagAskRequest(
             question="Across between American Airlines and Apple, what would be the main difference in carbon emission and why is that?"
         ),
         _user(),
@@ -147,7 +147,7 @@ def test_multi_entity_comparison_context_forces_agent_route(monkeypatch):
 
 
 def test_positive_candidate_fallback_prefers_document_identity_matches():
-    ids = app._positive_document_ids_from_candidates(
+    ids = rag_context._positive_document_ids_from_candidates(
         [
             {"document_id": "nvidia_report", "score": 5.0, "identity_score": 5.0},
             {"document_id": "smoke_graph_only", "score": 5.0, "identity_score": 0.0},
@@ -158,7 +158,7 @@ def test_positive_candidate_fallback_prefers_document_identity_matches():
 
 
 def test_short_acronym_terms_do_not_fuzzy_match_unrelated_words():
-    score, matched = app._document_scope_score(["aa"], {"are", "annual", "analysis"})
+    score, matched = rag_context._document_scope_score(["aa"], {"are", "annual", "analysis"})
 
     assert score == 0.0
     assert matched == []
@@ -166,15 +166,15 @@ def test_short_acronym_terms_do_not_fuzzy_match_unrelated_words():
 
 def test_general_answer_context_preserves_document_scope_for_entity_mentions(monkeypatch):
     entry = _legacy_aa_entry()
-    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: [entry])
+    monkeypatch.setattr(rag_context, "_retrievable_registry_entries", lambda current_user, include_invalid=False: [entry])
     monkeypatch.setattr(
-        app,
+        rag_context,
         "_scope_document_ids_for_query",
         lambda question, entries: (["aa_sustainability_report_2022_20260501043104"], ["american flight"]),
     )
 
-    context = app._resolve_general_rag_request_context(
-        app.RagAskRequest(question="Hi, What should I notice about American Flight?"),
+    context = rag_context._resolve_general_rag_request_context(
+        rag_context.RagAskRequest(question="Hi, What should I notice about American Flight?"),
         _user(),
         [],
         "disabled",
@@ -182,7 +182,7 @@ def test_general_answer_context_preserves_document_scope_for_entity_mentions(mon
 
     assert context["error_response"] is None
     assert context["filters"]["document_ids"] == ["aa_sustainability_report_2022_20260501043104"]
-    assert "owner_user_id" not in context["filters"]
+    assert context["filters"]["owner_user_id"] == "user_1"
     assert context["filters"]["answer_mode"] == "general"
     assert context["filters"]["document_scope_source"] == "entity_resolver"
 
@@ -194,9 +194,9 @@ def test_requested_multi_document_scope_narrows_to_resolved_entity_document(monk
     entries = [aa_entry, apple_entry, global_entry]
     aa_doc_id = aa_entry["document_id"]
 
-    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
+    monkeypatch.setattr(rag_context, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
     monkeypatch.setattr(
-        app,
+        rag_context,
         "_build_request_routing_hint",
         lambda question, entries: {
             "mode": "evidence",
@@ -209,13 +209,13 @@ def test_requested_multi_document_scope_narrows_to_resolved_entity_document(monk
         },
     )
     monkeypatch.setattr(
-        app,
+        rag_context,
         "_scope_document_ids_for_query",
         lambda question, entries: ([aa_doc_id], ["american flight"]),
     )
 
-    context = app._resolve_rag_request_context(
-        app.RagAskRequest(
+    context = rag_context._resolve_rag_request_context(
+        rag_context.RagAskRequest(
             question="Hi, What should I notice about American Flight?",
             document_ids=[aa_doc_id, apple_entry["document_id"], global_entry["document_id"]],
         ),
@@ -235,9 +235,9 @@ def test_general_requested_multi_document_scope_narrows_to_resolved_entity_docum
     entries = [aa_entry, apple_entry, global_entry]
     aa_doc_id = aa_entry["document_id"]
 
-    monkeypatch.setattr(app, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
+    monkeypatch.setattr(rag_context, "_retrievable_registry_entries", lambda current_user, include_invalid=False: entries)
     monkeypatch.setattr(
-        app,
+        rag_context,
         "_build_request_routing_hint",
         lambda question, entries: {
             "mode": "general",
@@ -250,13 +250,13 @@ def test_general_requested_multi_document_scope_narrows_to_resolved_entity_docum
         },
     )
     monkeypatch.setattr(
-        app,
+        rag_context,
         "_scope_document_ids_for_query",
         lambda question, entries: ([aa_doc_id], ["american flight"]),
     )
 
-    context = app._resolve_general_rag_request_context(
-        app.RagAskRequest(
+    context = rag_context._resolve_general_rag_request_context(
+        rag_context.RagAskRequest(
             question="Hi, What should I notice about American Flight?",
             document_ids=[aa_doc_id, apple_entry["document_id"], global_entry["document_id"]],
         ),
@@ -282,20 +282,20 @@ def test_document_scope_uses_generic_llm_resolver_when_lexical_match_is_missing(
         "paths": {"graph": ""},
     }
     monkeypatch.setattr(
-        app,
+        rag_context,
         "_resolve_document_ids_with_deepseek",
         lambda question, candidates, query_terms: ["doc_123"],
         raising=False,
     )
 
-    ids, terms = app._scope_document_ids_for_query("What should I notice about Zenith Mobility?", [entry])
+    ids, terms = rag_context._scope_document_ids_for_query("What should I notice about Zenith Mobility?", [entry])
 
     assert ids == ["doc_123"]
     assert "zenith mobility" in terms
 
 
 def test_company_specific_aliases_are_not_primary_document_resolution():
-    assert "american flight" not in app._ENTITY_ALIAS_MAP
+    assert "american flight" not in rag_context._ENTITY_ALIAS_MAP
 
 
 def test_fuzzy_single_token_mentions_enter_document_resolver_candidates():
@@ -308,9 +308,9 @@ def test_fuzzy_single_token_mentions_enter_document_resolver_candidates():
         "visibility_scope": "private",
         "paths": {"graph": ""},
     }
-    query_terms = app._extract_query_entity_terms("What should I notice about Coke?")
+    query_terms = rag_context._extract_query_entity_terms("What should I notice about Coke?")
 
-    candidates = app._document_scope_candidates(query_terms, [entry], include_zero=False)
+    candidates = rag_context._document_scope_candidates(query_terms, [entry], include_zero=False)
 
     assert candidates
     assert candidates[0]["document_id"] == "coca_cola_sustainability_update"

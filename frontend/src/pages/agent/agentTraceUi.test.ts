@@ -8,7 +8,7 @@ import {
 
 describe('agent trace UI labels', () => {
   it('hides backend tool names behind user-facing action labels', () => {
-    expect(formatAgentStageLabel({ step: 1, stage: 'searching_reports', tool: 'search_documents', status: 'running', summary: '' })).toBe('Searching reports');
+    expect(formatAgentStageLabel({ step: 1, stage: 'searching_reports', tool: 'search_documents', status: 'running', summary: '' })).toBe('Searching documents');
     expect(formatAgentStageLabel({ step: 2, stage: 'querying_graph', tool: 'query_neo4j', status: 'completed', summary: '' })).toBe('Reading graph context');
     expect(formatAgentStageLabel({ step: 3, stage: 'synthesizing', tool: 'summarize_evidence', status: 'completed', summary: '' })).toBe('Drafting grounded answer');
   });
@@ -19,7 +19,7 @@ describe('agent trace UI labels', () => {
     expect(formatAgentStageLabel({ step: 3, stage: 'planning', phase: 'plan', status: 'planned', summary: '' })).toBe('Build evidence plan');
     expect(formatAgentStageLabel({ step: 4, stage: 'planning', phase: 'thought', status: 'completed', summary: '' })).toBe('Choose next evidence step');
     expect(formatAgentStageLabel({ step: 5, stage: 'planning', phase: 'reflexion', status: 'completed', summary: '' })).toBe('Check evidence coverage');
-    expect(formatAgentStageLabel({ step: 4, stage: 'planning', phase: 'action', tool: 'search_documents', status: 'completed', summary: '' })).toBe('Searching reports');
+    expect(formatAgentStageLabel({ step: 4, stage: 'planning', phase: 'action', tool: 'search_documents', status: 'completed', summary: '' })).toBe('Searching documents');
   });
 
   it('sanitizes trace summaries that mention backend function names', () => {
@@ -29,7 +29,7 @@ describe('agent trace UI labels', () => {
       tool: 'search_documents',
       status: 'running',
       summary: 'Running search_documents.',
-    })).toBe('Checking the most relevant report sections.');
+    })).toBe('Checking the most relevant passages.');
 
     expect(formatAgentTraceSummary({
       step: 2,
@@ -45,7 +45,7 @@ describe('agent trace UI labels', () => {
       tool: 'search_documents',
       status: 'running',
       summary: 'Action: search_documents for Apple.',
-    })).toBe('Searching report evidence for Apple.');
+    })).toBe('Searching the documents for Apple.');
 
     expect(formatAgentTraceSummary({
       step: 4,

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from configs.settings import (
+    DATA_DIR,
     NOTIFICATIONS_DB_PATH,
     NOTIFICATIONS_DEDUP_WINDOW_MINUTES,
     PROJECT_ROOT,
@@ -263,7 +264,7 @@ def _default_db_path() -> Path:
 
 
 def _resolve_db_path(db_path: str) -> Path:
-    path = Path(str(db_path or "backend/notifications.db")).expanduser()
+    path = Path(str(db_path or (DATA_DIR / "notifications.db"))).expanduser()
     if path.is_absolute():
         return path
     return (PROJECT_ROOT / path).resolve()

@@ -478,3 +478,54 @@ def _apply_local_filters(rows: List[Dict], filters: Optional[Dict]) -> List[Dict
             continue
         filtered.append(row)
     return filtered
+
+
+def remove_document(document_id: str, persist_path: str) -> None:
+    """Delete a document's local shard and keep the active-store marker consistent.
+
+    Phase 1 (WP1-D) replaces the single active store with a multi-document catalog; this
+    function is the stable entry point the ingestion code calls, whatever the layout is.
+    """
+    import shutil
+
+    from configs.settings import ACTIVE_VECTOR_STORE_FILE, PINECONE_NAMESPACE, VECTOR_DIR, VECTOR_STORE_PROVIDER
+
+    global _LOADED_STORE, _LOADED_STORE_KEY
+    deleted_path = Path(persist_path)
+    if deleted_path.exists():
+        shutil.rmtree(deleted_path, ignore_errors=True)
+    try:
+        if not ACTIVE_VECTOR_STORE_FILE.exists():
+            return
+        raw = ACTIVE_VECTOR_STORE_FILE.read_text(encoding="utf-8").strip()
+        manifest = json.loads(raw) if raw.startswith("{") else {"location": raw}
+        active_location = Path(str(manifest.get("location") or "")).resolve()
+        if active_location != deleted_path.resolve():
+            return
+        candidates = [
+            path
+            for path in VECTOR_DIR.iterdir()
+            if path.is_dir() and path.resolve() != deleted_path.resolve() and (path / "metadata.json").exists()
+        ]
+        candidates.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+        if candidates:
+            replacement = candidates[0].resolve()
+            ACTIVE_VECTOR_STORE_FILE.write_text(
+                json.dumps(
+                    {
+                        "provider": VECTOR_STORE_PROVIDER.strip().lower() or "local",
+                        "location": str(replacement),
+                        "namespace": PINECONE_NAMESPACE,
+                        "document_id": replacement.name,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        else:
+            ACTIVE_VECTOR_STORE_FILE.unlink(missing_ok=True)
+    except Exception as exc:  # pragma: no cover - best effort cleanup
+        print(f"[vector_store] active store repair failed: {type(exc).__name__}: {exc}")
+    finally:
+        _LOADED_STORE = None
+        _LOADED_STORE_KEY = None

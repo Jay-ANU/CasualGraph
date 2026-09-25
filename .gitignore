@@ -20,7 +20,6 @@ neo4j_logs/
 
 # Local database files
 auth.db
-backend/*.db
 *.sqlite
 *.sqlite3
 *.db-journal
@@ -36,11 +35,6 @@ backend/*.db
 .claude/
 .superpowers/
 
-# Local ESG QLoRA adapter
-esg_qlora_adapter/*
-!esg_qlora_adapter/README.md
-qlora_model/
-
 # Local embedding models
 models/
 
@@ -48,35 +42,23 @@ models/
 data/raw/*
 data/processed/*
 data/chunks/*
-data/extractions/*
 data/graph/*
 data/vector_store/*
 data/documents/*
-data/word_edits/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/chunks/.gitkeep
-!data/extractions/.gitkeep
 !data/graph/.gitkeep
 !data/vector_store/.gitkeep
-!data/taxonomy/
-!data/taxonomy/**
 
 # Public GitHub release: Markdown files are opt-in.
 # Keep only the root README unless explicitly requested.
 *.md
 !/README.md
 !/docs/deepseek-v4-upgrade.md
+!/docs/legal-agent/**
 
-# Embedded text-to-kg reference: only the web viewer assets are needed at runtime.
-text-to-kg-esg/*
-!text-to-kg-esg/web/
-!text-to-kg-esg/web/**
-text-to-kg-esg/web/__pycache__/
-
-# Electron desktop build outputs
-desktop/node_modules/
-desktop/dist/
-desktop/out/
-desktop/.env
 .vercel
+
+# UI smoke-test output
+ui-artifacts/

@@ -1,9 +1,8 @@
-"""Runtime helpers for ingesting documents into the root ESG pipeline."""
+"""Runtime helpers for ingesting documents: dedup, parse, clean, chunk, index, register."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import io
@@ -11,26 +10,13 @@ import json
 import re
 import shutil
 
-try:
-    import networkx as nx
-except Exception:
-    nx = None
-
 from docx import Document as DocxDocument
 from pypdf import PdfReader
 
-from ai_service.extraction_cache import cached_extract_esg, init_extraction_cache
 import document_registry
 from configs.settings import (
     ACTIVE_VECTOR_STORE_FILE,
     CHUNK_DIR,
-    ESG_METRICS_DB_PATH,
-    ESG_METRICS_EXTRACTION_ENABLED,
-    ESG_METRICS_MIN_CONFIDENCE,
-    ESG_METRICS_TAXONOMY_PATH,
-    EXTRACTION_DIR,
-    EXTRACTION_MAX_WORKERS,
-    GRAPH_DIR,
     PINECONE_NAMESPACE,
     PROCESSED_DIR,
     VECTOR_DIR,
@@ -39,10 +25,7 @@ from configs.settings import (
 )
 from document_processing.chunker import chunk_text
 from document_processing.text_cleaner import clean_text
-from graph.graph_builder import build_graph_from_extractions
-from graph.graph_utils import normalize_entity_name
-from graph.neo4j_store import get_neo4j_store, maybe_sync_to_neo4j
-from graph.graph_store import load_graph, save_graph
+from graph.neo4j_store import get_neo4j_store
 from rag.bm25_index import build_bm25_index
 from rag.pinecone_store import delete_vectors_by_document_id, pinecone_available
 import rag.vector_store as vector_store_module
@@ -132,8 +115,6 @@ def ingest_uploaded_document(
 
     processed_text_path = PROCESSED_DIR / f"{name}.txt"
     chunks_path = CHUNK_DIR / f"{name}_chunks.jsonl"
-    extractions_path = EXTRACTION_DIR / f"{name}_extractions.jsonl"
-    graph_path = GRAPH_DIR / f"{name}_graph.json"
     vector_store_path = VECTOR_DIR / name
 
     processed_text_path.write_text(cleaned, encoding="utf-8")
@@ -145,47 +126,8 @@ def ingest_uploaded_document(
     build_vector_store(chunks, str(vector_store_path))
     build_bm25_index(chunks, str(vector_store_path))
 
-    init_extraction_cache()
-    with extractions_path.open("w", encoding="utf-8") as handle:
-        extractions = _extract_chunks(chunks, progress_callback)
-        for row in extractions:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-    if ESG_METRICS_EXTRACTION_ENABLED:
-        _report_progress(progress_callback, "metrics", "Extracting structured ESG metrics", 86)
-        try:
-            _extract_structured_metrics(chunks, document_id=name)
-        except Exception as exc:
-            print(f"[pipeline] Metric extraction failed for {name}: {type(exc).__name__}: {exc}")
-
-    _report_progress(progress_callback, "graph", "Building knowledge graph structures", 88)
-    graph = build_graph_from_extractions(extractions)
-    save_graph(graph, str(graph_path))
-    _report_progress(progress_callback, "neo4j", "Syncing graph to Neo4j", 94)
-    neo4j_sync = maybe_sync_to_neo4j(
-        document={
-            "id": name,
-            "title": title or filename or "Untitled document",
-            "domain": domain,
-            "source": source_value,
-            "document_group": document_group,
-            "owner_user_id": owner_value,
-            "visibility_scope": scope_value,
-            "source_type": source_type_value,
-            "processed_text_path": str(processed_text_path),
-            "chunks_path": str(chunks_path),
-            "extractions_path": str(extractions_path),
-            "graph_path": str(graph_path),
-            "vector_store_path": str(vector_store_path),
-            "content_hash": text_hash,
-        },
-        chunks=chunks,
-        extractions=extractions,
-        graph=graph,
-    )
-
-    relationships = _to_relationship_rows(extractions, domain=domain)
-    graph_display = _to_display_graph(graph)
+    # Ingestion no longer extracts entities or builds a graph, so nothing is synced to Neo4j.
+    neo4j_sync = {"enabled": False, "synced": False, "reason": "not_synced_on_ingest"}
     _report_progress(progress_callback, "completed", "Document processing complete", 100)
 
     document_registry.register({
@@ -203,8 +145,6 @@ def ingest_uploaded_document(
         "paths": {
             "processed_text": str(processed_text_path),
             "chunks": str(chunks_path),
-            "extractions": str(extractions_path),
-            "graph": str(graph_path),
             "vector_store": str(vector_store_path),
         },
     })
@@ -219,20 +159,11 @@ def ingest_uploaded_document(
             "owner_user_id": owner_value,
             "visibility_scope": scope_value,
             "source_type": source_type_value,
-            "graph": graph_display,
-            "relationships": relationships,
-            "processed_text_path": str(processed_text_path),
-            "chunks_path": str(chunks_path),
-            "extractions_path": str(extractions_path),
-            "graph_path": str(graph_path),
-            "vector_store_path": str(vector_store_path),
             "content_hash": text_hash,
             "neo4j_sync": neo4j_sync,
         },
         "stats": {
             "chunk_count": len(chunks),
-            "entity_count": len(graph_display["nodes"]),
-            "relation_count": len(relationships),
         },
         "neo4j": neo4j_sync,
     }
@@ -298,76 +229,30 @@ def delete_uploaded_document(upload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def summarize_registered_document(entry: Dict[str, Any], audit: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    document_id = str(entry.get("document_id") or "").strip()
-    domain = str(entry.get("domain") or "general")
-    paths = entry.get("paths") or {}
-    graph_path = Path(str(paths.get("graph") or ""))
-
-    graph_display = _load_graph_display(graph_path)
-    metadata = dict(graph_display.get("metadata") or {})
+    """List-view payload. Server paths, graph and relationship data stay out of API responses."""
     stats = (audit or {}).get("stats") or {}
-
-    if not metadata.get("node_count"):
-        metadata["node_count"] = int(stats.get("entities") or 0)
-    if not metadata.get("edge_count"):
-        metadata["edge_count"] = int(stats.get("relations") or 0)
-    metadata.setdefault("is_directed", True)
-    metadata.setdefault("is_acyclic", False)
-
-    return {
-        "id": document_id,
-        "title": entry.get("title", ""),
-        "domain": domain,
-        "source": entry.get("source", ""),
-        "document_group": entry.get("document_group", ""),
-        "owner_user_id": entry.get("owner_user_id", ""),
-        "visibility_scope": entry.get("visibility_scope", "global"),
-        "source_type": entry.get("source_type", ""),
-        "graph": {"nodes": [], "edges": [], "metadata": metadata},
-        "relationship_count": int(stats.get("relations") or metadata.get("edge_count") or 0),
-        "chunk_count": int(stats.get("chunks") or 0),
-        "processed_text_path": str(paths.get("processed_text") or ""),
-        "chunks_path": str(paths.get("chunks") or ""),
-        "extractions_path": str(paths.get("extractions") or ""),
-        "graph_path": str(paths.get("graph") or ""),
-        "vector_store_path": str(paths.get("vector_store") or ""),
-        "neo4j_sync": dict(entry.get("neo4j_sync") or {}),
-        "ingested_at": entry.get("ingested_at") or "",
-    }
+    return _document_payload(entry, chunk_count=int(stats.get("chunks") or 0))
 
 
 def load_registered_document(entry: Dict[str, Any], audit: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    document_id = str(entry.get("document_id") or "").strip()
-    domain = str(entry.get("domain") or "general")
-    paths = entry.get("paths") or {}
-    chunks_path = Path(str(paths.get("chunks") or ""))
-    extractions_path = Path(str(paths.get("extractions") or ""))
-    graph_path = Path(str(paths.get("graph") or ""))
-
+    """Detail payload; the chunk count is read from the stored chunk file."""
+    chunks_path = Path(str((entry.get("paths") or {}).get("chunks") or ""))
     chunks = _load_jsonl_rows(chunks_path) if chunks_path.is_file() else []
-    extractions = _load_jsonl_rows(extractions_path) if extractions_path.is_file() else []
-    graph = load_graph(str(graph_path)) if graph_path.is_file() else {"nodes": [], "edges": []}
-    graph_display = _to_display_graph(graph)
-    relationships = _to_relationship_rows(extractions, domain=domain)
+    return _document_payload(entry, chunk_count=len(chunks))
 
+
+def _document_payload(entry: Dict[str, Any], *, chunk_count: int) -> Dict[str, Any]:
+    # Older registry entries may still carry graph/extraction paths; they are never echoed.
     return {
-        "id": document_id,
+        "id": str(entry.get("document_id") or "").strip(),
         "title": entry.get("title", ""),
-        "domain": domain,
+        "domain": str(entry.get("domain") or "general"),
         "source": entry.get("source", ""),
         "document_group": entry.get("document_group", ""),
         "owner_user_id": entry.get("owner_user_id", ""),
         "visibility_scope": entry.get("visibility_scope", "global"),
         "source_type": entry.get("source_type", ""),
-        "graph": graph_display,
-        "relationships": relationships,
-        "relationship_count": len(relationships),
-        "chunk_count": len(chunks),
-        "processed_text_path": str(paths.get("processed_text") or ""),
-        "chunks_path": str(paths.get("chunks") or ""),
-        "extractions_path": str(paths.get("extractions") or ""),
-        "graph_path": str(paths.get("graph") or ""),
-        "vector_store_path": str(paths.get("vector_store") or ""),
+        "chunk_count": chunk_count,
         "neo4j_sync": dict(entry.get("neo4j_sync") or {}),
         "ingested_at": entry.get("ingested_at") or "",
     }
@@ -411,103 +296,6 @@ def _repair_active_vector_store_after_delete(deleted_path: Path) -> None:
         print(f"[ingestion] Active vector store repair failed: {type(exc).__name__}: {exc}")
 
 
-def _extract_chunks(
-    chunks: List[Dict[str, Any]],
-    progress_callback: Optional[Callable[[str, str, int], None]],
-) -> List[Dict[str, Any]]:
-    total_chunks = max(len(chunks), 1)
-    workers = min(max(1, EXTRACTION_MAX_WORKERS), total_chunks)
-
-    if workers == 1:
-        rows: List[Dict[str, Any]] = []
-        for index, chunk in enumerate(chunks, start=1):
-            progress = 45 + int((index - 1) / total_chunks * 40)
-            _report_progress(
-                progress_callback,
-                "extracting",
-                f"Extracting ESG entities and relations from chunk {index}/{total_chunks}",
-                progress,
-            )
-            rows.append(_extract_one_chunk(chunk))
-        return rows
-
-    rows_by_index: Dict[int, Dict[str, Any]] = {}
-    completed = 0
-    _report_progress(
-        progress_callback,
-        "extracting",
-        f"Extracting ESG entities and relations with {workers} workers",
-        45,
-    )
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(_extract_one_chunk, chunk): index
-            for index, chunk in enumerate(chunks)
-        }
-        for future in as_completed(futures):
-            index = futures[future]
-            rows_by_index[index] = future.result()
-            completed += 1
-            progress = 45 + int(completed / total_chunks * 40)
-            _report_progress(
-                progress_callback,
-                "extracting",
-                f"Extracted {completed}/{total_chunks} chunks",
-                progress,
-            )
-    return [rows_by_index[index] for index in range(len(chunks))]
-
-
-def _extract_one_chunk(chunk: Dict[str, Any]) -> Dict[str, Any]:
-    extraction = cached_extract_esg(chunk["text"])
-    return {"chunk_id": chunk["chunk_id"], **extraction}
-
-
-def _extract_structured_metrics(chunks: List[Dict[str, Any]], *, document_id: str) -> int:
-    """Per-chunk numeric metric extraction.
-
-    Runs in parallel using EXTRACTION_MAX_WORKERS, filters by
-    ESG_METRICS_MIN_CONFIDENCE, and writes survivors to the metric store.
-    Returns the number of rows persisted. Failures on individual chunks are
-    logged and skipped — they do not abort ingestion.
-    """
-    from metric_extraction import extract_metrics_for_chunk, init_metric_store, load_taxonomy
-    from metric_extraction.extractor import default_llm_client
-
-    if not chunks:
-        return 0
-
-    taxonomy = load_taxonomy(ESG_METRICS_TAXONOMY_PATH)
-    store = init_metric_store(ESG_METRICS_DB_PATH)
-    llm = default_llm_client()
-    workers = min(max(1, EXTRACTION_MAX_WORKERS), len(chunks))
-
-    def _run(chunk: Dict[str, Any]) -> List[Any]:
-        try:
-            return extract_metrics_for_chunk(
-                chunk_text=str(chunk.get("text") or ""),
-                taxonomy=taxonomy,
-                llm=llm,
-                document_id=document_id,
-                chunk_id=str(chunk.get("chunk_id") or ""),
-            )
-        except Exception as exc:
-            print(f"[metrics] chunk {chunk.get('chunk_id')} failed: {type(exc).__name__}: {exc}")
-            return []
-
-    all_rows: List[Any] = []
-    if workers == 1:
-        for chunk in chunks:
-            all_rows.extend(_run(chunk))
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            for rows in executor.map(_run, chunks):
-                all_rows.extend(rows)
-
-    survivors = [row for row in all_rows if row.confidence >= ESG_METRICS_MIN_CONFIDENCE]
-    return store.insert_many(survivors)
-
-
 def _build_duplicate_response(
     entry: Dict[str, Any],
     progress_callback: Optional[Callable[[str, str, int], None]] = None,
@@ -518,15 +306,7 @@ def _build_duplicate_response(
     domain = str(entry.get("domain") or "general")
 
     chunks_path = Path(str(paths.get("chunks") or ""))
-    extractions_path = Path(str(paths.get("extractions") or ""))
-    graph_path = Path(str(paths.get("graph") or ""))
-
     chunks = _load_jsonl_rows(chunks_path) if chunks_path.is_file() else []
-    extractions = _load_jsonl_rows(extractions_path) if extractions_path.is_file() else []
-    graph = load_graph(str(graph_path)) if graph_path.is_file() else {"nodes": [], "edges": []}
-
-    relationships = _to_relationship_rows(extractions, domain=domain)
-    graph_display = _to_display_graph(graph)
 
     print(f"[ingestion] Duplicate detected (matched_by={matched_by}) document_id={document_id}")
     _report_progress(
@@ -548,71 +328,13 @@ def _build_duplicate_response(
             "owner_user_id": entry.get("owner_user_id", ""),
             "visibility_scope": entry.get("visibility_scope", "global"),
             "source_type": entry.get("source_type", ""),
-            "graph": graph_display,
-            "relationships": relationships,
-            "processed_text_path": str(paths.get("processed_text") or ""),
-            "chunks_path": str(paths.get("chunks") or ""),
-            "extractions_path": str(paths.get("extractions") or ""),
-            "graph_path": str(paths.get("graph") or ""),
-            "vector_store_path": str(paths.get("vector_store") or ""),
             "content_hash": entry.get("text_hash") or "",
             "neo4j_sync": {"enabled": False, "synced": False, "reason": "duplicate_skipped"},
         },
         "stats": {
             "chunk_count": len(chunks),
-            "entity_count": len(graph_display["nodes"]),
-            "relation_count": len(relationships),
         },
         "neo4j": {"enabled": False, "synced": False, "reason": "duplicate_skipped"},
-    }
-
-
-def rebuild_document_graph(document: Dict[str, Any]) -> Dict:
-    """Rebuild graph and relationship payloads for an existing document artifact set."""
-    ensure_directories()
-
-    document_id = str(document.get("id") or "").strip()
-    if not document_id:
-        raise ValueError("Document id is required to rebuild the graph.")
-
-    chunks_path = Path(str(document.get("chunks_path") or (CHUNK_DIR / f"{document_id}_chunks.jsonl")))
-    extractions_path = Path(str(document.get("extractions_path") or (EXTRACTION_DIR / f"{document_id}_extractions.jsonl")))
-    graph_path = Path(str(document.get("graph_path") or (GRAPH_DIR / f"{document_id}_graph.json")))
-
-    if not chunks_path.exists():
-        raise FileNotFoundError(f"Chunks file not found: {chunks_path}")
-    if not extractions_path.exists():
-        raise FileNotFoundError(f"Extraction file not found: {extractions_path}")
-
-    chunks = _load_jsonl_rows(chunks_path)
-    extractions = _load_jsonl_rows(extractions_path)
-    if not chunks:
-        raise ValueError(f"No chunks found in {chunks_path}")
-    if not extractions:
-        raise ValueError(f"No extraction rows found in {extractions_path}")
-
-    graph = build_graph_from_extractions(extractions)
-    if graph_path:
-        save_graph(graph, str(graph_path))
-
-    neo4j_sync = maybe_sync_to_neo4j(document=document, chunks=chunks, extractions=extractions, graph=graph)
-    relationships = _to_relationship_rows(extractions, domain=str(document.get("domain") or "general"))
-    graph_display = _to_display_graph(graph)
-
-    updated_document = {
-        **document,
-        "graph": graph_display,
-        "relationships": relationships,
-        "neo4j_sync": neo4j_sync,
-    }
-    return {
-        "document": updated_document,
-        "stats": {
-            "chunk_count": len(chunks),
-            "entity_count": len(graph_display["nodes"]),
-            "relation_count": len(relationships),
-        },
-        "neo4j": neo4j_sync,
     }
 
 
@@ -689,146 +411,6 @@ def _load_jsonl_rows(path: Path) -> List[Dict[str, Any]]:
             if isinstance(parsed, dict):
                 rows.append(parsed)
     return rows
-
-
-def _load_graph_display(path: Path) -> Dict[str, Any]:
-    if not path.is_file():
-        return {
-            "nodes": [],
-            "edges": [],
-            "metadata": {
-                "node_count": 0,
-                "edge_count": 0,
-                "is_directed": True,
-                "is_acyclic": False,
-            },
-        }
-    return _to_display_graph(load_graph(str(path)))
-
-
-def _to_display_graph(graph: Dict) -> Dict:
-    nodes = []
-    edges = []
-
-    for node in graph.get("nodes", []):
-        properties = node.get("properties", {}) or {}
-        nodes.append(
-            {
-                "id": node.get("id"),
-                "label": properties.get("display_name") or node.get("id"),
-                "domain": properties.get("esg_domain") or properties.get("domain") or "general",
-                "type": node.get("type", "Entity"),
-                "confidence": float(properties.get("confidence", 0.8)),
-            }
-        )
-
-    for edge in graph.get("edges", []):
-        properties = edge.get("properties", {}) or {}
-        edges.append(
-            {
-                "source": edge.get("source"),
-                "target": edge.get("target"),
-                "relationship_type": edge.get("relation", "related_to"),
-                "confidence": float(properties.get("confidence", 0.75)),
-                "evidence": str(properties.get("evidence", "")),
-                "domain": properties.get("domain") or properties.get("esg_domain") or "general",
-            }
-        )
-
-    return {
-        "nodes": nodes,
-        "edges": edges,
-        "metadata": {
-            "node_count": len(nodes),
-            "edge_count": len(edges),
-            "is_directed": True,
-            "is_acyclic": _is_acyclic(edges),
-        },
-    }
-
-
-def _to_relationship_rows(extractions: List[Dict], domain: str) -> List[Dict]:
-    rows: List[Dict] = []
-    for row in extractions:
-        entity_lookup = _build_entity_lookup(row.get("entities", []) or [])
-        for relation in row.get("relations", []) or []:
-            if not isinstance(relation, dict):
-                continue
-            source = _resolve_relation_endpoint(
-                relation.get("subject_id")
-                or relation.get("source_id")
-                or relation.get("from")
-                or relation.get("source_entity")
-                or relation.get("subject")
-                or relation.get("source")
-                or relation.get("entity_1"),
-                entity_lookup,
-            )
-            target = _resolve_relation_endpoint(
-                relation.get("object_id")
-                or relation.get("target_id")
-                or relation.get("to")
-                or relation.get("target_entity")
-                or relation.get("object")
-                or relation.get("target")
-                or relation.get("entity_2"),
-                entity_lookup,
-            )
-            relation_type = relation.get("relation_type") or relation.get("relation") or relation.get("predicate") or "related_to"
-            if not source or not target:
-                continue
-            rows.append(
-                {
-                    "cause": str(source),
-                    "effect": str(target),
-                    "confidence": float(relation.get("confidence", 0.75)),
-                    "evidence": str(relation.get("evidence") or relation.get("context") or ""),
-                    "domain": domain,
-                    "relationship_type": str(relation_type),
-                }
-            )
-    return rows
-
-
-def _build_entity_lookup(entities: List[Dict]) -> Dict[str, str]:
-    lookup: Dict[str, str] = {}
-    for entity in entities:
-        if isinstance(entity, str):
-            normalized = normalize_entity_name(entity)
-            if normalized:
-                lookup[normalized] = normalized
-            continue
-        if not isinstance(entity, dict):
-            continue
-        resolved_name = normalize_entity_name(
-            entity.get("name") or entity.get("entity") or entity.get("text") or entity.get("id") or ""
-        )
-        if not resolved_name:
-            continue
-        for key in (entity.get("id"), entity.get("name"), entity.get("entity"), entity.get("text")):
-            normalized_key = normalize_entity_name(str(key or ""))
-            if normalized_key:
-                lookup[normalized_key] = resolved_name
-    return lookup
-
-
-def _resolve_relation_endpoint(value: object, entity_lookup: Dict[str, str]) -> str:
-    normalized = normalize_entity_name(str(value or ""))
-    if not normalized:
-        return ""
-    return entity_lookup.get(normalized, normalized)
-
-
-def _is_acyclic(edges: List[Dict]) -> bool:
-    if nx is None:
-        return False
-    graph = nx.DiGraph()
-    for edge in edges:
-        graph.add_edge(edge.get("source"), edge.get("target"))
-    try:
-        return nx.is_directed_acyclic_graph(graph)
-    except Exception:
-        return False
 
 
 def _slugify(text: str) -> str:

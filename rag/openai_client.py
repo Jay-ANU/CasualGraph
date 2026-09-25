@@ -29,12 +29,3 @@ def get_openai_client() -> Optional[object]:
     if not hasattr(openai, "OpenAI"):
         return None
     return _build_client(OPENAI_API_KEY, OPENAI_BASE_URL, float(OPENAI_TIMEOUT))
-
-
-def get_vision_client() -> Optional[object]:
-    """Return a separately configured image-capable client, never V4 Pro implicitly."""
-    from configs.settings import VISION_API_KEY, VISION_BASE_URL, VISION_MODEL
-
-    if not (VISION_API_KEY and VISION_BASE_URL and VISION_MODEL):
-        return None
-    return _build_client(VISION_API_KEY, VISION_BASE_URL, float(OPENAI_TIMEOUT))

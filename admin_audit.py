@@ -9,6 +9,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
+import document_registry
+
 
 _DB_PATH = Path(__file__).resolve().parent / "auth.db"
 _LOCK = Lock()
@@ -120,6 +122,7 @@ def record_upload_progress(job_id: str, *, status: str, stage: str, progress: in
 def record_upload_completed(job_id: str, result: Dict[str, Any]) -> None:
     document = result.get("document") or {}
     stats = result.get("stats") or {}
+    paths = _registered_artifact_paths(str(document.get("id") or ""))
     now = _now()
     init_admin_db()
     with _LOCK, _connect() as db:
@@ -150,11 +153,11 @@ def record_upload_completed(job_id: str, result: Dict[str, Any]) -> None:
                 int(stats.get("chunk_count") or 0),
                 int(stats.get("entity_count") or 0),
                 int(stats.get("relation_count") or 0),
-                document.get("processed_text_path", ""),
-                document.get("chunks_path", ""),
-                document.get("extractions_path", ""),
-                document.get("graph_path", ""),
-                document.get("vector_store_path", ""),
+                paths.get("processed_text", ""),
+                paths.get("chunks", ""),
+                paths.get("extractions", ""),
+                paths.get("graph", ""),
+                paths.get("vector_store", ""),
                 document.get("content_hash", ""),
                 job_id,
             ),
@@ -498,6 +501,14 @@ def record_upload_cleanup(
             )
         db.commit()
     return get_upload(job_id)
+
+
+def _registered_artifact_paths(document_id: str) -> Dict[str, str]:
+    """Artifact paths for later cleanup. API payloads no longer carry them, so read the registry."""
+    if not document_id:
+        return {}
+    entry = document_registry.get_entry(document_id, valid_only=False) or {}
+    return {str(key): str(value or "") for key, value in (entry.get("paths") or {}).items()}
 
 
 def _connect() -> sqlite3.Connection:

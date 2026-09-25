@@ -21,4 +21,12 @@ describe('model configuration, never an inferred connection', () => {
     expect(modelDisplayName('custom-model')).toBe('custom-model');
     expect(modelDisplayName('')).toBe('Model not configured');
   });
+  it('names models from other providers the same way', () => {
+    expect(modelDisplayName('deepseek-chat')).toBe('DeepSeek Chat');
+    expect(modelDisplayName('claude-sonnet-4-5-20250929')).toBe('Claude Sonnet 4.5');
+    expect(modelDisplayName('gpt-4o-mini')).toBe('GPT 4o Mini');
+    expect(modelDisplayName('qwen-max')).toBe('Qwen Max');
+    expect(modelDisplayName('constructor-x')).toBe('constructor-x');
+    expect(modelDisplayName('-')).toBe('-');
+  });
 });

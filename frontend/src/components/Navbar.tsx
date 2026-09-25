@@ -1,17 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
-import { Briefcase, ChevronDown, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
+import { ChevronDown, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import BrandLogo from './BrandLogo';
 
 const NAV_LINKS = [
   { name: 'Research', href: '/agent' },
-  { name: 'Graph', href: '/causal-inference' },
-  { name: 'Desktop', href: '/desktop' },
-  { name: 'Company', href: '/about' },
 ];
 
-export const initialOf = (value?: string | null) =>
+const initialOf = (value?: string | null) =>
   String(value || '?').trim().charAt(0).toUpperCase() || '?';
 
 const Navbar: React.FC = () => {
@@ -23,7 +20,9 @@ const Navbar: React.FC = () => {
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
   const userLabel = user?.username || user?.email || 'Account';
 
+  // Close both menus after navigating.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset on route change; one extra render per navigation
     setIsOpen(false);
     setIsAccountOpen(false);
   }, [location.pathname]);
@@ -99,16 +98,10 @@ const Navbar: React.FC = () => {
                     </div>
                     <div className="menu-sep" />
                     {isAdmin && (
-                      <>
-                        <Link to="/admin" className="menu-item" role="menuitem">
-                          <ShieldCheck className="h-4 w-4 text-ink-4" />
-                          Admin console
-                        </Link>
-                        <Link to="/admin/recruitment" className="menu-item" role="menuitem">
-                          <Briefcase className="h-4 w-4 text-ink-4" />
-                          Recruitment
-                        </Link>
-                      </>
+                      <Link to="/admin" className="menu-item" role="menuitem">
+                        <ShieldCheck className="h-4 w-4 text-ink-4" />
+                        Admin console
+                      </Link>
                     )}
                     <button type="button" onClick={handleLogout} className="menu-item" role="menuitem">
                       <LogOut className="h-4 w-4 text-ink-4" />
@@ -173,7 +166,6 @@ const Navbar: React.FC = () => {
                 <div className="flex flex-wrap gap-2">
                   <Link to="/agent" className="btn btn-primary">Open research desk</Link>
                   {isAdmin && <Link to="/admin" className="btn btn-secondary">Admin console</Link>}
-                  {isAdmin && <Link to="/admin/recruitment" className="btn btn-secondary">Recruitment</Link>}
                   <button type="button" onClick={handleLogout} className="btn btn-secondary">Sign out</button>
                 </div>
               </div>

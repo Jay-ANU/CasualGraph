@@ -1,7 +1,8 @@
 import asyncio
 import json
 
-import app
+from api.routers.rag import _build_streaming_response
+from services.rag_context import RagAskRequest
 
 
 def _decode_sse_payloads(chunks):
@@ -26,8 +27,8 @@ def _collect_streaming_response(response):
 
 
 def test_streaming_response_falls_back_when_stream_breaks_with_broken_pipe():
-    response = app._build_streaming_response(
-        request=app.RagAskRequest(question="q"),
+    response = _build_streaming_response(
+        request=RagAskRequest(question="q"),
         stream_factory=lambda: (_ for _ in ()).throw(BrokenPipeError(32, "Broken pipe")),
         fallback_factory=lambda: {"answer": "fallback answer", "sources": [], "backend": "fallback"},
     )
@@ -38,8 +39,8 @@ def test_streaming_response_falls_back_when_stream_breaks_with_broken_pipe():
 
 
 def test_streaming_response_returns_recovery_done_when_stream_and_fallback_break():
-    response = app._build_streaming_response(
-        request=app.RagAskRequest(question="q"),
+    response = _build_streaming_response(
+        request=RagAskRequest(question="q"),
         stream_factory=lambda: (_ for _ in ()).throw(BrokenPipeError(32, "Broken pipe")),
         fallback_factory=lambda: (_ for _ in ()).throw(BrokenPipeError(32, "Broken pipe")),
     )
@@ -65,8 +66,8 @@ def test_streaming_response_preserves_context_when_recovering_from_broken_pipe()
         }
         raise BrokenPipeError(32, "Broken pipe")
 
-    response = app._build_streaming_response(
-        request=app.RagAskRequest(question="q"),
+    response = _build_streaming_response(
+        request=RagAskRequest(question="q"),
         stream_factory=stream_factory,
         fallback_factory=lambda: (_ for _ in ()).throw(BrokenPipeError(32, "Broken pipe")),
     )
