@@ -27,6 +27,9 @@
   --lv-low: #2F5AA8; --lv-low-bg: #EAF0FA; --lv-low-line: #C9D7F0;
   --lv-ok: #2F6F4F; --lv-ok-bg: #E9F2EC; --lv-ok-line: #C9DFD1; --lv-ok-text: #24573D;
   --lv-ring: 0 0 0 3px rgba(26, 25, 21, 0.08);
+  /* Motion: short decelerating moves confirm a change; ambient motion only while work runs. */
+  --lv-ease: cubic-bezier(.2, 0, 0, 1);
+  --lv-ease-in-out: cubic-bezier(.45, 0, .25, 1);
   --lv-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   --lv-serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
   background: var(--lv-bg);
@@ -194,6 +197,8 @@
 .lv-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--lv-ink-5); flex-shrink: 0; }
 .lv-dot.is-redaction_pending { background: var(--lv-mid-mark); }
 .lv-dot.is-ready { background: var(--lv-ok); }
+.lv-dot.is-running, .lv-dot.is-queued { position: relative; background: var(--lv-ink); }
+.lv-dot.is-running::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: var(--lv-ink); animation: lv-ping 1.4s var(--lv-ease) infinite; }
 .lv-history > p { padding: 4px 10px; font-size: 12px; line-height: 1.7; color: var(--lv-ink-4); }
 .lv-sidebar-bottom { display: grid; gap: 2px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--lv-line); }
 .lv-sidebar-bottom > a { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 13px; color: var(--lv-ink-3); }
@@ -326,23 +331,79 @@
 .lv-settings-body .lv-setup { margin-top: 0; border-top: 0; }
 
 /* ---------- Review status ---------- */
-.lv-progress-card { display: grid; gap: 14px; padding: 20px; border-radius: 12px; background: var(--lv-surface); border: 1px solid var(--lv-line); }
-.lv-progress-head { display: flex; align-items: flex-start; gap: 12px; }
-.lv-progress-head > div { flex: 1; min-width: 0; }
-.lv-progress-head h2 { font-size: 16px; font-weight: 600; }
-.lv-progress-head p { font-size: 13px; color: var(--lv-ink-3); }
-.lv-progress-count { font-size: 13px; color: var(--lv-ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.lv-progress-bar { height: 3px; border-radius: 2px; background: var(--lv-hover); overflow: hidden; }
-.lv-progress-bar span { display: block; height: 100%; background: var(--lv-ink); transition: width .4s ease; }
-.lv-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
-.lv-lanes li { display: grid; gap: 2px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--lv-line); background: var(--lv-bg); }
-.lv-lanes strong { font-size: 13px; font-weight: 500; }
-.lv-lanes span { font-size: 12px; color: var(--lv-ink-4); font-variant-numeric: tabular-nums; }
-.lv-lanes li.is-running { border-color: var(--lv-ink-5); }
-.lv-lanes li.is-running span { color: var(--lv-ink); }
-.lv-lanes li.is-completed span { color: var(--lv-ok); }
-.lv-lanes li.is-partial, .lv-lanes li.is-paused { border-color: var(--lv-mid-line); }
+.lv-live { display: grid; gap: 16px; padding: 20px 22px; border-radius: 14px; background: var(--lv-surface); border: 1px solid var(--lv-line); box-shadow: 0 1px 2px rgba(26, 25, 21, .04), 0 18px 40px -30px rgba(26, 25, 21, .35); }
+.lv-live-head { display: flex; align-items: flex-start; gap: 14px; }
+.lv-live-title { flex: 1; min-width: 0; }
+.lv-live-title h2 { font-size: 17px; font-weight: 600; }
+.lv-live-title p { margin-top: 2px; font-size: 13px; line-height: 1.6; color: var(--lv-ink-3); overflow-wrap: anywhere; }
+.lv-live-clock { display: flex; gap: 20px; margin: 0; flex-shrink: 0; text-align: right; }
+.lv-live-clock div { display: grid; gap: 2px; }
+.lv-live-clock dt { font-size: 12px; color: var(--lv-ink-4); }
+.lv-live-clock dd { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.3; color: var(--lv-ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lv-live-bar { height: 6px; border-radius: 3px; background: var(--lv-hover); overflow: hidden; }
+.lv-live-bar span { position: relative; display: block; height: 100%; border-radius: inherit; background: var(--lv-ink); overflow: hidden; transition: width .8s var(--lv-ease); }
+/* A sheen travels the finished part while the engine works. */
+.lv-live-bar span::after { content: ''; position: absolute; inset: 0 auto 0 0; width: 45%; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .38), transparent); animation: lv-sheen 1.9s var(--lv-ease-in-out) infinite; }
+.lv-live-steps { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.lv-phases { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0; padding: 0; list-style: none; }
+.lv-phases li { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--lv-ink-4); white-space: nowrap; }
+.lv-phases li + li::before { content: ''; width: 16px; height: 1px; background: var(--lv-line-strong); }
+.lv-phases li.done, .lv-phases li.current { color: var(--lv-ink-2); }
+.lv-phases li.current { color: var(--lv-ink); font-weight: 500; }
+.lv-phase-mark { position: relative; display: grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--lv-line-strong); background: var(--lv-surface); color: var(--lv-ok); }
+.lv-phases li.done .lv-phase-mark { border-color: var(--lv-ok-line); background: var(--lv-ok-bg); }
+.lv-phases li.current .lv-phase-mark { border-color: var(--lv-ink); background: var(--lv-ink); }
+.lv-phases li.current .lv-phase-mark::after { content: ''; position: absolute; inset: -1px; border-radius: 50%; border: 1px solid var(--lv-ink); animation: lv-ping 1.8s var(--lv-ease) infinite; }
+.lv-phase-mark .lv-drawn-check { width: 9px; height: 9px; }
+.lv-live-detail { font-size: 12px; color: var(--lv-ink-3); font-variant-numeric: tabular-nums; }
+
+.lv-agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.lv-agent {
+  display: grid; gap: 8px; align-content: start; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--lv-line); background: var(--lv-bg);
+  transition: border-color .3s ease, background-color .3s ease, box-shadow .3s ease;
+}
+.lv-agent-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.lv-agent-head strong { font-size: 13px; font-weight: 600; color: var(--lv-ink-2); }
+.lv-agent-state { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--lv-ink-4); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lv-agent.is-running { background: var(--lv-surface); border-color: var(--lv-ink-5); box-shadow: 0 8px 20px -16px rgba(26, 25, 21, .5); }
+.lv-agent.is-running strong, .lv-agent.is-running .lv-agent-state { color: var(--lv-ink); }
+.lv-agent.is-completed .lv-agent-state { color: var(--lv-ok); }
+.lv-agent.is-partial, .lv-agent.is-paused { border-color: var(--lv-mid-line); }
+.lv-agent.is-partial .lv-agent-state, .lv-agent.is-paused .lv-agent-state { color: var(--lv-mid); }
+.lv-agent-track { display: flex; gap: 3px; height: 4px; }
+.lv-agent-track span { flex: 1; border-radius: 2px; background: var(--lv-line); transition: background-color .5s ease; }
+.lv-agent-track span.done { background: var(--lv-ink-2); }
+.lv-agent.is-completed .lv-agent-track span.done { background: var(--lv-ok); }
+/* The item in hand carries a travelling highlight, distinct from finished items. */
+.lv-agent-track span.active { background: linear-gradient(90deg, var(--lv-line) 0%, var(--lv-ink-4) 50%, var(--lv-line) 100%) 0 0 / 200% 100%; animation: lv-track 1.3s linear infinite; }
+.lv-agents-note { margin-top: -6px; font-size: 12px; line-height: 1.6; color: var(--lv-ink-4); }
+.lv-agent-note { font-size: 12px; line-height: 1.6; color: var(--lv-ink-3); overflow-wrap: anywhere; }
+.lv-agent-time { font-size: 12px; color: var(--lv-ink-4); font-variant-numeric: tabular-nums; }
+.lv-live-dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--lv-ink); flex-shrink: 0; }
+.lv-live-dot::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: var(--lv-ink); animation: lv-ping 1.4s var(--lv-ease) infinite; }
+
+.lv-activity { display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--lv-line); }
+.lv-activity-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lv-activity-head h3 { font-size: 13px; font-weight: 600; }
+.lv-sync { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--lv-ink-4); font-variant-numeric: tabular-nums; }
+.lv-sync i { position: relative; width: 6px; height: 6px; border-radius: 50%; background: var(--lv-ok); }
+/* Remounted on every poll result, so the ring pings once per sync. */
+.lv-sync i::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: var(--lv-ok); animation: lv-ping .9s var(--lv-ease) both; }
+.lv-sync.is-stale { color: var(--lv-mid); }
+.lv-sync.is-stale i { background: var(--lv-mid-mark); animation: lv-breathe 1.2s ease-in-out infinite; }
+.lv-sync.is-stale i::after { content: none; }
+.lv-activity-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.lv-activity-list li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; padding: 3px 0; font-size: 13px; line-height: 1.6; color: var(--lv-ink-2); animation: lv-drop .36s var(--lv-ease) both; }
+.lv-activity-list li:nth-child(n+4) { color: var(--lv-ink-3); }
+.lv-activity-list time { padding-top: 1px; font-size: 12px; color: var(--lv-ink-4); font-variant-numeric: tabular-nums; }
+.lv-activity-list li span { overflow-wrap: anywhere; }
+.lv-activity-list li span::before { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 8px 2px 0; border-radius: 50%; background: var(--lv-ink-5); vertical-align: middle; }
+.lv-activity-list .tone-ok span::before { background: var(--lv-ok); }
+.lv-activity-list :is(.tone-warn, .tone-mid) span::before { background: var(--lv-mid-mark); }
+.lv-activity-list .tone-high span::before { background: var(--lv-high); }
+.lv-activity-list .tone-low span::before { background: var(--lv-low); }
 .lv-progress-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; font-size: 12px; color: var(--lv-ink-4); }
+.lv-progress-foot strong { color: var(--lv-ink); font-weight: 600; font-variant-numeric: tabular-nums; }
 .lv-progress-foot .lv-text-button { font-size: 12px; }
 .lv-review-issue { display: grid; gap: 8px; justify-items: start; margin-top: 12px; }
 
@@ -584,6 +645,104 @@
 .lv-gate a { text-decoration: none; }
 .lv-gate .lv-text-button { text-decoration: underline; }
 
+/* ---------- Motion ----------
+   Entrances rise 8px and settle; feedback confirms the exact thing that changed;
+   ambient motion (sheen, pulse) appears only where work is actually running.
+   Everything below stops under reduced motion (see the end of this file). */
+@property --lv-n { syntax: '<integer>'; inherits: false; initial-value: 0; }
+@keyframes lv-rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes lv-drop { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes lv-fade { from { opacity: 0; } }
+@keyframes lv-pop { from { opacity: 0; transform: scale(.92); } }
+@keyframes lv-slide-in { from { opacity: 0; transform: translateX(18px); } }
+@keyframes lv-grow-x { from { transform: scaleX(0); } }
+@keyframes lv-draw { from { stroke-dashoffset: 1; } }
+@keyframes lv-count { from { --lv-n: 0; } }
+@keyframes lv-sheen { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+@keyframes lv-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes lv-ping { from { transform: scale(1); opacity: .45; } to { transform: scale(2.2); opacity: 0; } }
+@keyframes lv-ink { from { clip-path: inset(0 100% 0 0); } }
+@keyframes lv-located { from { background-color: #FBF0D2; box-shadow: inset 0 0 0 1px var(--lv-ink), 0 0 0 5px rgba(26, 25, 21, .08); } }
+@keyframes lv-indeterminate { from { background-position: -70% 0; } to { background-position: 170% 0; } }
+@keyframes lv-drag { 0%, 100% { box-shadow: 0 0 0 0 rgba(26, 25, 21, .1), 0 16px 40px -24px rgba(26, 25, 21, .22); } 50% { box-shadow: 0 0 0 8px rgba(26, 25, 21, .05), 0 16px 40px -24px rgba(26, 25, 21, .22); } }
+@keyframes lv-track { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+@keyframes lv-skeleton { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+
+.lv-enter { animation: lv-rise .4s var(--lv-ease) both; }
+
+/* Numbers run up when they appear and ease between values (see CountUp). */
+.lv-countup { counter-reset: lv-n var(--lv-n); transition: --lv-n .7s var(--lv-ease); animation: lv-count .9s var(--lv-ease) .15s backwards; }
+.lv-countup::after { content: counter(lv-n); }
+.lv-drawn-check path { stroke-dasharray: 1; animation: lv-draw .45s var(--lv-ease) .08s backwards; }
+
+/* Buttons press in; the upload card lifts toward the pointer and breathes while a file is held over it. */
+:is(.lv-primary, .lv-secondary, .lv-quiet, .lv-new, .lv-send, .lv-icon) { transition: background-color .15s ease, border-color .15s ease, color .15s ease, transform .12s var(--lv-ease), box-shadow .15s ease; }
+:is(.lv-primary, .lv-secondary, .lv-quiet, .lv-new, .lv-send):active:not(:disabled) { transform: scale(.97); }
+.lv-upload { transition: border-color .2s ease, background-color .2s ease, transform .35s var(--lv-ease), box-shadow .35s var(--lv-ease); }
+.lv-upload:hover:not(:has(.lv-upload-cta:disabled)) { transform: translateY(-2px); box-shadow: 0 1px 2px rgba(26, 25, 21, .04), 0 22px 48px -26px rgba(26, 25, 21, .3); }
+.lv-upload.is-dragging { transform: scale(1.015); animation: lv-drag 1.4s ease-in-out infinite; }
+
+/* First screen settles in order: title, lede, upload, assurances. */
+.lv-welcome-inner > * { animation: lv-rise .55s var(--lv-ease) both; }
+.lv-welcome-inner > :nth-child(2) { animation-delay: .06s; }
+.lv-welcome-inner > :nth-child(3) { animation-delay: .12s; }
+.lv-welcome-inner > :nth-child(4) { animation-delay: .2s; }
+.lv-gate-card > * { animation: lv-rise .5s var(--lv-ease) both; }
+.lv-gate-card > :nth-child(n+3) { animation-delay: .08s; }
+
+/* Loading keeps the page's shape instead of a bare spinner. */
+.lv-skeleton { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 18vh 32px 32px; }
+.lv-sk { display: block; border-radius: 8px; background: linear-gradient(90deg, var(--lv-hover) 30%, var(--lv-sunken) 50%, var(--lv-hover) 70%) 0 0 / 200% 100%; animation: lv-skeleton 1.4s linear infinite; }
+.lv-sk-title { width: 220px; height: 30px; }
+.lv-sk-line { width: 300px; max-width: 80%; height: 14px; }
+.lv-sk-card { width: 100%; max-width: 576px; height: 240px; margin-top: 20px; border-radius: 16px; }
+
+/* Notices arrive from the top edge; dialogs scale up from the backdrop. */
+.lv-banner { animation: lv-drop .3s var(--lv-ease) both; }
+.lv-dialog[open] { animation: lv-pop .26s var(--lv-ease) both; }
+.lv-dialog[open]::backdrop { animation: lv-fade .26s ease both; }
+.legal-v2 .lv-dialog.is-busy .lv-primary:disabled { background: var(--lv-ink); border-color: var(--lv-ink); color: #fff; }
+.lv-dialog.is-busy::before { content: ''; position: absolute; inset: 0 0 auto; height: 3px; background: linear-gradient(90deg, transparent, var(--lv-ink), transparent) no-repeat 0 0 / 40% 100%; animation: lv-indeterminate 1.1s var(--lv-ease-in-out) infinite; }
+
+/* Stage changes and result sections settle in sequence. */
+.lv-work-inner > :is(.lv-summary, .lv-settings, .lv-results, .lv-appendix, .lv-qa, .lv-release) { animation: lv-rise .45s var(--lv-ease) both; }
+.lv-work-inner > .lv-settings { animation-delay: .05s; }
+.lv-work-inner > .lv-results { animation-delay: .1s; }
+.lv-work-inner > .lv-appendix { animation-delay: .16s; }
+.lv-work-inner > .lv-qa { animation-delay: .22s; }
+.lv-work-inner > .lv-release { animation-delay: .28s; }
+.lv-stats > div { animation: lv-rise .45s var(--lv-ease) both; animation-delay: calc(var(--i, 0) * 60ms); }
+.lv-riskbar span { transform-origin: left center; animation: lv-grow-x .8s var(--lv-ease) both; animation-delay: calc(.25s + var(--i, 0) * 90ms); }
+.lv-steps li.current .lv-step-dot { animation: lv-pop .35s var(--lv-ease) both; }
+.lv-agents > li { animation: lv-rise .4s var(--lv-ease) both; }
+.lv-agents > li:nth-child(2) { animation-delay: .05s; }
+.lv-agents > li:nth-child(3) { animation-delay: .1s; }
+.lv-agents > li:nth-child(4) { animation-delay: .15s; }
+.lv-agents > li:nth-child(5) { animation-delay: .2s; }
+
+/* Findings: the first list and live arrivals rise in; a decision re-mounts its card without re-playing that. */
+.lv-results:is(.is-entering, .is-live) .lv-finding { animation: lv-rise .42s var(--lv-ease) both; animation-delay: calc(var(--i, 0) * 45ms); }
+.lv-finding { transition: border-color .25s ease, background-color .25s ease, box-shadow .25s ease; }
+.lv-finding:hover { border-color: var(--lv-line-strong); box-shadow: 0 10px 28px -22px rgba(26, 25, 21, .45); }
+.lv-finding::before { transition: background-color .3s ease; }
+.lv-finding-body, .lv-settings-body, .lv-disclosure[open] > .lv-disclosure-body, .lv-party-manual { animation: lv-rise .3s var(--lv-ease) both; }
+.lv-decision, .lv-party-options .selected .lv-party-radio svg { animation: lv-pop .3s var(--lv-ease) both; }
+.lv-check-result, .lv-qa-log > li, .lv-review-issue { animation: lv-rise .35s var(--lv-ease) both; }
+.lv-qa-pending .lv-qa-a { display: grid; gap: 8px; padding-top: 4px; }
+.lv-qa-pending .lv-sk { height: 12px; border-radius: 4px; }
+.lv-qa-pending .lv-sk + .lv-sk { width: 62%; }
+.lv-qa-pending small { font-size: 12px; color: var(--lv-ink-4); }
+.legal-v2 .lv-backdrop { animation: lv-fade .2s ease both; }
+.lv-chip { transition: background-color .3s ease, color .3s ease; }
+.lv-segmented button, .lv-segmented-radio label, .lv-view-switch button { transition: background-color .2s ease, color .2s ease, box-shadow .2s ease; }
+.lv-history button { transition: background-color .15s ease, box-shadow .15s ease; animation: lv-rise .35s var(--lv-ease) both; animation-delay: calc(min(var(--i, 0), 10) * 30ms); }
+.lv-navigation button { transition: background-color .15s ease, color .15s ease; }
+
+/* The document slides in beside the work; a located clause flashes, and redaction marks ink in while being checked. */
+.lv-document { animation: lv-slide-in .34s var(--lv-ease) both; }
+.lv-paragraph.focused { animation: lv-located 1.6s var(--lv-ease) both; }
+.lv-document.is-redaction .lv-redacted { animation: lv-ink .55s var(--lv-ease) .3s both; }
+
 /* ---------- Responsive ---------- */
 .legal-v2 .lv-mobile-only, .legal-v2 .lv-backdrop { display: none; }
 @media (max-width: 1280px) {
@@ -638,7 +797,14 @@
   .lv-stats > div:nth-child(4) { padding-left: 0; border-left: 0; }
   .lv-stats dd { font-size: 28px; }
   .lv-settings-summary { display: none; }
-  .lv-progress-card { padding: 16px; }
+  .lv-live { padding: 16px; gap: 14px; }
+  .lv-live-head { flex-wrap: wrap; }
+  .lv-live-clock { order: 3; width: 100%; justify-content: flex-start; text-align: left; }
+  .lv-live-head .lv-art { width: 30px; height: auto; }
+  .lv-activity-list li { grid-template-columns: 58px minmax(0, 1fr); gap: 8px; }
+  .lv-phases { gap: 6px 12px; }
+  .lv-phases li + li::before { display: none; }
+  .lv-skeleton { padding-top: 10vh; }
   .lv-finding { padding: 14px 16px 14px 18px; }
   .lv-memo { grid-template-columns: 1fr; gap: 4px; }
   .lv-memo dd + dt { margin-top: 8px; }
@@ -663,5 +829,5 @@
   .lv-view-switch button { padding: 0 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .legal-v2 *, .legal-v2 *::before, .legal-v2 *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  :is(.legal-v2, .lv-gate) *, :is(.legal-v2, .lv-gate) *::before, :is(.legal-v2, .lv-gate) *::after, .legal-v2 .lv-dialog::backdrop { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

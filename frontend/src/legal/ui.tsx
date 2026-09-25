@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import type { Catalog } from './types';
 import { splitRedactions } from './text';
@@ -19,6 +19,21 @@ export function RichText({ text }: { text: string }) {
     : <span className="lv-redacted" key={i}><span className="lv-sr">【</span>{part.text.slice(1, -1)}<span className="lv-sr">】</span></span>)}</>;
 }
 
+/** A check mark that draws itself in when it first appears. */
+export function DrawnCheck({ size = 12 }: { size?: number }) {
+  return <svg className="lv-drawn-check" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth={2.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" pathLength={1} /></svg>;
+}
+
+/**
+ * A count that runs up when it appears and eases between values. The digits
+ * are drawn by a CSS counter; the real value stays in the text for assistive
+ * technology, copy and tests.
+ */
+export function CountUp({ value }: { value: number }) {
+  return <><span className="lv-countup" style={{ '--lv-n': value } as CSSProperties} aria-hidden="true" /><span className="lv-sr">{value}</span></>;
+}
+
 /** A label/control row; controls carry their own accessible names. */
 export function FormRow({ label, note, children }: { label: string; note?: string; children: ReactNode }) {
   return <div className="lv-row">
@@ -28,8 +43,8 @@ export function FormRow({ label, note, children }: { label: string; note?: strin
 }
 
 /** Native modal supplies focus containment, Escape and return-focus behavior. */
-export function ConfirmDialog({ title, children, confirmLabel, busy, onCancel, onConfirm }: {
-  title: string; children: ReactNode; confirmLabel: string; busy: boolean;
+export function ConfirmDialog({ title, children, confirmLabel, busyLabel = '正在处理…', busy, onCancel, onConfirm }: {
+  title: string; children: ReactNode; confirmLabel: string; busyLabel?: string; busy: boolean;
   onCancel: () => void; onConfirm: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -43,7 +58,7 @@ export function ConfirmDialog({ title, children, confirmLabel, busy, onCancel, o
     const frame = requestAnimationFrame(() => cancelRef.current?.focus());
     return () => { cancelAnimationFrame(frame); dialog?.close(); if (previous?.isConnected) previous.focus(); };
   }, []);
-  return <dialog ref={ref} className="lv-dialog" aria-labelledby="lv-dialog-title"
+  return <dialog ref={ref} className={`lv-dialog ${busy ? 'is-busy' : ''}`} aria-labelledby="lv-dialog-title" aria-busy={busy || undefined}
     onKeyDown={event => {
       if (event.key !== 'Tab') return;
       const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]'));
@@ -61,7 +76,7 @@ export function ConfirmDialog({ title, children, confirmLabel, busy, onCancel, o
     <div className="lv-dialog-body">{children}</div>
     <div className="lv-dialog-actions">
       <button ref={cancelRef} type="button" className="lv-secondary" disabled={busy} onClick={onCancel}>取消</button>
-      <button type="button" className="lv-primary" disabled={busy} onClick={onConfirm}>{busy && <Spinner />}{busy ? '正在处理…' : confirmLabel}</button>
+      <button type="button" className="lv-primary" disabled={busy} onClick={onConfirm}>{busy && <Spinner />}{busy ? busyLabel : confirmLabel}</button>
     </div>
   </dialog>;
 }

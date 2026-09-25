@@ -10,9 +10,10 @@ export function FollowUp({ review, blocks, answers, question, busy, consent, onQ
   review: Review; blocks: Block[]; answers: Answer[]; question: string; busy: boolean; consent: boolean;
   onQuestion: (value: string) => void; onConsent: (value: boolean) => void; onAsk: () => void; onLocate: (id: string) => void;
 }) {
+  const pending = busy && Boolean(question.trim());
   return <section className="lv-qa" aria-labelledby="legal-qa-title">
     <div className="lv-section-head"><h2 id="legal-qa-title">合同问答</h2></div>
-    {answers.length > 0 && <ol className="lv-qa-log">{answers.map(a => <li key={a.id}>
+    {(answers.length > 0 || pending) && <ol className="lv-qa-log">{answers.map(a => <li key={a.id}>
       <p className="lv-qa-q">{a.question}</p>
       <div className="lv-qa-a">
         <p>{a.answer || (a.status === 'failed' ? '回答失败，请重试。' : '处理中，请稍后刷新。')}</p>
@@ -22,8 +23,13 @@ export function FollowUp({ review, blocks, answers, question, busy, consent, onQ
         </div>}
         {a.uncertain && <small className="lv-qa-uncertain">依据不足，建议人工核实。</small>}
       </div>
-    </li>)}</ol>}
-    {!answers.length && <div className="lv-qa-suggest">{SUGGESTED.map(q => <button key={q} type="button" onClick={() => onQuestion(q)}>{q}</button>)}</div>}
+    </li>)}
+      {pending && <li className="lv-qa-pending" role="status">
+        <p className="lv-qa-q">{question.trim()}</p>
+        <div className="lv-qa-a"><span className="lv-sk" /><span className="lv-sk" /><small>正在对照合同原文作答…</small></div>
+      </li>}
+    </ol>}
+    {!answers.length && !pending && <div className="lv-qa-suggest">{SUGGESTED.map(q => <button key={q} type="button" onClick={() => onQuestion(q)}>{q}</button>)}</div>}
     <div className="lv-composer">
       <textarea aria-label="追问本轮审查" maxLength={1500} rows={1} value={question} disabled={busy} onChange={e => onQuestion(e.target.value)} placeholder="就本合同提问" />
       <button className="lv-send" aria-label="发送追问" disabled={busy || !question.trim() || !consent} onClick={onAsk}>{busy ? <Spinner /> : <ArrowUp {...ic} size={18} />}</button>

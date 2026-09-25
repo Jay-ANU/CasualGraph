@@ -10,7 +10,7 @@ import { emptyTransactionInputs, transactionAmount } from './transactionInput';
 import { changeScenario, currentScenario, scenarioRoleValid } from './scenarioInput';
 import { CONTRACT_STATUS, REVIEW_STATUS, STEPS, fileTitle } from './labels';
 import { ReviewReport } from './report';
-import { ConfirmDialog, Spinner } from './ui';
+import { ConfirmDialog, CountUp, DrawnCheck } from './ui';
 import { ic } from './icon';
 import { Sidebar } from './Sidebar';
 import { Welcome } from './Welcome';
@@ -71,8 +71,14 @@ export default class LegalDesk extends React.Component<Props, State> {
     document.title = '合同审查 · CausalGraph';
     void this.initialize();
     this.timer = setInterval(() => void this.poll(), 2500);
+    document.addEventListener('visibilitychange', this.refreshOnReturn);
   }
-  componentWillUnmount() { this.live = false; this.generation++; clearInterval(this.timer); document.title = this.priorTitle; }
+  componentWillUnmount() {
+    this.live = false; this.generation++; clearInterval(this.timer); document.title = this.priorTitle;
+    document.removeEventListener('visibilitychange', this.refreshOnReturn);
+  }
+  /** Background tabs throttle timers; catch up as soon as the page is visible again. */
+  private refreshOnReturn = () => { if (document.visibilityState === 'visible') void this.poll(); };
   private async initialize() {
     this.setState({ loading: true, error: '' });
     try {
@@ -353,7 +359,7 @@ export default class LegalDesk extends React.Component<Props, State> {
       <div className="lv-stepbar">
         <nav className="lv-steps" aria-label="合同审查步骤"><ol>{STEPS.map((label, index) =>
           <li key={label} className={index === step ? 'current' : index < step ? 'complete' : ''} aria-current={index === step ? 'step' : undefined}>
-            <span className="lv-step-dot">{index < step ? <Check {...ic} size={12} strokeWidth={2.5} /> : index + 1}</span><span className="lv-step-label">{label}</span>
+            <span className="lv-step-dot">{index < step ? <DrawnCheck size={12} /> : index + 1}</span><span className="lv-step-label">{label}</span>
           </li>)}</ol></nav>
         <div className="lv-view-switch" role="group" aria-label="工作区视图">
           <button aria-pressed={!s.showDocument} onClick={() => this.setState({ showDocument: false })}>审查</button>
@@ -371,7 +377,7 @@ export default class LegalDesk extends React.Component<Props, State> {
               onCompare={() => void this.run(this.showOriginal)} onTerms={terms => this.setState({ terms, preview: null })}
               onExcluded={excludedTerms => this.setState({ excludedTerms, preview: null })} onPreview={() => void this.run(() => this.redact(false))}
               onConfirm={() => this.setState({ confirmingRedaction: true, error: '' })} />
-            : !r ? <section className="lv-stage" aria-labelledby="legal-setup-title">
+            : !r ? <section className="lv-stage lv-enter" aria-labelledby="legal-setup-title">
               <div className="lv-stage-head"><h2 id="legal-setup-title">审查设置</h2></div>
               {setup}
             </section>
@@ -411,7 +417,7 @@ export default class LegalDesk extends React.Component<Props, State> {
             <p className="lv-footnote">审查结果仅供参考，不构成法律意见。</p>
           </div>
           {done && counts && counts.actionable > 0 && <div className="lv-dock" role="region" aria-label="处理进度">
-            <span className="lv-dock-text">已处理 <strong>{handled}/{counts.actionable}</strong></span>
+            <span className="lv-dock-text">已处理 <strong><CountUp value={handled} />/{counts.actionable}</strong></span>
             <span className="lv-dock-bar" aria-hidden="true"><i style={{ width: `${Math.round((handled / counts.actionable) * 100)}%` }} /></span>
             <button className="lv-secondary lv-btn-sm" onClick={() => scrollTo('legal-release')}>导出<ArrowRight {...ic} size={14} /></button>
           </div>}
@@ -439,6 +445,7 @@ export default class LegalDesk extends React.Component<Props, State> {
       {s.mobileMenu && <button className="lv-backdrop" aria-label="关闭侧栏" onClick={this.toggleMenu} />}
       <Sidebar open={s.mobileMenu} busy={s.busy} loading={s.loading} tab={s.tab} user={this.props.user} matters={s.matters} workspace={s.workspace}
         contracts={s.contracts} currentId={c?.id} policyCount={s.policies.length} query={s.historyQuery} onQuery={historyQuery => this.setState({ historyQuery })}
+        activeReview={c && r && ['queued', 'running'].includes(r.status) ? { contractId: c.id, status: r.status } : undefined}
         onNew={this.clear} onTab={tab => this.setState({ tab, mobileMenu: false })} onOpen={id => void this.run(() => this.openContract(id))}
         onMatter={id => {
           const m = s.matters.find(x => x.id === id); if (!m) return;
@@ -463,7 +470,8 @@ export default class LegalDesk extends React.Component<Props, State> {
         {s.caps && !s.caps.encryption_configured && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>安全存储未配置，暂不可上传，请联系管理员。</span></div>}
         {s.modelError && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>{s.modelError}</span><button className="lv-text-button" onClick={() => void this.loadModels()}>重新加载</button></div>}
         <input ref={el => { this.uploadInput = el; }} type="file" accept=".docx,.pdf,.txt" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; this.queueUpload(file); }} />
-        {s.loading ? <main className="lv-loading" role="status"><Spinner />加载中…</main>
+        {s.loading ? <main className="lv-skeleton" role="status"><span className="lv-sr">加载中…</span>
+            <span className="lv-sk lv-sk-title" /><span className="lv-sk lv-sk-line" /><span className="lv-sk lv-sk-card" /></main>
           : !s.workspace ? <main id="legal-main" className="lv-loading"><AlertCircle {...ic} size={22} /><h1>工作空间加载失败</h1>
             <p>请检查网络后重试。</p><button className="lv-primary" onClick={() => void this.initialize()}>重试</button></main>
           : s.tab === 'policies' ? <PolicyEditor catalog={s.caps?.scenario_catalog} policies={s.policies} busy={s.busy}
@@ -479,7 +487,7 @@ export default class LegalDesk extends React.Component<Props, State> {
             }} />
           : this.renderWorkspace(c)}
       </div>
-      {s.pendingFile && <ConfirmDialog title="上传确认" confirmLabel="同意并上传" busy={s.busy}
+      {s.pendingFile && <ConfirmDialog title="上传确认" confirmLabel="同意并上传" busyLabel="正在上传并脱敏…" busy={s.busy}
         onCancel={() => this.setState({ pendingFile: null, error: '' })} onConfirm={() => void this.run(() => this.upload(s.pendingFile || undefined))}>
         <div className="lv-upload-file"><FileText {...ic} size={18} /><span>{s.pendingFile.name}<small>{(s.pendingFile.size / 1024).toFixed(1)} KB</small></span></div>
         <ul className="lv-dialog-points">
@@ -490,17 +498,17 @@ export default class LegalDesk extends React.Component<Props, State> {
         <details className="lv-disclosure-text"><summary>《原件处理说明》</summary><p>{s.caps?.upload_disclosure?.notice}</p></details>
         {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
       </ConfirmDialog>}
-      {s.confirmingRedaction && <ConfirmDialog title="确认脱敏结果" confirmLabel="确认并继续" busy={s.busy}
+      {s.confirmingRedaction && <ConfirmDialog title="确认脱敏结果" confirmLabel="确认并继续" busyLabel="正在锁定脱敏结果…" busy={s.busy}
         onCancel={() => this.setState({ confirmingRedaction: false, error: '' })} onConfirm={() => void this.run(() => this.redact(true))}>
         <p>确认后脱敏结果将锁定，模型分析需在下一步单独授权。</p>
         {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
       </ConfirmDialog>}
-      {s.exportFormat && <ConfirmDialog title="导出确认" confirmLabel="确认导出" busy={s.busy}
+      {s.exportFormat && <ConfirmDialog title="导出确认" confirmLabel="确认导出" busyLabel="正在生成文件…" busy={s.busy}
         onCancel={() => this.setState({ exportFormat: null, error: '' })} onConfirm={() => { const format = s.exportFormat; if (format) void this.run(() => this.download(format, true)); }}>
         <p>修订版包含未脱敏的真实信息及删除内容，请确认接收范围。导出不会签署合同或覆盖原文件。</p>
         {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
       </ConfirmDialog>}
-      {s.archivePolicy && <ConfirmDialog title="归档规范" confirmLabel="确认归档" busy={s.busy}
+      {s.archivePolicy && <ConfirmDialog title="归档规范" confirmLabel="确认归档" busyLabel="正在归档…" busy={s.busy}
         onCancel={() => this.setState({ archivePolicy: null, error: '' })} onConfirm={() => void this.run(async () => {
           const policy = this.state.archivePolicy; const workspace = this.state.workspace; if (!policy || !workspace) return;
           await this.api(`/legal/policies/${policy.id}?org_id=${encodeURIComponent(workspace.org_id)}&version=${policy.version}`, { method: 'DELETE' });

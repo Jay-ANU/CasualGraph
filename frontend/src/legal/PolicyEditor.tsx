@@ -16,7 +16,7 @@ export function PolicyEditor({ catalog, policies, busy, onSave, onArchive }: {
   const scene = currentScenario(catalog, draft.contract_type);
   const validScope = usableCatalog(catalog) && (draft.contract_type === '全部' || !!scene) && draft.our_roles.every(r => scene?.roles.some(x => x.value === r));
   return <main id="legal-main" tabIndex={-1} className="lv-policy-page">
-    <div className="lv-policy-inner">
+    <div className="lv-policy-inner lv-enter">
       <h1>公司规范</h1>
       <p className="lv-lede">审查时将逐条对照公司内部要求。</p>
       <div className="lv-policy-layout">

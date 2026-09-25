@@ -22,7 +22,7 @@ export function DocumentPane({ contract, review, blocks, visibleBlocks, query, s
     if (b.page != null && previous != null && b.page !== previous) pageBreaks.add(b.id);
     return b.page ?? previous;
   }, null);
-  return <section className="lv-document" aria-label="脱敏合同正文">
+  return <section className={`lv-document ${contract.status === 'redaction_pending' ? 'is-redaction' : ''}`} aria-label="脱敏合同正文">
     <header>
       <div><strong>合同正文</strong><span className="lv-chip">已脱敏</span></div>
       <button className="lv-icon" aria-label="关闭原文面板" onClick={onClose}><X {...ic} size={18} /></button>
