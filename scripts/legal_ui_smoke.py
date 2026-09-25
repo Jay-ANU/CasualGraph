@@ -104,6 +104,7 @@ try:
         page.get_by_role('heading',name='今天需要审查哪份合同？').wait_for()
         expect(page.get_by_label('审查模型')).to_have_value('glm-5.2');assert page.locator('optgroup').count()==5
         page.screenshot(path=str(OUT/'legal-v2-welcome-desktop.png'),full_page=True)
+        page.get_by_role('button',name='销售合同',exact=True).click()
         page.get_by_label('审查关注点').fill('重点关注付款安排')
         page.locator('input[type=file]').set_input_files({'name':'test.txt','mimeType':'text/plain','buffer':'合成合同'.encode()})
         page.get_by_role('button',name='对照真实原文（仅有编辑权限可见）').click()
@@ -112,6 +113,7 @@ try:
         page.get_by_role('button',name='已检查，确认脱敏',exact=True).click()
         expect(page.get_by_label('我方角色')).to_have_value('')
         # All configured routes and role sets render from the backend catalogue.
+        expect(page.get_by_label('合同类型',exact=True)).to_have_value('销售合同')
         for scene in SCENARIOS['scenarios']:
             page.get_by_label('合同类型',exact=True).select_option(scene['label'])
             expect(page.get_by_label('我方角色')).to_have_value('')

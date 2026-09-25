@@ -9,7 +9,7 @@ import { findingCounts, findingStatus } from './findingStatus';
 import { emptyTransactionInputs, transactionAmount } from './transactionInput';
 import { ReviewContext } from './ReviewContext';
 import { ScenarioPicker } from './ScenarioPicker';
-import { changeScenario, scenarioRoleValid } from './scenarioInput';
+import { changeScenario, currentScenario, scenarioRoleValid } from './scenarioInput';
 
 type Props = { user: User | null; logout: () => void; request?: Api };
 type State = {
@@ -158,11 +158,12 @@ export default class LegalDesk extends React.Component<Props, State> {
     if (!disclosure) throw new Error('后端尚未支持原件上传说明，请先完成后端升级。');
     if (!window.confirm(`${disclosure.notice}\n存储地域（运营方声明，未核验）：${disclosure.storage_region}\n确认授权上传这份原件？`)) return;
     const workspace = this.state.workspace;
+    const contractType = !this.state.contract && currentScenario(this.state.caps?.scenario_catalog, this.state.contractType) ? this.state.contractType : '采购合同';
     const form = new FormData(); form.set('matter_id', workspace.matter_id); form.set('file', file); form.set('original_upload_confirmed', 'true'); form.set('upload_notice_version', disclosure.version);
     const contract = await this.api<Contract>('/legal/contracts', { method: 'POST', body: form });
     if (!this.live) return;
     this.generation++;
-    this.setState({ ...emptyTransactionInputs(), date: '', ourRole: '', instructions: this.state.contract ? '' : this.state.instructions, contractType: '采购合同', originalBlocks: null, ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '', contract, review: null, preview: null, terms: '', consent: false, selectedBlock: null,
+    this.setState({ ...emptyTransactionInputs(), date: '', ourRole: '', instructions: this.state.contract ? '' : this.state.instructions, contractType, originalBlocks: null, ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '', contract, review: null, preview: null, terms: '', consent: false, selectedBlock: null,
       answers: [], question: '', showDocument: true, setupOpen: true, tab: 'review', questionConsent: false });
     history.replaceState(null, '', `/legal?contract=${encodeURIComponent(contract.id)}`);
     await this.refreshList(workspace);
@@ -311,7 +312,7 @@ export default class LegalDesk extends React.Component<Props, State> {
           <main className="lv-welcome" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); if (e.dataTransfer.files.length !== 1) { this.setState({ error: '请一次上传一份合同。' }); return; } void this.run(() => this.upload(e.dataTransfer.files[0])); }}>
             <div className="lv-welcome-content"><div className="lv-intro-mark"><Icon name="document" /></div><p className="lv-eyebrow">YOUR CONTRACT, YOUR SIDE</p><h1>今天需要审查哪份合同？</h1><p className="lv-subtitle">从你的立场看条款，把风险、依据和修改放在一起。</p>
               <div className="lv-composer"><textarea aria-label="审查关注点" value={s.instructions} maxLength={1500} onChange={e => this.setState({ instructions: e.target.value, consent: false })} placeholder="有什么特别关注的？例如预付款保障、交付时间，或一条不确定的约定。" /><div className="lv-composer-footer"><button className="lv-attach" disabled={!canUpload} onClick={() => this.uploadInput?.click()} aria-label="选择一份合同开始"><Icon name="attach" />上传合同</button><ModelSelect {...modelProps} /></div></div>
-              <div className="lv-starters">{TYPES.slice(0, 3).map(t => <button key={t} className={s.contractType === t ? 'selected' : ''} onClick={() => this.setState({ contractType: t })}><Icon name="file" />{t}</button>)}</div>
+              <div className="lv-starters">{s.caps?.scenario_catalog?.scenarios.filter(scene => scene.group === '常用合同').map(scene => <button key={scene.id} className={s.contractType === scene.label ? 'selected' : ''} onClick={() => this.setState(changeScenario(s.caps?.scenario_catalog, scene.label))}><Icon name="file" />{scene.label}</button>)}</div>
               <p className="lv-file-hint">拖入文件也可以 · DOCX、文字型 PDF、TXT · 最大 10 MB</p><div className="lv-trust"><Icon name="lock" /><span>原件先上传后端，再解析、加密保存并脱敏；不是浏览器本地脱敏。模型外发另行确认。</span></div>
             </div><p className="lv-bottom-note">法律依据来自外部检索，公司规范单独存储。AI 意见需人工核验。</p>
           </main> : <div className={`lv-workbench ${s.showDocument ? 'with-document' : ''}`}>
