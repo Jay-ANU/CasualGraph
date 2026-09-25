@@ -62,6 +62,8 @@ def parse_contract(data: bytes, filename: str) -> dict[str, Any]:
                 blocks.append({'id': f'p{len(blocks) + 1}', 'text': line.strip(), 'anchor': None, 'page': None})
     else:
         raise ValueError('仅支持 DOCX、可复制文字的 PDF 和 UTF-8 TXT。')
+    if any(re.search(r'【(?:补充)?脱敏\d+】', b['text']) for b in blocks):
+        raise ValueError('原件包含系统保留的脱敏代称，请使用原始审查副本。')
     if not blocks:
         raise ValueError('没有提取到可审查正文。')
     if len(blocks) > MAX_BLOCKS or sum(len(b['text']) for b in blocks) > MAX_TEXT:
@@ -70,49 +72,10 @@ def parse_contract(data: bytes, filename: str) -> dict[str, Any]:
             'content_hash': hashlib.sha256(data).hexdigest()}
 
 
-PATTERNS = (
-    ('邮箱', re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}')),
-    ('手机号', re.compile(r'(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)')),
-    ('证件号', re.compile(r'(?<![\dA-Za-z])\d{17}[\dXx](?![\dA-Za-z])')),
-    ('统一信用代码', re.compile(r'(?<![A-Z0-9])[159Y][1239][0-9A-HJ-NPQRTUWXY]{16}(?![A-Z0-9])')),
-    ('账号', re.compile(r'(?<!\d)\d{16,19}(?!\d)')),
-)
-FIELD = re.compile(r'(?:联系人|法定代表人|签约代表|地址|开户行|账号|账户|公司名称|单位名称)\s*[：:]\s*([^\n；;，,]{2,70})')
-COMPANY = re.compile(r'[\u4e00-\u9fffA-Za-z0-9（）()]{2,45}?(?:有限责任公司|股份有限公司|有限公司)')
-
-
-def redact_blocks(blocks: list[dict], additional_terms: list[str] | None = None) -> tuple[list[dict], dict[str, str]]:
-    """Amounts, dates and percentages are retained. Human review is mandatory."""
-    entities: dict[str, str] = {}
-    for block in blocks:
-        text = block['text']
-        for kind, pattern in PATTERNS:
-            for m in pattern.finditer(text):
-                entities.setdefault(m.group(), kind)
-        for m in FIELD.finditer(text):
-            value = m.group(1).strip()
-            if not value.startswith(('【', '[', '___')):
-                entities.setdefault(value, '主体信息')
-        previous_end = -1
-        for m in COMPANY.finditer(text):
-            value = m.group()
-            if m.start() == previous_end:
-                value = re.sub(r'^(?:与|和|及)', '', value)
-            entities.setdefault(value, '公司')
-            previous_end = m.end()
-    for value in additional_terms or []:
-        value = value.strip()
-        if value:
-            entities[value] = '人工指定'
-    ordered = sorted(entities, key=lambda x: (-len(x), x))
-    replacement = {value: f'【脱敏{index + 1}】' for index, value in enumerate(ordered)}
-    mapping = {v: k for k, v in replacement.items()}
-    pattern = re.compile('|'.join(re.escape(x) for x in ordered)) if ordered else None
-    redacted = []
-    for block in blocks:
-        text = pattern.sub(lambda m: replacement[m.group()], block['text']) if pattern else block['text']
-        redacted.append({**block, 'text': text})
-    return redacted, mapping
+def redact_blocks(blocks: list[dict], additional_terms: list[str] | None = None,
+                  excluded_terms: list[str] | None = None) -> tuple[list[dict], dict[str, str]]:
+    from legal.redaction_detection import redact
+    return redact(blocks, additional_terms, excluded_terms)
 
 
 def restore(text: str, mapping: dict[str, str]) -> str:

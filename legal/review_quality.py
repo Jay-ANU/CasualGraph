@@ -6,8 +6,9 @@ import re
 from collections import Counter
 from difflib import SequenceMatcher
 from typing import Any
+from legal.law_evidence import NON_AUTHORITIES
 
-TOKENS = re.compile(r'【脱敏\d+】')
+TOKENS = re.compile(r'【(?:补充)?脱敏\d+】')
 ARTICLE = re.compile(r'第[一二三四五六七八九十百千万零〇两\d]+条')
 CONTROL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
 
@@ -45,6 +46,8 @@ def edit_warnings(original: str, replacement: str) -> list[str]:
         warnings.append('修改文本为空、过长或包含非法字符。')
     if Counter(TOKENS.findall(original)) != Counter(TOKENS.findall(replacement)):
         warnings.append('建议改变了脱敏主体的出现次数，请人工核对主体及义务归属。')
+    elif TOKENS.findall(original) != TOKENS.findall(replacement):
+        warnings.append('建议交换了脱敏主体的顺序，可能改变权利义务方向；请重新审查。')
     if original == replacement:
         warnings.append('建议与原文相同。')
     elif len(original) > 20 and SequenceMatcher(None, original, replacement, autojunk=False).ratio() < .35:
@@ -91,6 +94,9 @@ def validate(raw: Any, rules: list[dict], blocks: list[dict], sources: list[dict
             rejected += 1
             continue
         refs = citations(item.get('citations'), sources)
+        source_types = {s['id']: s.get('source_kind') for s in sources}
+        if kind == 'legal':
+            refs = [c for c in refs if source_types.get(c['source_id']) not in NON_AUTHORITIES]
         evidence_ok = kind != 'legal' or bool(refs)
         missing = [text(s, 500) for s in rows(item.get('missing_facts'))[:10] if isinstance(s, str) and s.strip()]
         warnings = []
@@ -204,14 +210,29 @@ def consolidate(batches: dict) -> tuple[list[dict], list[dict]]:
     found.sort(key=lambda f: (rank[f['severity']], f.get('block_id') or '', f['id']))
     return found, coverage
 
+def finding_status(f: dict) -> str:
+    if f.get('verification_status') == 'rejected':
+        return 'rejected'
+    # A matched official-page excerpt is traceability, not proof that the
+    # provision was effective and applicable on the transaction date.
+    if (f.get('verification_status') != 'supported' or f.get('evidence_status') == 'unverified'
+            or f.get('missing_facts') or (f.get('kind') == 'legal' and f.get('version_status') != 'verified')):
+        return 'unconfirmed'
+    return 'supported'
+
+
 def summary(findings: list[dict], coverage: list[dict]) -> dict:
-    return {'high': sum(f['severity'] == 'high' for f in findings),
-            'medium': sum(f['severity'] == 'medium' for f in findings),
-            'low': sum(f['severity'] == 'low' for f in findings),
-            'needs_confirmation': sum(not f.get('revision_allowed') or f['kind'] == 'legal' for f in findings),
-            'checked_rules': sum(c['status'] in ('reviewed', 'not_applicable') for c in coverage),
+    supported = [f for f in findings if finding_status(f) == 'supported']
+    return {'high': sum(f['severity'] == 'high' for f in supported),
+            'medium': sum(f['severity'] == 'medium' for f in supported),
+            'low': sum(f['severity'] == 'low' for f in supported),
+            'unconfirmed': sum(finding_status(f) == 'unconfirmed' for f in findings),
+            'rejected_candidates': sum(finding_status(f) == 'rejected' for f in findings),
+            'needs_confirmation': sum(finding_status(f) != 'rejected' and (not f.get('revision_allowed') or f['kind'] == 'legal') for f in findings),
+            'checked_rules': sum(c['status'] in ('reviewed', 'not_applicable') and c.get('verification_status') == 'supported' for c in coverage),
             'total_rules': len(coverage),
-            'notice': '这是审查覆盖及待办统计，不是法律安全评分；没有意见不代表没有风险。'}
+            'notice': '风险数只包含已获模型及证据支持的候选意见；待核实和已否定项单列。规则覆盖不等于合同风险覆盖。'}
+
 
 def apply_cross_edit_checks(findings: list[dict], raw: Any) -> None:
     """Every proposed edit needs an explicit whole-contract compatibility result."""

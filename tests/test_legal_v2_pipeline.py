@@ -110,3 +110,20 @@ def test_followup_unfounded_legal_claim_not_published():
 def test_followup_fact_answer_keeps_clickable_reference():
     answer=validate_answer({'answer':'付款时间写的是验收后90日。','block_refs':[{'block_id':'p1','quote':'验收后90日'}],'uncertain':False},[{'id':'p1','text':'验收后90日付款。'}],[])
     assert answer['block_refs'] and '90日' in answer['answer']
+
+
+def test_standard_engine_receives_frozen_brief_and_cannot_skip_material_gate(runtime):
+    from legal.transaction_brief import build_brief
+    cp = runtime['contract']['payload']
+    cp['redacted_blocks'][0]['text'] += '验收标准详见附件一。'
+    payload = runtime['job']['payload']
+    payload['profile']['transaction_context'] = {'performance_stage':'谈判中', 'attachments_status':'存在未提供附件', 'deal_value':'100.05'}
+    payload['transaction_brief'] = build_brief(payload['profile'], cp['redacted_blocks'], [])
+    seen = []
+    def model(system, data):
+        seen.append(data)
+        return fake_model(system, data)
+    run(runtime, model=model)
+    assert runtime['job']['status'] == 'partial'
+    assert seen and all(d['transaction_brief']['context']['deal_value'] == '100.05' for d in seen)
+    assert all(f['missing_facts'] and not f['revision_allowed'] for f in runtime['job']['payload']['findings'])

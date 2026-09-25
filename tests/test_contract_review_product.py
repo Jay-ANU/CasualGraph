@@ -332,17 +332,23 @@ def test_api_requires_permission_redaction_and_consent(db, monkeypatch):
     monkeypatch.setattr(engine, 'submit', submitted.append)
     client = TestClient(application)
     profile = {'our_role':'采购方','contract_type':'采购合同','external_processing_confirmed':True,'external_processing_provider':'ydata','model_id':'glm-5.2'}
-    upload = client.post('/legal/contracts', data={'matter_id':'m1'}, files={'file':('sample.txt','联系人：张三；付款100万元。'.encode(),'text/plain')})
+    denied = client.post('/legal/contracts', data={'matter_id':'m1'}, files={'file':('sample.txt',b'fixture','text/plain')})
+    assert denied.status_code == 409 and store.contract_list('m1') == []
+    upload = client.post('/legal/contracts', data={'matter_id':'m1', 'original_upload_confirmed':'true', 'upload_notice_version':'original-upload-v1'}, files={'file':('sample.txt','甲方；联系人：张三；付款100万元。'.encode(),'text/plain')})
     assert upload.status_code == 201
     cid = upload.json()['id']
     assert 'original_b64' not in upload.text and '张三' not in upload.text
     assert client.post(f'/legal/contracts/{cid}/reviews', json=profile).status_code == 409
     assert client.post(f'/legal/contracts/{cid}/redaction', json={'revision':1,'confirmed':True}).status_code == 200
     assert client.post(f'/legal/contracts/{cid}/reviews', json={**profile,'external_processing_confirmed':False}).status_code == 409
+    assert client.post(f'/legal/contracts/{cid}/reviews', json=profile).status_code == 422
+    profile['our_party'] = {'block_id': 'p1', 'quote': '甲方'}
+    assert '张三' in client.get(f'/legal/contracts/{cid}/original-text').text
     response = client.post(f'/legal/contracts/{cid}/reviews', json=profile)
     assert response.status_code == 202 and len(submitted) == 1
     assert client.post(f'/legal/contracts/{cid}/reviews', json=profile).json()['id'] == response.json()['id']
     assert len(submitted) == 1
     actor['id'] = 'u2'
+    assert client.get(f'/legal/contracts/{cid}/original-text').status_code == 403
     assert client.get(f'/legal/contracts/{cid}').status_code == 403
     assert client.get('/legal/reviews/'+response.json()['id']).status_code == 403
