@@ -1,0 +1,33 @@
+
+
+class QuestionRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=1500)
+    request_id: str = Field(min_length=1, max_length=80, pattern=r'^[A-Za-z0-9_-]+$')
+    external_processing_confirmed: bool = False
+
+@router.post('/reviews/{rid}/cancel')
+def cancel_review(rid: str, user: dict = Depends(get_current_user)):
+    r, c = _review(rid, user, True)
+    store.cancel_review(rid, str(user['id']), c['org_id'])
+    return _review_view(store.review(rid))
+
+@router.get('/reviews/{rid}/questions')
+def question_history(rid: str, user: dict = Depends(get_current_user)):
+    from legal import review_questions
+    _review(rid, user)
+    return {'messages': review_questions.history(rid, str(user['id']))}
+
+@router.post('/reviews/{rid}/questions')
+def ask_question(rid: str, request: QuestionRequest, user: dict = Depends(get_current_user)):
+    from legal import review_questions
+    from legal.access import assert_worker_max
+    r, c = _review(rid, user, True)
+    if not request.external_processing_confirmed:
+        raise HTTPException(409, '请明确授权把本次提问及本轮脱敏材料发送给原审查模型。')
+    def authorize():
+        assert_worker_max(str(user['id']))
+        _review(rid, user, True)
+    try:
+        return review_questions.ask(r, c, user, request.question, request.request_id, authorize)
+    except ydata.GatewayError as exc:
+        raise _gateway_failure(exc) from None
