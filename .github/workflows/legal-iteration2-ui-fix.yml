@@ -23,7 +23,7 @@ jobs:
           p=Path('frontend/src/legal/ReviewContext.tsx'); s=p.read_text()
           assert blob(s)=='e3827486f667310b2bb08031ea52bad6d9b2f540'
           a=s.index('export function sourceKindLabel'); b=s.index('export function SourceDetails')
-          labels="import type { Source } from './types';\n\n"+s[a:b]
+          labels=("import type { Source } from './types';\n\n"+s[a:b]).rstrip()+'\n'
           component=s[:a]+"import { sourceKindLabel } from './sourceLabels';\n\n"+s[b:]
           pp=Path('frontend/src/legal/parts.tsx'); parts=pp.read_text()
           assert blob(parts)=='7e4f35b245288c5430ee4b19bf6379a4508d9061'
@@ -32,7 +32,7 @@ jobs:
           assert not target.exists()
           assert blob(component)=='162838dfc8995284cc09eead1a01c554d9d1fe98'
           assert blob(parts)=='7ab62c3c737970a5c40391421032eae093624ef5'
-          assert blob(labels)=='fce1c76c76a258ec961655a8ea6a535e08f3667a'
+          assert blob(labels)=='78beba360d06f62f377b86455e9f7a2a96dd1703'
           p.write_text(component); pp.write_text(parts); target.write_text(labels)
           subprocess.run(['git','add','--',str(p),str(pp),str(target)],check=True)
           PY
