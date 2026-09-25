@@ -24,16 +24,30 @@ ROLE_FOCUS = {
     '接收方': '重点检查可识别信息范围、合理例外、合法披露、期限及不受控第三方带来的责任。',
 }
 
-def build_plan(base_rules: list[dict], blocks: list[dict], profile: dict, policies: list[dict]) -> list[dict]:
+def build_plan(base_rules: list[dict], blocks: list[dict], profile: dict, policies: list[dict], *, scenario: dict | None = None) -> list[dict]:
     full_text = '\n'.join(b['text'] for b in blocks)
     rules = deepcopy(base_rules)
     for rule in rules:
-        matches = [(key, value) for key, value in TOPICS.items() if value['rule'] == rule['id'] and any(t in full_text for t in value['terms'])]
+        if scenario:
+            rule.update(deepcopy(scenario.get('overrides', {}).get(rule['id'], {})))
+            if rule['id'] == 'termination':
+                rule['checks'] = '核对期限、终止事由、通知、补救和终止后存续义务；退款、退货只在该场景实际涉及时适用。'
+        matches = [(key, value) for key, value in TOPICS.items() if value['rule'] == rule['id'] and any(t in full_text for t in value['terms'])
+                   and (not scenario or key not in ('prepayment', 'acceptance') or scenario['id'] in ('purchase', 'sales', 'distribution'))]
         rule['topics'] = [key for key, _ in matches]
         rule['queries'] = [{'query': t['query'], 'keywords': t['keywords']} for _, t in matches]
         rule['queries'].append({'query': rule['query'], 'keywords': rule['keywords']})
         rule['queries'] = rule['queries'][:3]
-        rule['checks'] += '\n我方利益检查：' + ROLE_FOCUS.get(profile.get('our_role'), '立场不明时不要猜测。')
+        focus = (next((r['focus'] for r in scenario['roles'] if r['value'] == profile.get('our_role')), '立场不明时不要猜测。')
+                 if scenario else ROLE_FOCUS.get(profile.get('our_role'), '立场不明时不要猜测。'))
+        rule['checks'] += '\n我方利益检查：' + focus
+    if scenario:
+        for source in scenario['rules']:
+            specific = deepcopy(source)
+            specific['checks'] += '\n我方利益检查：' + profile['scenario']['role_focus']
+            specific['topics'] = [scenario['id']]
+            specific['queries'] = [{'query': specific['query'], 'keywords': specific['keywords']}]
+            rules.append(specific)
     for policy in policies:
         rules.append({'id': 'policy_' + policy['id'], 'title': policy['title'],
                       'checks': policy['text'], 'topics': [], 'queries': [], 'policy_id': policy['id']})

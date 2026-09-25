@@ -14,6 +14,13 @@ export function ReviewContext({ review, onLocate }: { review: Review; onLocate: 
   const brief = review.transaction_brief;
   const health = review.evidence_health;
   return <div className="lv-context-review">
+    {review.profile?.scenario && <details className="lv-details" aria-label="本轮场景清单">
+      <summary>本轮场景 · {review.profile.scenario.label} · {review.profile.our_role}</summary>
+      <p>{review.profile.scenario.role_focus}</p>
+      {review.profile.scenario.checks.map(check => <p key={check.id}>{check.title}</p>)}
+      <p>建议核对材料：{review.profile.scenario.materials.join('；')}</p>
+      <small>已冻结目录版本 {review.profile.scenario.catalog_version}。{review.profile.scenario.limits}</small>
+    </details>}
     {brief && <details className="lv-details" open={brief.gaps.length > 0} aria-label="交易背景与资料缺口">
       <summary>交易背景与资料缺口 · {brief.gaps.length} 项待核对</summary>
       <p className="lv-muted">用户填写的背景，未经独立核实；与合同原文分开呈现。</p>

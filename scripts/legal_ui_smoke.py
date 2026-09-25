@@ -8,6 +8,10 @@ from urllib.parse import urlparse
 from playwright.sync_api import expect, sync_playwright
 
 ROOT=Path(__file__).resolve().parents[1]
+import sys
+sys.path.insert(0, str(ROOT))
+from legal.scenarios import catalog, descriptor, get_scenario
+SCENARIOS = catalog()
 OUT=ROOT/'ui-artifacts'; OUT.mkdir(exist_ok=True)
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -33,7 +37,7 @@ def route_api(route):
         data={'allowed':allowed['value'],'plan':allowed['plan'],'required_plan':'max'}
     elif path=='/legal/workspace':data={'matter_id':'m1','org_id':'o1'}
     elif path=='/matters':data={'matters':[{'id':'m1','org_id':'o1','name':'合成测试事项'}]}
-    elif path=='/legal/capabilities':data={'model_configured':True,'encryption_configured':True,'review_engine_version':2,'followup_questions':True,'collaboration_version':1,'audit_foundation_version':1,'draft_release_version':1,'upload_disclosure':{'version':'original-upload-v1','notice':'合成上传说明：原件先到后端再脱敏。','storage_region':'合成环境'},'law_search':{'provider':'synthetic','notice':'test'}}
+    elif path=='/legal/capabilities':data={'model_configured':True,'encryption_configured':True,'review_engine_version':2,'followup_questions':True,'collaboration_version':1,'audit_foundation_version':1,'draft_release_version':1,'scenario_catalog':SCENARIOS,'scenario_catalog_version':1,'upload_disclosure':{'version':'original-upload-v1','notice':'合成上传说明：原件先到后端再脱敏。','storage_region':'合成环境'},'law_search':{'provider':'synthetic','notice':'test'}}
     elif path=='/legal/models':data={'models':[{'id':'gpt-fixture','family':'GPT'},{'id':'claude-fixture','family':'Claude'},{'id':'deepseek-fixture','family':'DeepSeek'},{'id':'kimi-fixture','family':'Kimi'},{'id':'glm-5.2','family':'GLM'}],'families':['GPT','Claude','DeepSeek','Kimi','GLM'],'default_model':'glm-5.2','notice':'synthetic'}
     elif path=='/legal/contracts' and method=='GET':data={'contracts':[contract] if any(m=='POST' and p==path for m,p in calls) else []}
     elif path=='/legal/contracts' and method=='POST':
@@ -50,9 +54,11 @@ def route_api(route):
         assert payload['external_processing_confirmed'] is True and contract['status']=='ready'
         assert payload['review_mode']=='multi_agent'
         assert payload['our_party']=={'block_id':'p1','quote':'【脱敏1】'}
-        assert payload['our_role']=='采购方' and payload['instructions']=='重点关注付款安排'
+        assert payload['contract_type']=='销售合同' and payload['our_role']=='销售方'
+        assert payload['scenario_revision']==SCENARIOS['revision']
+        assert payload['our_role']=='销售方' and payload['instructions']=='重点关注付款安排'
         assert payload['transaction_context']=={'performance_stage':'谈判中','attachments_status':'未知','business_priority':'付款与回款','deal_value':'1000000.05','currency':'CNY'}
-        review['profile'].update(transaction_context=payload['transaction_context'])
+        review['profile'].update(transaction_context=payload['transaction_context'], contract_type=payload['contract_type'], our_role=payload['our_role'], our_party=payload['our_party'], scenario=descriptor(get_scenario('销售合同'),'销售方'))
         review['transaction_brief']={'version':1,'context':payload['transaction_context'],'context_source':'user_statement_not_independently_verified',
             'material_references':[], 'gaps':[{'code':'date_unknown','message':'交易日期未提供，法律时间适用仍需核验。','source':'not_provided'}],
             'notice':'合成背景，不是已核实交易事实。'}
@@ -73,6 +79,7 @@ def route_api(route):
     elif path=='/legal/reviews/r1/questions':data={'messages':[]}
     elif path=='/legal/policies' and method=='GET':data={'policies':policies}
     elif path=='/legal/policies' and method=='POST':
+        assert req.post_data_json['contract_type']=='销售合同' and req.post_data_json['our_roles']==['销售方']
         data={**req.post_data_json,'id':'policy1','version':1}; policies.append(data)
     else:status,data=404,{'detail':'Unhandled synthetic route: '+path}
     route.fulfill(status=status,headers=headers,content_type='application/json',body=json.dumps(data,ensure_ascii=False))
@@ -97,6 +104,7 @@ try:
         page.get_by_role('heading',name='今天需要审查哪份合同？').wait_for()
         expect(page.get_by_label('审查模型')).to_have_value('glm-5.2');assert page.locator('optgroup').count()==5
         page.screenshot(path=str(OUT/'legal-v2-welcome-desktop.png'),full_page=True)
+        page.get_by_role('button',name='销售合同',exact=True).click()
         page.get_by_label('审查关注点').fill('重点关注付款安排')
         page.locator('input[type=file]').set_input_files({'name':'test.txt','mimeType':'text/plain','buffer':'合成合同'.encode()})
         page.get_by_role('button',name='对照真实原文（仅有编辑权限可见）').click()
@@ -104,7 +112,16 @@ try:
         page.get_by_role('button',name='关闭真实原文对照').click()
         page.get_by_role('button',name='已检查，确认脱敏',exact=True).click()
         expect(page.get_by_label('我方角色')).to_have_value('')
-        page.get_by_label('我方角色').select_option('采购方')
+        # All configured routes and role sets render from the backend catalogue.
+        expect(page.get_by_label('合同类型',exact=True)).to_have_value('销售合同')
+        for scene in SCENARIOS['scenarios']:
+            page.get_by_label('合同类型',exact=True).select_option(scene['label'])
+            expect(page.get_by_label('我方角色')).to_have_value('')
+            expect(page.get_by_label('我方角色').locator('option')).to_have_count(len(scene['roles'])+1)
+            page.get_by_label('我方角色').select_option(scene['roles'][0]['value'])
+        page.get_by_label('合同类型',exact=True).select_option('销售合同')
+        expect(page.get_by_label('我方角色')).to_have_value('')
+        page.get_by_label('我方角色').select_option('销售方')
         page.get_by_label('我方主体所在段落').select_option('p1')
         page.get_by_label('我方主体原文').fill('【脱敏1】')
         page.get_by_text('交易背景与法律适用',exact=True).click()
@@ -115,16 +132,24 @@ try:
         expect(page.get_by_text('交易金额必须是非负数字，最多两位小数，不使用单位或科学计数法。',exact=True)).to_be_visible()
         page.get_by_label('交易金额',exact=True).fill('1000000.05')
         consent=page.get_by_label('允许将脱敏正文、补充要求及适用公司规范经 YData 网关发送给所选模型。')
+        consent.check();page.get_by_label('合同类型',exact=True).select_option('保密协议');expect(consent).not_to_be_checked()
+        expect(page.get_by_label('我方角色')).to_have_value('')
+        consent.check()
+        expect(page.get_by_role('button',name='开始审查',exact=True)).to_be_disabled()
+        page.get_by_label('合同类型',exact=True).select_option('销售合同');page.get_by_label('我方角色').select_option('销售方')
         consent.check();page.get_by_label('审查方式').select_option('standard');expect(consent).not_to_be_checked()
         page.get_by_label('审查方式').select_option('multi_agent')
         consent.check();page.get_by_label('审查模型').select_option('claude-fixture');expect(consent).not_to_be_checked()
         page.get_by_label('审查模型').select_option('glm-5.2');consent.check()
+        page.screenshot(path=str(OUT/'legal-scenario-setup.png'),full_page=True)
         page.get_by_role('button',name='开始审查',exact=True).click()
         page.get_by_role('heading',name='有 1 项值得进一步处理').wait_for()
         expect(page.get_by_label('协作进度')).to_be_visible()
         expect(page.get_by_label('交易背景与资料缺口')).to_be_visible()
         expect(page.get_by_text('1000000.05 CNY',exact=True)).to_be_visible()
         expect(page.get_by_text('有 2 项检索未取得来源，不能据此排除法律风险。',exact=True)).to_be_visible()
+        expect(page.get_by_label('本轮场景清单')).to_contain_text('销售合同')
+        expect(page.get_by_label('本轮场景清单')).to_contain_text('账期、对账与扣款')
         page.get_by_role('button',name='接受修改',exact=True).click()
         page.locator('.lv-decision').filter(has_text='已纳入修订').wait_for()
         expect(page.get_by_role('button',name='导出文字修改稿',exact=True)).to_be_disabled()
@@ -154,12 +179,30 @@ try:
         page.screenshot(path=str(OUT/'legal-v2-mobile.png'),full_page=True)
         page.set_viewport_size({'width':1440,'height':1000})
         page.wait_for_function("document.querySelector('.lv-sidebar').getBoundingClientRect().left >= 0")
+        page.goto('http://127.0.0.1:4173/legal?contract=c1')
+        page.get_by_role('button',name='本轮审查设置',exact=False).click()
+        expect(page.get_by_label('合同类型',exact=True)).to_have_value('销售合同')
+        expect(page.get_by_label('我方角色')).to_have_value('销售方')
+        page.locator('.lv-navigation button').filter(has_text='公司规范').click()
+        page.get_by_label('规范标题').fill('合成销售账期要求')
+        page.get_by_label('规范适用合同').select_option('销售合同')
+        page.get_by_role('checkbox',name='销售方',exact=True).check()
+        page.get_by_label('规范适用合同').select_option('租赁合同')
+        expect(page.get_by_role('checkbox',name='出租方',exact=True)).not_to_be_checked()
+        page.get_by_label('规范适用合同').select_option('销售合同')
+        page.get_by_role('checkbox',name='销售方',exact=True).check()
+        page.get_by_label('审查要求').fill('仅用于合成测试：销售方核对回款起算条件，不是法律规则。')
+        page.get_by_role('button',name='保存规范',exact=True).click()
+        expect(page.locator('.lv-policy-type').filter(has_text='销售方')).to_be_visible()
+        page.screenshot(path=str(OUT/'legal-scenario-policy.png'),full_page=True)
         page.get_by_role('button',name='新建审查').click()
         page.locator('input[type=file]').set_input_files({'name':'new.txt','mimeType':'text/plain','buffer':'第二份合成合同'.encode()})
         page.get_by_text('交易背景与法律适用',exact=True).click()
+        expect(page.get_by_label('合同类型',exact=True)).to_have_value('采购合同')
+        expect(page.get_by_label('我方角色')).to_have_value('')
         expect(page.get_by_label('履行阶段')).to_have_value('未知')
         expect(page.get_by_label('交易金额',exact=True)).to_have_value('')
         assert not errors,errors
         browser.close()
-    print('PASS: actual built UI with synthetic APIs: Max gate, models, consent, collaboration, decisions, report, mobile.')
+    print('PASS: actual built UI with synthetic APIs: Max gate, 20 scenarios, role scopes, frozen settings, policies, decisions, report, mobile.')
 finally:server.shutdown()

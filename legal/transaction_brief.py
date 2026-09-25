@@ -35,7 +35,7 @@ class TransactionContext(BaseModel):
 def material_references(blocks: list[dict]) -> list[dict]:
     """Flag explicit references, not every occurrence of the word attachment."""
     refs = []
-    pattern = re.compile(r'(?:详见|参见|依据|按照|根据|以|见)[^。；\n]{0,18}(?:附件|附表|技术规格书|工作说明书)|(?:附件|附表)\s*[一二三四五六七八九十\dA-Z]')
+    pattern = re.compile(r'(?:详见|参见|依据|按照|根据|以|见)[^。；\n]{0,18}(?:附件|附表|技术规格书|工作说明书|原合同|主合同|原协议|主协议)|(?:附件|附表)\s*[一二三四五六七八九十\dA-Z]')
     for b in blocks:
         matches = list(pattern.finditer(b['text']))
         if matches:
@@ -58,6 +58,9 @@ def build_brief(profile: dict, blocks: list[dict], warnings: list[str]) -> dict:
                    '存在未提供或尚未确认的附件；无法从当前材料确认依赖附件的具体约定。')
         missing.append({'code': 'attachment_gap', 'message': message, 'source': 'user_statement_and_contract' if refs else 'user_statement'})
         barriers = [r['block_id'] for r in refs]
+    if profile.get('scenario', {}).get('id') == 'supplement' and state != '已提供全部关键附件':
+        missing.append({'code': 'original_contract_gap', 'message': '补充协议需要原合同及有效补充文件；未确认这些材料前仅出审查意见，不直接生成修订稿。', 'source': 'scenario_and_user_statement'})
+        barriers = list(dict.fromkeys(barriers + [b['id'] for b in blocks]))
     if warnings:
         missing.append({'code': 'parsing_limits', 'message': '文件解析存在范围限制，请核对提示中的内容是否影响本轮判断。', 'source': 'parser'})
     return {'version': VERSION, 'context': context, 'context_source': 'user_statement_not_independently_verified',
@@ -72,7 +75,7 @@ def apply_material_gates(checked: dict, brief: dict | None) -> None:
     if not brief:
         return
     blocked = set(brief.get('blocked_edit_blocks', []))
-    gap = '本段引用的附件或规格尚未确认完整，需补充材料后新建审查。'
+    gap = '本段依赖的附件、规格或原合同尚未确认完整，需补充材料后新建审查。'
     for f in checked.get('findings', []):
         if f.get('block_id') not in blocked:
             continue

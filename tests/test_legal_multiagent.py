@@ -187,3 +187,23 @@ def test_team_critic_and_arbiter_cannot_erase_material_gap(runtime):
     assert runtime['job']['status'] == 'partial'
     assert all(d['transaction_brief']['material_references'] for d in seen)
     assert all(f['missing_facts'] and not f['revision_allowed'] for f in runtime['job']['payload']['findings'])
+
+
+def test_frozen_sales_scene_reaches_all_review_steps(runtime, monkeypatch):
+    from legal import scenarios, review_engine
+    from legal.review_plan import build_plan
+    scene = scenarios.get_scenario('销售合同')
+    payload = runtime['job']['payload']
+    payload['profile'].update(contract_type='销售合同', our_role='销售方', scenario=scenarios.descriptor(scene, '销售方'))
+    payload['plan'] = build_plan(review_engine.RULES, runtime['contract']['payload']['redacted_blocks'], payload['profile'], [], scenario=scene)
+    expected = {r['id'] for r in scene['rules']}
+    calls=[]
+    def model(system, data):
+        calls.append(data)
+        return fake(system, data)
+    monkeypatch.setattr(v2, 'build_plan', lambda *a, **kw: pytest.fail('frozen plan must not be rebuilt'))
+    run(runtime, model=model)
+    assert runtime['job']['status'] == 'completed', runtime['job']['payload'].get('error')
+    covered = {c['rule_id'].split(':')[-1] for c in runtime['job']['payload']['coverage']}
+    assert expected <= covered
+    assert calls and all(d['profile']['scenario']['id'] == 'sales' for d in calls)
