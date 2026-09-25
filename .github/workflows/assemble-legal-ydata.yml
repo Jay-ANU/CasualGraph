@@ -2,7 +2,7 @@ name: Assemble legal YData and Max wiring
 on:
   push:
     branches: [feat/legal-ydata-max-models]
-    paths: ['scripts/_wire_legal_ydata.py']
+    paths: ['scripts/_wire_legal_ydata.py', '.github/workflows/assemble-legal-ydata.yml']
 permissions:
   contents: write
 jobs:
@@ -17,7 +17,24 @@ jobs:
       - name: Wire this repair branch only
         run: |
           set -euo pipefail
-          python scripts/_wire_legal_ydata.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/_wire_legal_ydata.py')
+          source=p.read_text()
+          start=source.index("p = Path('frontend/src/components/Navbar.tsx')")
+          end=source.index('# Keep old unit suites',start)
+          replacement = '''p = Path('frontend/src/components/Navbar.tsx')
+          t = p.read_text()
+          needle = '{isAdmin && <Link to="/admin/recruitment" className="menu-item" role="menuitem">Recruitment</Link>}'
+          assert needle in t
+          t = t.replace(needle, '{isAdmin && <Link to="/admin/memberships" className="menu-item" role="menuitem">Max 会员</Link>}\\n                    ' + needle, 1)
+          mobile = '{isAdmin && <Link to="/admin/recruitment" className="btn btn-secondary">Recruitment</Link>}'
+          if mobile in t:
+              t = t.replace(mobile, '{isAdmin && <Link to="/admin/memberships" className="btn btn-secondary">Max 会员</Link>}\\n                  ' + mobile, 1)
+          p.write_text(t)
+          '''
+          exec(compile(source[:start] + replacement + source[end:],str(p),'exec'))
+          PY
           python -m compileall -q legal services api tests
           git add legal services api app.py frontend tests scripts/legal_ui_smoke.py scripts/verify_legal_release.mjs scripts/verify_legal_release.test.mjs
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Wire YData model selection and authoritative Max-only legal access'
