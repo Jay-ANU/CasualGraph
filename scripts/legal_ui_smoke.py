@@ -134,6 +134,8 @@ try:
         consent=page.get_by_label('允许将脱敏正文、补充要求及适用公司规范经 YData 网关发送给所选模型。')
         consent.check();page.get_by_label('合同类型',exact=True).select_option('保密协议');expect(consent).not_to_be_checked()
         expect(page.get_by_label('我方角色')).to_have_value('')
+        consent.check()
+        expect(page.get_by_role('button',name='开始审查',exact=True)).to_be_disabled()
         page.get_by_label('合同类型',exact=True).select_option('销售合同');page.get_by_label('我方角色').select_option('销售方')
         consent.check();page.get_by_label('审查方式').select_option('standard');expect(consent).not_to_be_checked()
         page.get_by_label('审查方式').select_option('multi_agent')
