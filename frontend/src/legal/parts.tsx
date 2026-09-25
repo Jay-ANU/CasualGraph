@@ -2,7 +2,8 @@ import React from 'react';
 import type { Catalog, Finding, Policy, Review } from './types';
 import { diffText } from './diff';
 import { findingStatus } from './findingStatus';
-import { SourceDetails, sourceKindLabel } from './ReviewContext';
+import { SourceDetails } from './ReviewContext';
+import { sourceKindLabel } from './sourceLabels';
 
 const PATHS: Record<string, string[]> = {
   plus: ['M10 4v12M4 10h12'], close: ['M5 5l10 10M15 5L5 15'], menu: ['M3 5h14M3 10h14M3 15h14'],
