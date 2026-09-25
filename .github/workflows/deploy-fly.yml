@@ -69,6 +69,51 @@ jobs:
             echo '::error::DEEPSEEK_API_KEY is missing on Fly. No release was made.'
             exit 1
           fi
+          if ! awk '{print $1}' /tmp/casualgraph-secret-names.txt | grep -Eq '^(YDATA_API_KEY|YDATA_GPT_API_KEY|YDATA_CLAUDE_API_KEY|YDATA_DEEPSEEK_API_KEY|YDATA_KIMI_API_KEY|YDATA_GLM_API_KEY)          if ! awk '{print $1}' /tmp/casualgraph-secret-names.txt | grep -qx REDACTION_KEY; then
+            python -c 'from cryptography.fernet import Fernet; print("REDACTION_KEY=" + Fernet.generate_key().decode())' | flyctl secrets import --stage --app casualgraph
+            echo 'Created the previously absent encryption secret. Existing secrets were not read or replaced.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Set the approved model profile and deploy main
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          flyctl secrets set --stage --app casualgraph \
+            LLM_PROVIDER=deepseek RAG_ANSWER_MODE=deepseek \
+            DEEPSEEK_MODEL=deepseek-v4-pro RAG_DEEP_MODEL=deepseek-v4-pro \
+            RAG_DEEP_MAX_TOKENS=16384 RAG_DEEP_TIMEOUT=120
+          flyctl deploy --remote-only --app casualgraph --config fly.toml
+          flyctl status --app casualgraph
+          echo "Backend release completed from commit $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify backend release and protected contract API
+        run: |
+          python - <<'PY'
+          import json, time, urllib.request, urllib.error
+          for attempt in range(6):
+              try:
+                  with urllib.request.urlopen('https://casualgraph.fly.dev/models/status', timeout=20) as r:
+                      data=json.load(r)
+                  assert data.get('provider') == 'deepseek' and data.get('configured') is True
+                  for tier in ('flash','deep'):
+                      assert data['modes'][tier]['model']=='deepseek-v4-pro' and data['modes'][tier]['configured'] is True
+                  with urllib.request.urlopen('https://casualgraph.fly.dev/legal/version', timeout=20) as r:
+                      assert json.load(r)['product']=='contract-review'
+                  try:
+                      urllib.request.urlopen('https://casualgraph.fly.dev/legal/contracts?matter_id=probe', timeout=20)
+                  except urllib.error.HTTPError as e:
+                      assert e.code in (401,403), f'Unexpected contract protection status: {e.code}'
+                  else:
+                      raise AssertionError('Contract API was accessible without authentication')
+                  print('Verified contract API version, auth boundary and model configuration. Live authenticated model inference is not verified by this check.')
+                  break
+              except Exception:
+                  if attempt == 5: raise
+                  time.sleep(10)
+          PY
+; then
+            echo '::error::No YData credential is configured on Fly. Set YDATA_API_KEY or at least one family-specific YDATA_*_API_KEY.'
+            exit 1
+          fi
           if ! awk '{print $1}' /tmp/casualgraph-secret-names.txt | grep -qx REDACTION_KEY; then
             python -c 'from cryptography.fernet import Fernet; print("REDACTION_KEY=" + Fernet.generate_key().decode())' | flyctl secrets import --stage --app casualgraph
             echo 'Created the previously absent encryption secret. Existing secrets were not read or replaced.' >> "$GITHUB_STEP_SUMMARY"

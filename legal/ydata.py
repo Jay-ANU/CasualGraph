@@ -1,4 +1,4 @@
-"""Server-only YData chat gateway. No global-model mutation or provider fallback."""
+"""Server-only YData chat gateway with per-model-family credential routing."""
 from __future__ import annotations
 
 import hashlib
@@ -14,10 +14,18 @@ import httpx
 
 BASE_URL = 'https://www.ydata.space/v1'
 FAMILIES = ('GPT', 'Claude', 'DeepSeek', 'Kimi', 'GLM')
+FAMILY_KEY_ENVS = {
+    'GPT': 'YDATA_GPT_API_KEY',
+    'Claude': 'YDATA_CLAUDE_API_KEY',
+    'DeepSeek': 'YDATA_DEEPSEEK_API_KEY',
+    'Kimi': 'YDATA_KIMI_API_KEY',
+    'GLM': 'YDATA_GLM_API_KEY',
+}
 TTL_SECONDS = 120
 _LOCK = threading.Lock()
 _CACHE: dict[str, Any] = {}
 _ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$')
+_PLACEHOLDER_KEYS = {'...', 'your-api-key', 'replace-me', 'bearer ...'}
 
 
 class GatewayError(RuntimeError):
@@ -26,16 +34,68 @@ class GatewayError(RuntimeError):
         self.code, self.message, self.status_code = code, message, status_code
 
 
-def _key() -> str:
-    value = os.getenv('YDATA_API_KEY', '').strip()
-    if not value or value.lower() in {'...', 'your-api-key', 'replace-me', 'bearer ...'}:
-        raise GatewayError('ydata_not_configured', 'YData 密钥未配置，请管理员在后端配置 YDATA_API_KEY。')
+def _read_key(env_name: str) -> str | None:
+    value = os.getenv(env_name, '').strip()
+    if not value or value.lower() in _PLACEHOLDER_KEYS:
+        return None
     return value
+
+
+def _legacy_key() -> str | None:
+    return _read_key('YDATA_API_KEY')
+
+
+def _dedicated_keys() -> dict[str, str]:
+    result: dict[str, str] = {}
+    seen: dict[str, str] = {}
+    for family, env_name in FAMILY_KEY_ENVS.items():
+        key = _read_key(env_name)
+        if not key:
+            continue
+        previous = seen.get(key)
+        if previous and previous != family:
+            raise GatewayError(
+                'ydata_key_conflict',
+                f'{FAMILY_KEY_ENVS[previous]} 与 {env_name} 不能配置为同一 YData Key；一个 Key 只能绑定一个模型厂商。',
+            )
+        seen[key] = family
+        result[family] = key
+    return result
+
+
+def _bindings() -> list[tuple[str | None, str]]:
+    dedicated = _dedicated_keys()
+    bindings = [(family, key) for family, key in dedicated.items()]
+    legacy = _legacy_key()
+    if legacy and legacy not in dedicated.values():
+        bindings.append((None, legacy))
+    if not bindings:
+        raise GatewayError(
+            'ydata_not_configured',
+            'YData 密钥未配置。请至少配置 YDATA_API_KEY，或为模型厂商配置对应的 YDATA_*_API_KEY。',
+        )
+    return bindings
+
+
+def _key_for_family(family: str) -> str:
+    env_name = FAMILY_KEY_ENVS.get(family)
+    if not env_name:
+        raise GatewayError('legal_model_not_allowed', '所选模型系列不受支持。', 422)
+    dedicated = _read_key(env_name)
+    if dedicated:
+        return dedicated
+    legacy = _legacy_key()
+    if legacy:
+        return legacy
+    raise GatewayError(
+        'ydata_family_not_configured',
+        f'{family} 模型尚未配置 YData Key，请管理员配置 {env_name}。',
+    )
 
 
 def configured() -> bool:
     try:
-        _key()
+        _bindings()
         return True
     except GatewayError:
         return False
@@ -96,50 +156,111 @@ def clear_cache() -> None:
         _CACHE.clear()
 
 
+def _cache_fingerprint(manual: str) -> str:
+    values = {
+        'legacy': _legacy_key() or '',
+        'manual': manual,
+        'default': os.getenv('LEGAL_YDATA_DEFAULT_MODEL', ''),
+        **{family: _read_key(env_name) or '' for family, env_name in FAMILY_KEY_ENVS.items()},
+    }
+    return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
 def model_catalog(*, client: httpx.Client | None = None) -> dict:
-    key = _key()
+    bindings = _bindings()
     manual = os.getenv('LEGAL_YDATA_MODELS', '').strip()
-    cache_key = hashlib.sha256((key + '\0' + manual).encode()).hexdigest()
+    cache_key = _cache_fingerprint(manual)
     with _LOCK:
         if client is None and _CACHE.get('key') == cache_key and _CACHE.get('until', 0) > time.monotonic():
             return json.loads(json.dumps(_CACHE['catalog']))
-        source = 'configured' if manual else 'gateway'
-        if manual:
-            try:
-                ids = json.loads(manual)
-                if not isinstance(ids, list) or not ids or not all(isinstance(x, str) and family_of(x) for x in ids):
-                    raise ValueError('invalid model inventory')
-                rows = [{'id': x} for x in ids]
-            except (ValueError, TypeError):
-                raise GatewayError('ydata_catalog_invalid', 'LEGAL_YDATA_MODELS 必须是五个支持系列中确切模型 ID 的 JSON 数组。') from None
-        else:
-            if client is None:
-                with _client() as owned:
-                    data = _request(owned, 'GET', '/models', key, timeout=15)
-            else:
-                data = _request(client, 'GET', '/models', key, timeout=15)
-            rows = data.get('data')
-            if not isinstance(rows, list):
-                raise GatewayError('ydata_catalog_invalid', 'YData 模型列表格式无效。', 502)
-        models = {}
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            mid = row.get('id')
-            family = family_of(mid)
-            if family:
+
+    models: dict[str, dict[str, str]] = {}
+    unavailable: set[str] = set()
+    source = 'configured' if manual else 'gateway'
+    if manual:
+        try:
+            ids = json.loads(manual)
+            if not isinstance(ids, list) or not ids or not all(isinstance(x, str) and family_of(x) for x in ids):
+                raise ValueError('invalid model inventory')
+            for mid in ids:
+                family = family_of(mid)
+                assert family is not None
+                _key_for_family(family)
                 models[mid] = {'id': mid, 'family': family}
-        if not models:
-            raise GatewayError('ydata_no_chat_models', '当前网关凭据未列出支持的 GPT、Claude、DeepSeek、Kimi 或 GLM 聊天型号。')
-        ordered = sorted(models.values(), key=lambda m: (FAMILIES.index(m['family']), m['id']))
-        preferred = os.getenv('LEGAL_YDATA_DEFAULT_MODEL', 'glm-5.2').strip()
-        result = {'provider': 'ydata', 'models': ordered, 'families': list(FAMILIES), 'catalog_source': source,
-                  'default_model': preferred if preferred in models else ordered[0]['id'],
-                  'retrieved_at': datetime.now(timezone.utc).isoformat(),
-                  'notice': '仅显示网关列出或管理员配置的文本型号；列出不代表已逐一验证聊天接口。不可用时明确报错，不自动换模型。'}
-        if client is None:
+        except GatewayError:
+            raise
+        except (ValueError, TypeError):
+            raise GatewayError('ydata_catalog_invalid', 'LEGAL_YDATA_MODELS 必须是五个支持系列中确切模型 ID 的 JSON 数组。') from None
+    else:
+        dedicated = _dedicated_keys()
+        errors: list[GatewayError] = []
+        owned = None
+        active_client = client
+        if active_client is None:
+            owned = _client()
+            active_client = owned
+        try:
+            for family_hint, key in bindings:
+                try:
+                    data = _request(active_client, 'GET', '/models', key, timeout=15)
+                    rows = data.get('data')
+                    if not isinstance(rows, list):
+                        raise GatewayError('ydata_catalog_invalid', 'YData 模型列表格式无效。', 502)
+                    matched = 0
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        mid = row.get('id')
+                        family = family_of(mid)
+                        if not family:
+                            continue
+                        if family_hint is not None and family != family_hint:
+                            continue
+                        # A dedicated family credential is authoritative for that family. Do not
+                        # silently source the same family from the legacy credential.
+                        if family_hint is None and family in dedicated:
+                            continue
+                        models[mid] = {'id': mid, 'family': family}
+                        matched += 1
+                    if family_hint is not None and matched == 0:
+                        unavailable.add(family_hint)
+                except GatewayError as exc:
+                    errors.append(exc)
+                    if family_hint is not None:
+                        unavailable.add(family_hint)
+        finally:
+            if owned is not None:
+                owned.close()
+
+        if not models and errors:
+            if len(bindings) == 1:
+                raise errors[0]
+            raise GatewayError(
+                'ydata_no_chat_models',
+                '已配置的 YData Key 均未返回可用聊天模型，请检查各模型厂商 Key 与授权。',
+            )
+
+    if not models:
+        raise GatewayError('ydata_no_chat_models', '当前 YData 凭据未列出支持的 GPT、Claude、DeepSeek、Kimi 或 GLM 聊天型号。')
+
+    ordered = sorted(models.values(), key=lambda m: (FAMILIES.index(m['family']), m['id']))
+    preferred = os.getenv('LEGAL_YDATA_DEFAULT_MODEL', 'glm-5.2').strip()
+    available_families = [family for family in FAMILIES if any(m['family'] == family for m in ordered)]
+    result = {
+        'provider': 'ydata',
+        'models': ordered,
+        'families': list(FAMILIES),
+        'available_families': available_families,
+        'unavailable_families': [family for family in FAMILIES if family in unavailable and family not in available_families],
+        'catalog_source': source,
+        'default_model': preferred if preferred in models else ordered[0]['id'],
+        'retrieved_at': datetime.now(timezone.utc).isoformat(),
+        'notice': '后端按模型系列选择对应 YData Key；仅显示可由当前凭据发现或管理员配置的文本型号。不可用时明确报错，不会跨厂商换 Key 或自动换模型。',
+    }
+    if client is None:
+        with _LOCK:
             _CACHE.update(key=cache_key, until=time.monotonic() + TTL_SECONDS, catalog=result)
-        return json.loads(json.dumps(result))
+    return json.loads(json.dumps(result))
 
 
 def select_model(model_id: str, *, client: httpx.Client | None = None) -> dict:
@@ -147,6 +268,7 @@ def select_model(model_id: str, *, client: httpx.Client | None = None) -> dict:
     match = next((m for m in catalog['models'] if m['id'] == model_id), None)
     if match is None:
         raise GatewayError('legal_model_not_allowed', '所选模型不在当前可用列表，请刷新并重新选择。', 422)
+    _key_for_family(match['family'])
     return {'provider': 'ydata', **match, 'catalog_source': catalog['catalog_source']}
 
 
@@ -165,13 +287,14 @@ def chat_json(system: str, payload: dict, selection: dict, *, client: httpx.Clie
                'messages': [{'role': 'system', 'content': system},
                             {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}],
                **_token_budget(model['id'])}
+    key = _key_for_family(model['family'])
     # JSON is required by the prompt and checked locally. Do not impose an unsupported
     # response_format/temperature/thinking option on every gateway model family.
     if client is None:
         with _client() as owned:
-            response = _request(owned, 'POST', '/chat/completions', _key(), json=request)
+            response = _request(owned, 'POST', '/chat/completions', key, json=request)
     else:
-        response = _request(client, 'POST', '/chat/completions', _key(), json=request)
+        response = _request(client, 'POST', '/chat/completions', key, json=request)
     try:
         choice = response['choices'][0]
         if choice.get('finish_reason') != 'stop':

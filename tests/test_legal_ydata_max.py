@@ -18,6 +18,8 @@ from services import db as database
 @pytest.fixture(autouse=True)
 def no_live_gateway(monkeypatch):
     monkeypatch.setenv('YDATA_API_KEY', 'synthetic-test-gateway-key')
+    for env_name in ydata.FAMILY_KEY_ENVS.values():
+        monkeypatch.delenv(env_name, raising=False)
     monkeypatch.delenv('LEGAL_YDATA_MODELS', raising=False)
     monkeypatch.delenv('LEGAL_YDATA_DEFAULT_MODEL', raising=False)
     ydata.clear_cache()
@@ -37,6 +39,77 @@ def test_all_requested_families_are_discovered_without_invented_ids():
     assert len(result['models']) == 5
     assert result['default_model'] == 'glm-5.2'
     assert 'synthetic-test-gateway-key' not in json.dumps(result)
+
+def test_family_specific_keys_merge_catalog(monkeypatch):
+    monkeypatch.delenv('YDATA_API_KEY')
+    key_models = {
+        'gpt-key': 'gpt-5-test',
+        'claude-key': 'claude-test',
+        'deepseek-key': 'deepseek-test',
+        'kimi-key': 'kimi-test',
+        'glm-key': 'glm-5.2',
+    }
+    for family, key in zip(ydata.FAMILIES, key_models):
+        monkeypatch.setenv(ydata.FAMILY_KEY_ENVS[family], key)
+
+    def respond(request):
+        key = request.headers['Authorization'].removeprefix('Bearer ')
+        return httpx.Response(200, json={'data': [{'id': key_models[key]}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = ydata.model_catalog(client=client)
+    assert [m['family'] for m in result['models']] == list(ydata.FAMILIES)
+    assert result['available_families'] == list(ydata.FAMILIES)
+    assert result['unavailable_families'] == []
+
+
+def test_selected_family_uses_its_own_key(monkeypatch):
+    monkeypatch.delenv('YDATA_API_KEY')
+    inventory = ['gpt-5-test', 'claude-test', 'deepseek-test', 'kimi-test', 'glm-5.2']
+    keys = {}
+    for family, mid in zip(ydata.FAMILIES, inventory):
+        key = family.lower() + '-key'
+        keys[mid] = key
+        monkeypatch.setenv(ydata.FAMILY_KEY_ENVS[family], key)
+    monkeypatch.setenv('LEGAL_YDATA_MODELS', json.dumps(inventory))
+
+    def respond(request):
+        body = json.loads(request.content)
+        assert request.method == 'POST'
+        assert request.headers['Authorization'] == 'Bearer ' + keys[body['model']]
+        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': '{"ok": true}'}}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        for mid in inventory:
+            assert ydata.chat_json('JSON', {}, {'provider': 'ydata', 'id': mid}, client=client) == {'ok': True}
+
+
+def test_one_broken_family_key_does_not_hide_healthy_models(monkeypatch):
+    monkeypatch.delenv('YDATA_API_KEY')
+    monkeypatch.setenv('YDATA_GPT_API_KEY', 'good-key')
+    monkeypatch.setenv('YDATA_CLAUDE_API_KEY', 'bad-key')
+
+    def respond(request):
+        key = request.headers['Authorization'].removeprefix('Bearer ')
+        if key == 'bad-key':
+            return httpx.Response(401, json={'error': 'never expose this'})
+        return httpx.Response(200, json={'data': [{'id': 'gpt-5-test'}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = ydata.model_catalog(client=client)
+    assert result['models'] == [{'id': 'gpt-5-test', 'family': 'GPT'}]
+    assert result['unavailable_families'] == ['Claude']
+
+
+def test_same_key_cannot_be_bound_to_two_families(monkeypatch):
+    monkeypatch.delenv('YDATA_API_KEY')
+    monkeypatch.setenv('YDATA_GPT_API_KEY', 'same-key')
+    monkeypatch.setenv('YDATA_CLAUDE_API_KEY', 'same-key')
+    assert ydata.configured() is False
+    with pytest.raises(ydata.GatewayError) as exc:
+        ydata.model_catalog()
+    assert exc.value.code == 'ydata_key_conflict'
+
 
 
 @pytest.mark.parametrize('mid,family', [('openai/gpt-5-test','GPT'),('o3-test','GPT'),('anthropic/claude-test','Claude'),

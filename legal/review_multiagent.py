@@ -20,7 +20,8 @@ COLLABORATION_VERSION = 1
 MAX_CALLS_PER_ATTEMPT = 40
 MAX_PARALLEL_AGENTS = 3
 _MODEL_SLOTS = threading.BoundedSemaphore(4)
-FATAL = frozenset({'ydata_not_configured', 'ydata_unauthorized', 'ydata_rate_limited',
+FATAL = frozenset({'ydata_not_configured', 'ydata_family_not_configured', 'ydata_key_conflict',
+                   'ydata_unauthorized', 'ydata_rate_limited',
                    'legal_call_budget', 'team_paused', 'legacy_review_restart_required', 'contract_version_changed'})
 ARBITRATE = v2.VERIFY + '''\n你是汇总复核 Agent，不按投票数决定结论。对全部 specialist_findings 和当前 findings 逐项复核，交叉检查不同职责给出的结论是否矛盾。
 必须为每项coverage给出coverage_checks；每项finding给出checks，明确说明支持、待确认或拒绝。不得凭空增加依据，不得改写原文。
