@@ -1,186 +1,160 @@
-"""One-off restoration builder; reads the immutable pre-legal UI, never resets main."""
-from __future__ import annotations
-import ast
-import os
-import re
-import subprocess
+"""Second, branch-only pass: adapt preserved UI to current typing/auth and validate new export semantics."""
 from pathlib import Path
-
-BASE = 'd3ea3fb953b618ade9483f84f82b37a21b2c0d8d'
+import re
 ROOT = Path(__file__).resolve().parents[1]
-
-def old(path):
-    return subprocess.check_output(['git', 'show', f'{BASE}:{path}'], cwd=ROOT)
-
-def put(path, text):
-    p = ROOT / path
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(text if isinstance(text, bytes) else text.encode())
 
 def patch(path, before, after):
     p = ROOT / path
     text = p.read_text()
-    assert before in text, (path, before[:90])
+    assert before in text, (path, before[:120])
     p.write_text(text.replace(before, after))
 
-old_files = set(subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', BASE], cwd=ROOT).decode().splitlines())
-restored = set()
+def put(path, content):
+    p = ROOT / path
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content)
 
-def restore(path):
-    put(path, old(path))
-    restored.add(path)
-
-for name in ('Home', 'About', 'CausalInference', 'DesktopDownload', 'EsgDemo', 'Recruitment', 'OfferView'):
-    restore(f'frontend/src/pages/{name}.tsx')
-# Only restore MISSING relative imports. Keep the new authentication and API client.
-while True:
-    missing = set()
-    for name in list(restored):
-        if not name.endswith(('.ts', '.tsx', '.css')):
-            continue
-        for rel in re.findall(r'''(?:from\s*|import\s*)['"](\.[^'"]+)['"]''', (ROOT / name).read_text()):
-            base = (ROOT / name).parent / rel
-            candidates = [base, *(Path(str(base) + x) for x in ('.ts', '.tsx', '.css')), base / 'index.ts', base / 'index.tsx']
-            if any(p.is_file() for p in candidates):
-                continue
-            for p in candidates:
-                relative = str(p.resolve().relative_to(ROOT))
-                if relative in old_files:
-                    missing.add(relative)
-                    break
-    if not missing:
-        break
-    for name in missing:
-        restore(name)
-for name in sorted(restored):
-    p = ROOT / name
-    if p.suffix not in ('.ts', '.tsx'):
-        continue
-    text = p.read_text()
-    if 'process.env.REACT_APP_ESG_API_BASE' in text:
-        relative = os.path.relpath(ROOT / 'frontend/src/api/config', p.parent)
-        if not relative.startswith('.'):
-            relative = './' + relative
-        text = f"import {{ apiBase as restoredApiBase }} from '{relative}';\n" + text.replace('process.env.REACT_APP_ESG_API_BASE', 'restoredApiBase()')
-    text = text.replace('process.env.REACT_APP_DESKTOP_DOWNLOAD_URL', 'import.meta.env.VITE_DESKTOP_DOWNLOAD_URL')
-    text = text.replace('process.env.REACT_APP_GITHUB_REPOSITORY_URL', 'import.meta.env.VITE_GITHUB_REPOSITORY_URL')
-    text = text.replace('process.env.PUBLIC_URL', "''")
-    p.write_text(text)
-for path in old_files:
-    if (path.startswith('frontend/public/') and path != 'frontend/public/index.html') or path.startswith('assets/recruitment/'):
-        if not (ROOT / path).exists():
-            restore(path)
-
-app = old('frontend/src/App.tsx').decode()
-app = app.replace('const Recruitment = lazy', "const ContractReview = lazy(() => import('./pages/ContractReview'));\nconst Recruitment = lazy")
-app = app.replace("const isWorkspace = location.pathname === '/agent';", "const isWorkspace = ['/agent', '/research', '/legal'].includes(location.pathname);")
-app = app.replace('            <Route path="/admin"', '            <Route path="/research" element={<ProtectedRoute><Agent /></ProtectedRoute>} />\n            <Route path="/legal" element={<ProtectedRoute><ContractReview /></ProtectedRoute>} />\n            <Route path="/admin"')
-app = app.replace("background: '#04050a'", "background: '#FBFAF8'")
-put('frontend/src/App.tsx', app)
-patch('frontend/src/components/Navbar.tsx', "  { name: 'Research', href: '/agent' },", "  { name: 'Research', href: '/agent' },\n  { name: 'Graph', href: '/causal-inference' },\n  { name: 'Desktop', href: '/desktop' },\n  { name: 'Company', href: '/about' },\n  { name: '法务 Agent', href: '/legal' },")
-patch('frontend/src/components/Navbar.tsx', '                      </Link>\n                    )}', '                      </Link>\n                    )}\n                    {isAdmin && <Link to="/admin/recruitment" className="menu-item" role="menuitem">Recruitment</Link>}')
-patch('frontend/src/components/Navbar.tsx', '                  {isAdmin && <Link to="/admin" className="btn btn-secondary">Admin console</Link>}', '                  {isAdmin && <Link to="/admin" className="btn btn-secondary">Admin console</Link>}\n                  {isAdmin && <Link to="/admin/recruitment" className="btn btn-secondary">Recruitment</Link>}')
-p = ROOT / 'frontend/src/components/Navbar.tsx'
-p.write_text(p.read_text().replace('md:flex', 'lg:flex').replace('md:hidden', 'lg:hidden'))
-patch('frontend/src/pages/Home.tsx', '            <Link to="/desktop" className="hover:text-ink">Desktop</Link>', '            <Link to="/desktop" className="hover:text-ink">Desktop</Link>\n            <Link to="/legal" className="hover:text-ink">法务 Agent</Link>')
-patch('frontend/index.html', 'CausalGraph 合同逐条审阅 agent：上传合同，逐条查看关键条款与风险，每个回答都附原文出处。', 'CausalGraph answers questions about sustainability reports with source citations. Contract review is available in the separate Legal workspace.')
-
-# One canonical DOCX parser and exporter, without changing intake/ACL contracts.
-p = ROOT / 'legal/contract_documents.py'
+patch('frontend/src/components/KnowledgeGraphView.tsx', '      setInspectedCluster(domain);', '      // eslint-disable-next-line react-hooks/set-state-in-effect -- synchronize externally selected node with the existing graph tabs\n      setInspectedCluster(domain);')
+for name, call in [('OfferView', 'load'), ('Recruitment', 'loadOffers')]:
+    patch(f'frontend/src/pages/{name}.tsx', 'useMemo(apiBase, [])', 'useMemo(() => apiBase(), [])')
+    patch(f'frontend/src/pages/{name}.tsx', f'    {call}();\n  }}, [{call}]);', f'    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async load also resets the visible loading state\n    void {call}();\n  }}, [{call}]);')
+patch('frontend/src/pages/OfferView.tsx', '      let payload: any = {};', '      let payload: Partial<PublicOffer> & { detail?: string | { offer?: PublicOffer } };')
+patch('frontend/src/pages/OfferView.tsx', "if (response.status === 409 && payload?.detail?.offer)", "if (response.status === 409 && typeof payload.detail === 'object' && payload.detail?.offer)")
+p = ROOT / 'frontend/src/pages/Recruitment.tsx'
 text = p.read_text()
-lines = text.splitlines(keepends=True)
-for node in sorted([n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name in {'_docx_parts', 'redline_docx'}], key=lambda n: n.lineno, reverse=True):
-    del lines[node.lineno - 1:node.end_lineno]
-text = ''.join(lines).replace('from lxml import etree', 'from legal.docx_redlines import open_package as _docx_parts, paragraph_text, redline_docx')
-text = text.replace('import zipfile\n', '').replace('from datetime import datetime, timezone\n', '')
-text = text.replace("''.join(p.xpath('.//w:t[not(ancestor::w:txbxContent)]/text()', namespaces=NS)).strip()", 'paragraph_text(p).strip()')
+a, b = text.index('const errorMessage ='), text.index('// Fields the backend fills')
+text = text[:a] + '''const errorMessage = (payload: unknown, fallback: string): string => {
+  if (!payload || typeof payload !== 'object') return fallback;
+  const data = payload as { detail?: unknown; message?: unknown };
+  if (typeof data.detail === 'string') return data.detail;
+  if (Array.isArray(data.detail)) {
+    const messages = data.detail.map((item: unknown) => {
+      if (!item || typeof item !== 'object') return '';
+      const message = (item as { msg?: unknown }).msg;
+      return typeof message === 'string' ? message : '';
+    }).filter(Boolean);
+    if (messages.length) return messages.join(' ');
+  }
+  return typeof data.message === 'string' ? data.message : fallback;
+};
+
+''' + text[b:]
 p.write_text(text)
-patch('api/routers/contract_review.py', "format: Literal['json', 'docx', 'txt'] = 'json'", "format: Literal['json', 'docx', 'txt'] | None = None")
-patch('api/routers/contract_review.py', "    p, cp = r['payload'], c['payload']\n    if format == 'json':", "    p, cp = r['payload'], c['payload']\n    format = format or ('docx' if cp['format'] == 'docx' else 'json')\n    if cp['format'] == 'docx' and format == 'txt':\n        raise HTTPException(422, 'Word 合同请导出带修订痕迹的 DOCX；审查报告可单独导出。')\n    if format == 'json':")
-patch('api/routers/contract_review.py', "            try:\n                content = documents.redline_docx", "            if not changes:\n                raise HTTPException(409, '尚未选择需要纳入修订稿的修改，请先接受至少一项建议。')\n            try:\n                content = documents.redline_docx")
-patch('frontend/src/pages/ContractReview.tsx', "'合同修订稿'", "'合同修订稿（含修订痕迹）'")
-patch('frontend/src/pages/ContractReview.tsx', "<button disabled={busy} onClick={() => { if (window.confirm('导出包含真实主体信息的原件修改稿？仅应用已接受修改，请在分享前复核。'))", "<button disabled={busy || (contract.format === 'docx' && accepted === 0)} onClick={() => { if (window.confirm('导出包含真实主体信息的修订稿？所选建议在 Word 中仍是待接受或拒绝的修订。请在分享前复核。'))")
-patch('frontend/src/pages/ContractReview.tsx', "' Word 修订稿'", "' Word（含修订痕迹）'")
-patch('frontend/src/pages/ContractReview.tsx', '原件修改稿会恢复真实信息，且只应用你接受的修改；不是脱敏文件。Word 修订保留删除内容，勿作为脱敏副本分享。', '先接受需要纳入修订稿的建议。导出的 Word 保留新增、删除痕迹，可在 Word「审阅」中逐项接受或拒绝；原格式尽量保留。文件恢复真实信息并保留删除内容，不是脱敏副本。')
+patch('frontend/src/pages/offer/OfferExperience.tsx', '  let x = 0;\n', '')
+patch('frontend/src/pages/offer/OfferExperience.tsx', '''      {bars.map(([bar, gap], index) => {
+        const rect = <rect key={index} x={x} y="0" width={bar} height="22" />;
+        x += bar + gap;
+        return rect;
+      })}''', '''      {bars.map(([bar], index) => (
+        <rect key={index} x={bars.slice(0, index).reduce((sum, [width, gap]) => sum + width + gap, 0)} y="0" width={bar} height="22" />
+      ))}''')
+patch('frontend/src/pages/offer/OfferExperience.tsx', '  let digitIndex = 0;\n', '')
+patch('frontend/src/pages/offer/OfferExperience.tsx', '        const order = digitIndex;\n        digitIndex += 1;', "        const order = (value.slice(0, index).match(/\\d/g) || []).length;")
 
-# Keep existing offer routes instead of leaving restored offer pages with dead APIs.
-# Extract their dependency closure, but always use the current auth/DB dependencies.
-restore('recruitment_offers.py')
-oldapp = ast.parse(old('app.py').decode())
-def names(node):
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return [node.name]
-    if isinstance(node, ast.Assign):
-        return [t.id for t in node.targets if isinstance(t, ast.Name)]
-    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-        return [node.target.id]
-    return []
-defs = {name: n for n in oldapp.body for name in names(n)}
-imports = {a.asname or a.name.split('.')[0]: n for n in oldapp.body if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names}
-reuse = {}
-for module in ['services.auth', 'services.db', 'services.rate_limit', 'api.deps']:
-    for node in ast.parse((ROOT / (module.replace('.', '/') + '.py')).read_text()).body:
-        for name in names(node):
-            reuse[name] = module
-reuse.update(get_db='api.deps', get_current_user='api.deps', require_admin='api.deps')
-selected = set()
-for n in oldapp.body:
-    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        routes = [d.args[0].value for d in n.decorator_list if isinstance(d, ast.Call) and d.args and isinstance(d.args[0], ast.Constant) and isinstance(d.args[0].value, str)]
-        if any('recruitment' in route or route.startswith('/offers/') for route in routes):
-            selected.add(n.name)
-used_imports, reused, pending = set(), set(), list(selected)
-while pending:
-    node = defs[pending.pop()]
-    for child in ast.walk(node):
-        if not isinstance(child, ast.Name) or not isinstance(child.ctx, ast.Load):
-            continue
-        dep = child.id
-        if dep in {'app', 'router'} or dep in selected:
-            continue
-        if dep in reuse:
-            reused.add(dep)
-        elif dep in imports:
-            used_imports.add(dep)
-        elif dep in defs:
-            selected.add(dep)
-            pending.append(dep)
-body = []
-for n in oldapp.body:
-    if set(names(n)) & selected:
-        for d in getattr(n, 'decorator_list', []):
-            if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and isinstance(d.func.value, ast.Name) and d.func.value.id == 'app':
-                d.func.value.id = 'router'
-        body.append(ast.unparse(n))
-import_nodes = list({id(imports[name]): imports[name] for name in used_imports}.values())
-text = '\"\"\"Existing recruitment and candidate routes, restored without changing auth.\"\"\"\nfrom __future__ import annotations\nfrom fastapi import APIRouter\n'
-text += '\n'.join(ast.unparse(n) for n in import_nodes) + '\n'
-text += '\n'.join(f'from {reuse[name]} import {name}' for name in sorted(reused)) + '\n\nrouter = APIRouter()\n\n'
-text += '\n\n'.join(body) + '\n'
-put('api/routers/recruitment.py', text)
-print('RESTORED_OFFER_SYMBOLS', sorted(selected))
-print('RESTORED_OFFER_IMPORTS', '\n'.join(ast.unparse(n) for n in import_nodes))
-queue, seen = ['api/routers/recruitment.py', 'recruitment_offers.py'], set()
-while queue:
-    name = queue.pop()
-    if name in seen:
-        continue
-    seen.add(name)
-    for n in ast.walk(ast.parse((ROOT / name).read_text())):
-        modules = [n.module] if isinstance(n, ast.ImportFrom) and n.module and not n.level else [a.name for a in n.names] if isinstance(n, ast.Import) else []
-        for mod in modules:
-            path = mod.replace('.', '/') + '.py'
-            if path in old_files and not (ROOT / path).exists():
-                restore(path)
-                queue.append(path)
-schema_names = [n.name for n in ast.parse((ROOT / 'recruitment_offers.py').read_text()).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and ('init' in n.name or 'schema' in n.name)]
-print('OFFER_SCHEMA_HELPERS', schema_names)
-patch('app.py', 'from api.routers.admin import router as admin_router', 'from api.routers.recruitment import router as recruitment_router\nfrom api.routers.admin import router as admin_router')
-patch('app.py', 'auth_router, admin_router,', 'auth_router, admin_router, recruitment_router,')
+p = ROOT / 'frontend/src/pages/CausalInference.tsx'
+text = p.read_text()
+a,b = text.index('const normalizeGraphPayload ='), text.index('const GRAPH_OVERVIEW_NODE_LIMIT')
+text = text[:a] + '''const objectOf = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
-# Keep the existing browser checks; change only product-label expectations.
-patch('scripts/research_ui_smoke.py', "name='合同逐条审阅 agent'", "name='Answers from sustainability reports, with the page they came from.'")
-p = ROOT / 'scripts/legal_ui_smoke.py'
-p.write_text(p.read_text().replace('导出 Word 修订稿', '导出 Word（含修订痕迹）'))
-print('RESTORED_FILES', sorted(restored))
-print('RESTORE_COMPLETE')
+const normalizeGraphPayload = (input: unknown): GraphData => {
+  const payload = objectOf(input);
+  const nodes = (Array.isArray(payload.nodes) ? payload.nodes : []).map(objectOf).map(node => ({
+    id: String(node.id || '').trim(), label: String(node.label || node.name || node.id || '').trim(),
+    domain: String(node.domain || node.esg_domain || 'general'), type: String(node.type || 'Entity'),
+    confidence: Number(node.confidence ?? 0.75), description: String(node.description || ''),
+    company: String(node.company || ''), year: String(node.year || ''),
+    normalizedName: String(node.normalizedName || node.normalized_name || node.id || ''), metadata: objectOf(node.metadata),
+  })).filter(node => node.id && node.label);
+  const ids = new Set(nodes.map(node => node.id));
+  const edges = (Array.isArray(payload.edges) ? payload.edges : []).map(objectOf).map(edge => ({
+    source: String(edge.source || '').trim(), target: String(edge.target || '').trim(),
+    relationship_type: String(edge.relationship_type || edge.relation || edge.type || 'RELATED_TO'),
+    confidence: Number(edge.confidence ?? 0.75), evidence: String(edge.evidence || ''), domain: String(edge.domain || 'general'),
+    relationship_action: String(edge.relationship_action || ''), relationship_nature: String(edge.relationship_nature || ''),
+    documentId: String(edge.documentId || edge.document_id || ''), chunkId: String(edge.chunkId || edge.chunk_id || ''), metadata: objectOf(edge.metadata),
+  })).filter(edge => ids.has(edge.source) && ids.has(edge.target));
+  const meta = objectOf(payload.metadata);
+  return { nodes, edges, metadata: { ...meta, node_count: nodes.length, edge_count: edges.length,
+    is_directed: typeof meta.is_directed === 'boolean' ? meta.is_directed : true,
+    is_acyclic: typeof meta.is_acyclic === 'boolean' ? meta.is_acyclic : false } };
+};
+
+''' + text[b:]
+text = text.replace('/public/knowledge-graph?limit=', "/graph/${token ? 'workspace' : 'public'}?limit=")
+p.write_text(text)
+
+# Retain the development page, but do not resurrect its unsafe/removed extraction API.
+p = ROOT / 'frontend/src/pages/EsgDemo.tsx'
+text = p.read_text().replace("import React,", "import { withAuth } from '../api/client';\nimport React,")
+text = text.replace('const platformApiBase = `http://${host}:8001`;', 'const platformApiBase = esgApiBase;')
+text = text.replace('useState<any>(null)', 'useState<{ entities?: unknown[]; relations?: unknown[]; error?: string; message?: string } | null>(null)', 1)
+text = text.replace('useState<any>(null)', 'useState<(Partial<RagResponse> & { error?: string; message?: string }) | null>(null)', 1)
+text = text.replace('  useEffect(() => {\n    setHealth(serviceTargets);\n  }, [serviceTargets]);\n\n', '')
+text = text.replace("headers: { 'Content-Type': 'application/json' },", "headers: withAuth({ headers: { 'Content-Type': 'application/json' } }).headers,")
+a,b = text.index('  const runExtraction ='), text.index('  const runRag =')
+text = text[:a] + text[b:]
+text = text.replace("  const [extractLoading, setExtractLoading] = useState(false);\n", '')
+text = re.sub(r'  const \[extractResult, setExtractResult\] = useState<.*?\(null\);\n', '  const extractResult: { entities?: unknown[]; relations?: unknown[] } = {};\n', text)
+text = text.replace('extract entities and relationships from a passage, and run a cited query', 'open the research upload desk, and run an authenticated cited query')
+text = text.replace('''                <button type="button" onClick={runExtraction} disabled={extractLoading} className="btn btn-primary mt-4">
+                  {extractLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {extractLoading ? 'Extracting…' : 'Run extraction'}
+                </button>''', '''                <p className="mt-4 text-sm text-ink-3">The old standalone extraction endpoint is no longer exposed. Use the authenticated research desk to upload and query reports.</p>
+                <a href="/agent" className="btn btn-primary mt-4">Open research desk</a>''')
+p.write_text(text)
+
+# Initialize only the restored additive offer schema, using the active DB location.
+patch('api/routers/recruitment.py', 'from services.db import _DB_PATH', 'from services import db as db_service')
+p = ROOT / 'api/routers/recruitment.py'
+text = p.read_text()
+a,b = text.index('async def _get_db():'), text.index('_RECRUITMENT_RESEND_COOLDOWN_SECONDS')
+text = text[:a] + '''_get_db = db_service.get_db
+
+async def initialize_recruitment():
+    async for db in db_service.get_db():
+        await recruitment_offers.init_recruitment_db(db)
+        await db.commit()
+
+''' + text[b:]
+p.write_text(text)
+patch('app.py', 'from api.routers.recruitment import router as recruitment_router', 'from api.routers.recruitment import router as recruitment_router, initialize_recruitment\nfrom api.routers.research_graph import router as research_graph_router')
+patch('app.py', 'auth_router, admin_router, recruitment_router,', 'auth_router, admin_router, recruitment_router, research_graph_router,')
+patch('app.py', '    await _init_auth_db()\n', '    await _init_auth_db()\n    await initialize_recruitment()\n')
+
+# Preserve security tests; only the user-requested offer routes are restored.
+patch('tests/test_phase0_security.py', '    "/offers",\n    "/admin/recruit" + "ment",\n', '')
+patch('tests/test_phase0_security.py', '# Built from fragments so that a repository-wide grep for the removed features stays empty.', '# Unsafe or unsupported legacy endpoints remain absent; restored offer routes have separate authorization tests.')
+p = ROOT / 'tests/test_contract_review_product.py'
+text = p.read_text()
+text, count = re.subn(r"        assert '验收后90日付款。' in xml and '验收后60日付款。' in xml", '''        from lxml import etree
+        root = etree.fromstring(z.read('word/document.xml'))
+        ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        assert ''.join(root.xpath('//w:del//w:delText/text()', namespaces=ns)) == '9'
+        assert ''.join(root.xpath('//w:ins//w:t/text()', namespaces=ns)) == '6'
+        assert root.xpath('//w:p/w:r/w:t[text()="验收后"]', namespaces=ns)
+        assert root.xpath('//w:p/w:r/w:t[text()="0日付款。"]', namespaces=ns)''', text)
+assert count == 1
+p.write_text(text)
+patch('scripts/legal_ui_smoke.py', "page.goto('http://127.0.0.1:4173/agent')", "page.goto('http://127.0.0.1:4173/legal')")
+# Inject preserved-site browser checks into the existing build smoke, not a different fake page.
+p = ROOT / 'scripts/research_ui_smoke.py'
+text = p.read_text()
+text = text.replace("page.goto('http://127.0.0.1:4173/research'", "page.goto('http://127.0.0.1:4173/agent'")
+needle = "        check('Home action empty disabled'"
+at = text.index(needle)
+text = text[:at] + '''        check('Independent Legal navigation', page.get_by_role('navigation', name='Primary').get_by_role('link', name='法务 Agent', exact=True).get_attribute('href') == '/legal')
+        for path, heading in [('/about', 'A reading tool, not a verdict.'), ('/desktop', 'Your research, a little closer.')]:
+            # Assert the real restored page renders, without hard-coding copy that might evolve.
+            page.goto('http://127.0.0.1:4173' + path, wait_until='networkidle')
+            check('Restored page ' + path, page.get_by_role('heading', level=1).count() == 1 and 'doesn’t exist' not in page.locator('body').inner_text())
+        page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
+''' + text[at:]
+# At least one explicitly requested original /agent route must be exercised.
+assert '/agent' in text
+p.write_text(text)
+# Detect a development-framework global before it can become a production blank page.
+for p in (ROOT / 'frontend/src').rglob('*'):
+    if p.suffix in {'.ts', '.tsx'}:
+        assert not re.search(r'process\.env\.REACT_APP_', p.read_text()), p
+print('Preserved-site compatibility patch complete; no authentication or encryption checks were relaxed.')

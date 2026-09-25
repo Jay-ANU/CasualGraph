@@ -19,12 +19,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Restore only the requested existing surfaces on this repair branch
+      - name: Apply the reviewed compatibility patch on this repair branch
         run: |
           set -euo pipefail
           python scripts/_apply_site_restore.py
-          python -m compileall -q legal api app.py
-          git add frontend legal api app.py assets recruitment_offers.py scripts/research_ui_smoke.py scripts/legal_ui_smoke.py
+          python -m compileall -q legal api tests app.py
+          git add frontend legal api tests app.py scripts/research_ui_smoke.py scripts/legal_ui_smoke.py
           git diff --cached --stat
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Restore existing site routes and wire format-preserving Word revisions'
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Adapt restored surfaces to current API, lint and permission checks'
           git push origin HEAD:refs/heads/fix/preserve-pages-word-revisions
