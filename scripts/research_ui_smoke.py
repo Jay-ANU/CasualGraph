@@ -104,7 +104,7 @@ try:
         page = context.new_page()
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
-        check('Home heading', page.get_by_role('heading', name='合同逐条审阅 agent').count() == 1)
+        check('Home heading', page.get_by_role('heading', name='Answers from sustainability reports, with the page they came from.').count() == 1)
         check('Home action empty disabled', page.get_by_role('button', name='Start research', exact=True).is_disabled())
         no_overflow(page, 'Desktop homepage no horizontal overflow')
         page.screenshot(path=str(OUT / 'home-desktop.png'), full_page=True)

@@ -4,12 +4,10 @@ from __future__ import annotations
 import hashlib
 import io
 import re
-import zipfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from lxml import etree
+from legal.docx_redlines import open_package as _docx_parts, paragraph_text, redline_docx
 
 MAX_UPLOAD = 10 * 1024 * 1024
 MAX_TEXT = 60000
@@ -18,23 +16,6 @@ W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 NS = {'w': W}
 
 
-def _docx_parts(data: bytes):
-    archive = zipfile.ZipFile(io.BytesIO(data))
-    infos = archive.infolist()
-    if len(infos) > 2000 or sum(i.file_size for i in infos) > 40 * 1024 * 1024:
-        archive.close()
-        raise ValueError('Word 解压后过大，请拆分文件。')
-    if any(i.filename.lower().endswith('vbaproject.bin') for i in infos):
-        archive.close()
-        raise ValueError('不接受包含宏的 Word 文件。')
-    root = etree.fromstring(archive.read('word/document.xml'), etree.XMLParser(resolve_entities=False, no_network=True))
-    if root.xpath('//w:ins|//w:del|//w:moveFrom|//w:moveTo', namespaces=NS):
-        archive.close()
-        raise ValueError('合同已有未处理的修订，请先在 Word 中确认修订后再上传。')
-    if root.xpath('//w:altChunk', namespaces=NS):
-        archive.close()
-        raise ValueError('合同含尚未展开的嵌入正文，请另存为标准 DOCX 后重试。')
-    return archive, root
 
 
 def parse_contract(data: bytes, filename: str) -> dict[str, Any]:
@@ -47,7 +28,7 @@ def parse_contract(data: bytes, filename: str) -> dict[str, Any]:
         archive, root = _docx_parts(data)
         try:
             for index, p in enumerate(root.xpath('//w:body//w:p[not(ancestor::w:txbxContent)]', namespaces=NS)):
-                text = ''.join(p.xpath('.//w:t[not(ancestor::w:txbxContent)]/text()', namespaces=NS)).strip()
+                text = paragraph_text(p).strip()
                 if text:
                     blocks.append({'id': f'p{index + 1}', 'text': text, 'anchor': index, 'page': None})
             if root.xpath('//w:drawing|//w:pict|//w:object', namespaces=NS):
@@ -138,41 +119,3 @@ def restore(text: str, mapping: dict[str, str]) -> str:
     return re.sub(r'【脱敏\d+】', lambda m: mapping.get(m.group(), m.group()), text)
 
 
-def redline_docx(data: bytes, originals: list[dict], replacements: dict[str, str]) -> bytes:
-    """Preserve the package; modify only exact, plain-text, body/table paragraph anchors.
-
-    This is an authorized ORIGINAL revision, never advertised as a sanitized copy.
-    """
-    archive, root = _docx_parts(data)
-    try:
-        paragraphs = root.xpath('//w:body//w:p[not(ancestor::w:txbxContent)]', namespaces=NS)
-        original_index = {b['id']: b for b in originals}
-        for i, (block_id, new_text) in enumerate(replacements.items(), 1):
-            block = original_index[block_id]
-            p = paragraphs[block['anchor']]
-            actual = ''.join(p.xpath('.//w:t/text()', namespaces=NS)).strip()
-            if actual != block['text']:
-                raise ValueError('原文定位已变化，停止导出以避免误改。')
-            if p.xpath('.//w:drawing|.//w:pict|.//w:object|.//w:fldChar|.//w:instrText|.//w:hyperlink|.//w:commentRangeStart|.//w:commentReference', namespaces=NS):
-                raise ValueError(f'{block_id} 包含复杂对象、域或批注；请使用审查报告在 Word 中人工修改。')
-            props = p.find(f'{{{W}}}pPr')
-            for child in list(p):
-                if child is not props:
-                    p.remove(child)
-            for tag, text, rid in [('del', block['text'], 2 * i), ('ins', new_text, 2 * i + 1)]:
-                change = etree.SubElement(p, f'{{{W}}}{tag}')
-                change.set(f'{{{W}}}id', str(rid))
-                change.set(f'{{{W}}}author', 'CausalGraph Legal — user approved')
-                change.set(f'{{{W}}}date', datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
-                run = etree.SubElement(change, f'{{{W}}}r')
-                t = etree.SubElement(run, f'{{{W}}}{"delText" if tag == "del" else "t"}')
-                t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
-                t.text = text
-        out = io.BytesIO()
-        with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as dest:
-            for info in archive.infolist():
-                dest.writestr(info, etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
-                              if info.filename == 'word/document.xml' else archive.read(info.filename))
-        return out.getvalue()
-    finally:
-        archive.close()

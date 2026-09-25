@@ -6,6 +6,10 @@ import BrandLogo from './BrandLogo';
 
 const NAV_LINKS = [
   { name: 'Research', href: '/agent' },
+  { name: 'Graph', href: '/causal-inference' },
+  { name: 'Desktop', href: '/desktop' },
+  { name: 'Company', href: '/about' },
+  { name: '法务 Agent', href: '/legal' },
 ];
 
 const initialOf = (value?: string | null) =>
@@ -61,7 +65,7 @@ const Navbar: React.FC = () => {
           <BrandLogo size="md" />
         </Link>
 
-        <nav className="hidden items-center gap-0.5 md:flex" aria-label="Primary">
+        <nav className="hidden items-center gap-0.5 lg:flex" aria-label="Primary">
           {NAV_LINKS.map((item) => (
             <NavLink key={item.href} to={item.href} className={linkClass}>
               {item.name}
@@ -69,7 +73,7 @@ const Navbar: React.FC = () => {
           ))}
         </nav>
 
-        <div className="ml-auto hidden items-center gap-2 md:flex">
+        <div className="ml-auto hidden items-center gap-2 lg:flex">
           {isAuthenticated ? (
             <>
               <Link to="/agent" className="btn btn-primary btn-sm">
@@ -103,6 +107,7 @@ const Navbar: React.FC = () => {
                         Admin console
                       </Link>
                     )}
+                    {isAdmin && <Link to="/admin/recruitment" className="menu-item" role="menuitem">Recruitment</Link>}
                     <button type="button" onClick={handleLogout} className="menu-item" role="menuitem">
                       <LogOut className="h-4 w-4 text-ink-4" />
                       Sign out
@@ -128,7 +133,7 @@ const Navbar: React.FC = () => {
         <button
           type="button"
           onClick={() => setIsOpen((prev) => !prev)}
-          className="icon-btn ml-auto md:hidden"
+          className="icon-btn ml-auto lg:hidden"
           aria-label={isOpen ? 'Close menu' : 'Open menu'}
           aria-expanded={isOpen}
         >
@@ -137,7 +142,7 @@ const Navbar: React.FC = () => {
       </div>
 
       {isOpen && (
-        <div className="border-t border-line bg-paper px-5 pb-6 pt-2 md:hidden">
+        <div className="border-t border-line bg-paper px-5 pb-6 pt-2 lg:hidden">
           <nav className="flex flex-col" aria-label="Mobile">
             {NAV_LINKS.map((item) => (
               <NavLink
@@ -166,6 +171,7 @@ const Navbar: React.FC = () => {
                 <div className="flex flex-wrap gap-2">
                   <Link to="/agent" className="btn btn-primary">Open research desk</Link>
                   {isAdmin && <Link to="/admin" className="btn btn-secondary">Admin console</Link>}
+                  {isAdmin && <Link to="/admin/recruitment" className="btn btn-secondary">Recruitment</Link>}
                   <button type="button" onClick={handleLogout} className="btn btn-secondary">Sign out</button>
                 </div>
               </div>
