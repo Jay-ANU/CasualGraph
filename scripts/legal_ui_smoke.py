@@ -30,6 +30,9 @@ finding={'id':'f1','rule_id':'performance','block_id':'p1','original_quote':cont
 review={'id':'r1','contract_id':'c1','status':'completed','stage':'检查完成，等待人工逐条复核','resumable':False,'engine_version':2,'profile':{'model':{'id':'glm-5.2','provider':'ydata'},'review_mode':'multi_agent'},'error':None,'findings':[finding],'coverage':[{'rule_id':'performance','title':'交付、验收与付款','status':'reviewed','note':'合成测试样例'}],'sources':[],'decisions':{},'policies':[],'notice':'合成测试数据，不是法律结论。'}
 review['collaboration']={'version':1,'max_parallel':3,'call_budget':40,'agents':[{'id':'legal','title':'法律风险审查','status':'completed','completed':2,'total':2,'note':''}]}
 policies=[]; calls=[]; allowed={'value':True,'plan':'max','unavailable':False}
+# The started review stays running until the test has checked the progress view.
+running={'value':False}
+def running_review():return {**review,'status':'running','stage':'正在审查付款与交付条款','findings':[],'progress':{'phase':'review','completed':1,'total':6}}
 headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,PATCH,DELETE,OPTIONS','Access-Control-Allow-Headers':'authorization,content-type'}
 def route_api(route):
     req=route.request; path=urlparse(req.url).path; method=req.method; calls.append((method,path))
@@ -68,8 +71,8 @@ def route_api(route):
             'notice':'合成背景，不是已核实交易事实。'}
         review['evidence_health']={'queried_topics':6,'topics_with_sources':4,'failed_or_empty_topics':2,'source_count':0,'non_authoritative_sources':0,'version_pending':0,'status':'gaps','notice':'合成检索状态。'}
         contract['reviews']=[{'id':'r1','status':'completed'}]
-        data={**review,'status':'running','stage':'正在审查付款与交付条款','findings':[],'progress':{'phase':'review','completed':1,'total':6}}
-    elif path=='/legal/reviews/r1':data=review
+        running['value']=True;data=running_review()
+    elif path=='/legal/reviews/r1':data=running_review() if running['value'] else review
     elif path=='/legal/reviews/r1/findings/f1':
         data={**req.post_data_json,'version':1};review['decisions']['f1']=data
     elif path=='/legal/reviews/r1/draft-check':
@@ -209,6 +212,7 @@ try:
         # While the review runs, progress and the collaborating review dimensions are shown.
         expect(page.get_by_role('heading',name='审查中')).to_be_visible()
         expect(page.get_by_label('协作进度')).to_be_visible()
+        running['value']=False  # the next 2.5 s poll returns the completed review
         page.get_by_role('heading',name='审查结果').wait_for(timeout=15000)
         expect(page.get_by_label('风险分布')).to_contain_text('审查意见')
         expect(page.get_by_label('交易背景与资料缺口')).to_be_visible()
