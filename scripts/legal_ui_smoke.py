@@ -122,7 +122,19 @@ try:
         page.screenshot(path=str(OUT/'legal-v2-review-desktop.png'),full_page=True)
         page.set_viewport_size({'width':390,'height':844})
         page.get_by_role('button',name='关闭原文面板').click()
+        # Wait for the responsive sidebar transition instead of capturing a
+        # half-open drawer during desktop-to-mobile resizing.
+        page.wait_for_function("document.querySelector('.lv-sidebar').getBoundingClientRect().right <= 1")
+        page.get_by_role('button',name='打开导航',exact=True).click()
+        expect(page.locator('.lv-backdrop')).to_be_visible()
+        page.wait_for_function("Math.abs(document.querySelector('.lv-sidebar').getBoundingClientRect().left) <= 1")
+        expect(page.get_by_role('button',name='关闭导航',exact=True)).to_be_focused()
+        page.keyboard.press('Escape')
+        expect(page.locator('.lv-backdrop')).to_have_count(0)
+        page.wait_for_function("document.querySelector('.lv-sidebar').getBoundingClientRect().right <= 1")
+        expect(page.get_by_role('button',name='打开导航',exact=True)).to_be_focused()
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+2')
+        page.locator('.lv-conversation').evaluate('(el) => { el.scrollTop = 0; }')
         page.screenshot(path=str(OUT/'legal-v2-mobile.png'),full_page=True)
         assert not errors,errors
         browser.close()
