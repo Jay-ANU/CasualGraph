@@ -43,6 +43,8 @@ class ReviewRequest(BaseModel):
     transaction_date: date | None = None
     external_processing_confirmed: bool = False
     fresh_review: bool = False
+    instructions: str = Field(default="", max_length=1500)
+    review_mode: Literal["standard", "multi_agent"] = "multi_agent"
 
 
 class PolicyRequest(BaseModel):
@@ -56,6 +58,8 @@ class DecisionRequest(BaseModel):
     decision: Literal['accepted', 'rejected', 'pending']
     text: str = Field(default='', max_length=12000)
     expected_version: int = Field(default=0, ge=0)
+    legal_basis_confirmed: bool = False
+    manual_edit_confirmed: bool = False
 
 
 def _access(c: dict, user: dict, write=False):
@@ -87,22 +91,27 @@ def _view(c: dict):
 
 
 def _review_view(r: dict):
+    from legal.review_v2 import all_sources
     p = r['payload']
-    sources = {s['id']: s for x in p.get('searches', {}).values() for s in x.get('sources', [])}
+    now = time.time()
+    expired = (r['status'] == 'running' and r['lease_until'] < now) or (r['status'] == 'queued' and r.get('updated_at', now) < now - 600)
+    can_resume = not p.get('decisions') and (r['status'] == 'failed' or expired or (r['status'] == 'partial' and p.get('retryable') is True))
     return {'id': r['id'], 'contract_id': r['contract_id'], 'status': r['status'], 'created_at': r['created_at'],
-            'stage': p.get('stage', '等待执行'), 'error': p.get('error'),
-            'resumable': r['status'] == 'failed' or (r['status'] in ('queued', 'running') and r['lease_until'] < time.time()),
-            'findings': p.get('findings', []), 'coverage': p.get('coverage', []), 'sources': list(sources.values()),
-            'decisions': p.get('decisions', {}), 'profile': p['profile'], 'policies': p.get('policies', []),
+            'stage': p.get('stage', '等待执行'), 'error': p.get('error'), 'resumable': can_resume,
+            'findings': p.get('findings', []), 'coverage': p.get('coverage', []), 'sources': all_sources(p),
+            'decisions': p.get('decisions', {}), 'profile': p.get('profile', {}), 'policies': p.get('policies', []),
+            'engine_version': p.get('engine_version', 1), 'intake': p.get('intake', {'facts': []}),
+            'collaboration': p.get('collaboration'), 'metrics': p.get('metrics', {}),
+            'summary': p.get('summary', {}), 'progress': p.get('progress'), 'batch_errors': p.get('batch_errors', {}),
             'retrieval': [{'rule_id': k, 'status': s['status'], 'provider': s['provider'], 'warnings': s.get('warnings', [])}
                           for k, s in p.get('searches', {}).items()],
-            'notice': '法律意见为辅助审查，原文匹配不代表版本和法律适用已核实。未发现意见不代表无风险。修改由有权限的用户确认。'}
+            'notice': '法律意见为辅助审查；模型复核和原文匹配不代表法条版本及适用已由法务确认。未发现意见不代表无风险。'}
 
 
 @public_router.get('/version')
 def version():
     return {'product': 'contract-review', 'version': '1.0.0', 'law_source': 'external', 'rules_source': 'database',
-            'max_only': True, 'model_gateway': 'ydata', 'model_selection_version': 1}
+            'max_only': True, 'model_gateway': 'ydata', 'model_selection_version': 1, 'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1}
 
 
 @public_router.get('/access')
@@ -131,6 +140,7 @@ def capabilities(user: dict = Depends(get_current_user)):
     except Exception:
         encrypted = False
     return {'product': 'contract-review', 'model_configured': ydata.configured(), 'model_gateway': 'ydata', 'encryption_configured': encrypted,
+            'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1,
             'law_search': external_law.provider_status(), 'contract_types': ['采购合同', '服务合同', '保密协议', '其他商事合同'],
             'limits': {'max_upload_mb': 10, 'max_characters': documents.MAX_TEXT, 'max_blocks': documents.MAX_BLOCKS}}
 
@@ -216,11 +226,13 @@ def start_review(cid: str, request: ReviewRequest, user: dict = Depends(get_curr
     except ydata.GatewayError as exc:
         raise _gateway_failure(exc) from None
     profile = request.model_dump(mode='json', exclude={'external_processing_confirmed', 'fresh_review', 'external_processing_provider', 'model_id'})
+    from legal.review_questions import redact_note
+    profile['instructions'] = redact_note(profile.get('instructions', ''), c['payload'])
     profile['model'] = selected
     profile['external_processing_provider'] = 'ydata'
     profile['review_date'] = date.today().isoformat()
     policies = [p for p in store.policies(c['org_id'], str(user['id'])) if p['contract_type'] in ('全部', request.contract_type)]
-    snapshot = {'contract_revision': c['revision'], 'profile': profile, 'policies': policies, 'stage': '等待执行', 'findings': [], 'coverage': []}
+    snapshot = {'engine_version': 2, 'contract_revision': c['revision'], 'profile': profile, 'policies': policies, 'stage': '等待执行', 'findings': [], 'coverage': []}
     fingerprint = hashlib.sha256(json.dumps({'contract': cid, **snapshot, 'nonce': uuid.uuid4().hex if request.fresh_review else ''},
                                                sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     rid, created = store.create_review(c, str(user['id']), fingerprint, snapshot)
@@ -238,21 +250,23 @@ def get_review(rid: str, user: dict = Depends(get_current_user)):
 @router.post('/reviews/{rid}/resume', status_code=202)
 def resume(rid: str, user: dict = Depends(get_current_user)):
     r, c = _review(rid, user, True)
-    if r['status'] in ('completed', 'partial'):
-        raise HTTPException(409, '该任务已结束。需要重新检索时请新建审查。')
-    if r['status'] == 'running' and r['lease_until'] > time.time():
-        raise HTTPException(409, '任务仍在执行，不重复提交。')
+    if r['status'] in ('completed', 'cancelled') or (r['status'] == 'partial' and not r['payload'].get('retryable')):
+        raise HTTPException(409, '该任务已结束；补充事实或改变要求时请新建审查。')
+    if r['payload'].get('decisions'):
+        raise HTTPException(409, '本轮已有人工决定，请新建审查，避免覆盖已确认修改。')
     if r['payload'].get('profile', {}).get('external_processing_provider') != 'ydata':
         raise HTTPException(409, '旧任务未确认 YData 处理授权，请选择模型并新建审查。')
-    # A failed external search is retried on resume; successful evidence remains timestamped.
+    store.queue_resume(rid)
     engine.submit(rid)
-    return _review_view(r)
+    return _review_view(store.review(rid))
 
 
 @router.patch('/reviews/{rid}/findings/{fid}')
 def decision(rid: str, fid: str, request: DecisionRequest, user: dict = Depends(get_current_user)):
     _review(rid, user, True)
-    return store.decide(rid, str(user['id']), fid, request.decision, request.text, request.expected_version)
+    return store.decide(rid, str(user['id']), fid, request.decision, request.text, request.expected_version,
+                        legal_basis_confirmed=request.legal_basis_confirmed,
+                        manual_edit_confirmed=request.manual_edit_confirmed)
 
 
 @router.get('/reviews/{rid}/export')
@@ -288,3 +302,36 @@ def export(rid: str, format: Literal['json', 'docx', 'txt'] | None = None, user:
     with store.transaction() as conn:
         store.audit(conn, str(user['id']), c['matter_id'], c['org_id'], 'review.exported', rid, {'format': format})
     return Response(content=content, media_type=mime, headers={'Content-Disposition': f'attachment; filename="{filename}"', 'Cache-Control': 'no-store'})
+
+class QuestionRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=1500)
+    request_id: str = Field(min_length=1, max_length=80, pattern=r'^[A-Za-z0-9_-]+$')
+    external_processing_confirmed: bool = False
+
+@router.post('/reviews/{rid}/cancel')
+def cancel_review(rid: str, user: dict = Depends(get_current_user)):
+    r, c = _review(rid, user, True)
+    store.cancel_review(rid, str(user['id']), c['org_id'])
+    return _review_view(store.review(rid))
+
+@router.get('/reviews/{rid}/questions')
+def question_history(rid: str, user: dict = Depends(get_current_user)):
+    from legal import review_questions
+    _review(rid, user)
+    return {'messages': review_questions.history(rid, str(user['id']))}
+
+@router.post('/reviews/{rid}/questions')
+def ask_question(rid: str, request: QuestionRequest, user: dict = Depends(get_current_user)):
+    from legal import review_questions
+    from legal.access import assert_worker_max
+    r, c = _review(rid, user, True)
+    if not request.external_processing_confirmed:
+        raise HTTPException(409, '请明确授权把本次提问及本轮脱敏材料发送给原审查模型。')
+    def authorize():
+        assert_worker_max(str(user['id']))
+        _review(rid, user, True)
+    try:
+        return review_questions.ask(r, c, user, request.question, request.request_id, authorize)
+    except ydata.GatewayError as exc:
+        raise _gateway_failure(exc) from None
+
