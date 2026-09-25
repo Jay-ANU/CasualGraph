@@ -1,18 +1,14 @@
 name: CI
-
 on:
   pull_request:
   push:
-    branches: [main, 'claude/**']
+    branches: [main, 'claude/**', 'feat/legal-review-external-evidence']
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -33,7 +29,14 @@ jobs:
         run: python -m compileall -q $(git ls-files '*.py')
       - name: Backend tests (mocked providers, no API credit)
         run: python -m pytest -q tests
-
+      - name: Public-query live law retrieval diagnostic (no contract or model credit)
+        run: python scripts/legal_retrieval_probe.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legal-retrieval-probe
+          path: legal-retrieval-probe.json
+          retention-days: 7
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -64,9 +67,11 @@ jobs:
         run: |
           pip install playwright==1.58.0
           python -m playwright install --with-deps chromium
-      - name: Browser smoke checks (mock APIs, no model credit)
+      - name: Existing research and contract UI browser checks (mock APIs)
         working-directory: .
-        run: python scripts/research_ui_smoke.py
+        run: |
+          python scripts/research_ui_smoke.py
+          python scripts/legal_ui_smoke.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

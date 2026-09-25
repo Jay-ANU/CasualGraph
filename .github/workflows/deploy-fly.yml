@@ -1,5 +1,4 @@
 name: Deploy Fly backend
-
 on:
   workflow_dispatch:
   push:
@@ -21,14 +20,11 @@ on:
       - 'mcp_tools/**'
       - 'notifications/**'
       - 'scripts/fly_start.sh'
-
 permissions:
   contents: read
-
 concurrency:
   group: casualgraph-production-backend
   cancel-in-progress: false
-
 jobs:
   deploy:
     if: github.repository == 'Jay-ANU/CasualGraph' && github.ref == 'refs/heads/main'
@@ -43,7 +39,7 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           if [ -z "${FLY_API_TOKEN:-}" ]; then
-            echo '::error::FLY_API_TOKEN is not configured. Add an app-scoped Fly deploy token to the repository or production environment Actions secrets, then rerun this workflow. No backend changes were made.'
+            echo '::error::FLY_API_TOKEN is not configured. Add an app-scoped Fly deploy token to repository or production environment Actions secrets, then rerun. No backend changes were made.'
             echo 'Backend deployment blocked: missing FLY_API_TOKEN. Production was not changed.' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
@@ -63,56 +59,54 @@ jobs:
           python -m compileall -q app.py api services legal configs rag
           python -m pytest -q tests
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: Check existing model credential without reading its value
+      - name: Check credentials and provision encryption only when absent
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           set -euo pipefail
           flyctl secrets list --app casualgraph > /tmp/casualgraph-secret-names.txt
           if ! awk '{print $1}' /tmp/casualgraph-secret-names.txt | grep -qx DEEPSEEK_API_KEY; then
-            echo '::error::DEEPSEEK_API_KEY is missing from the Fly app. Set it in Fly secret storage and rerun. No release was made.'
-            echo 'Backend deployment blocked: configure DEEPSEEK_API_KEY on Fly.io. Production was not changed.' >> "$GITHUB_STEP_SUMMARY"
+            echo '::error::DEEPSEEK_API_KEY is missing on Fly. No release was made.'
             exit 1
+          fi
+          if ! awk '{print $1}' /tmp/casualgraph-secret-names.txt | grep -qx REDACTION_KEY; then
+            python -c 'from cryptography.fernet import Fernet; print("REDACTION_KEY=" + Fernet.generate_key().decode())' | flyctl secrets import --stage --app casualgraph
+            echo 'Created the previously absent encryption secret. Existing secrets were not read or replaced.' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Set the approved model profile and deploy main
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           set -euo pipefail
-          # Replace stale model-name secrets, which otherwise override fly.toml.
-          # Existing API keys, storage, authentication and vector indexes are untouched.
           flyctl secrets set --stage --app casualgraph \
-            LLM_PROVIDER=deepseek \
-            RAG_ANSWER_MODE=deepseek \
-            DEEPSEEK_MODEL=deepseek-v4-pro \
-            RAG_DEEP_MODEL=deepseek-v4-pro \
-            RAG_DEEP_MAX_TOKENS=16384 \
-            RAG_DEEP_TIMEOUT=120
+            LLM_PROVIDER=deepseek RAG_ANSWER_MODE=deepseek \
+            DEEPSEEK_MODEL=deepseek-v4-pro RAG_DEEP_MODEL=deepseek-v4-pro \
+            RAG_DEEP_MAX_TOKENS=16384 RAG_DEEP_TIMEOUT=120
           flyctl deploy --remote-only --app casualgraph --config fly.toml
           flyctl status --app casualgraph
           echo "Backend release completed from commit $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
-      - name: Verify deployed model configuration
+      - name: Verify backend release and protected contract API
         run: |
           python - <<'PY'
-          import json
-          import time
-          import urllib.request
-          last_error = None
+          import json, time, urllib.request, urllib.error
           for attempt in range(6):
               try:
-                  with urllib.request.urlopen('https://casualgraph.fly.dev/models/status', timeout=20) as response:
-                      data = json.load(response)
-                  assert data.get('provider') == 'deepseek', 'Unexpected provider'
-                  assert data.get('configured') is True, 'Model credential is not configured'
-                  for tier in ('flash', 'deep'):
-                      assert data['modes'][tier]['model'] == 'deepseek-v4-pro', f'Unexpected {tier} model'
-                      assert data['modes'][tier]['configured'] is True, f'{tier} is not configured'
-                  print('Backend responds; Fast and Deep are configured for DeepSeek V4 Pro. Live inference and quota are not verified by this check.')
+                  with urllib.request.urlopen('https://casualgraph.fly.dev/models/status', timeout=20) as r:
+                      data=json.load(r)
+                  assert data.get('provider') == 'deepseek' and data.get('configured') is True
+                  for tier in ('flash','deep'):
+                      assert data['modes'][tier]['model']=='deepseek-v4-pro' and data['modes'][tier]['configured'] is True
+                  with urllib.request.urlopen('https://casualgraph.fly.dev/legal/version', timeout=20) as r:
+                      assert json.load(r)['product']=='contract-review'
+                  try:
+                      urllib.request.urlopen('https://casualgraph.fly.dev/legal/contracts?matter_id=probe', timeout=20)
+                  except urllib.error.HTTPError as e:
+                      assert e.code in (401,403), f'Unexpected contract protection status: {e.code}'
+                  else:
+                      raise AssertionError('Contract API was accessible without authentication')
+                  print('Verified contract API version, auth boundary and model configuration. Live authenticated model inference is not verified by this check.')
                   break
-              except Exception as exc:
-                  last_error = exc
-                  if attempt < 5:
-                      time.sleep(10)
-          else:
-              raise SystemExit(f'Post-deploy model configuration check failed: {type(last_error).__name__}: {last_error}')
+              except Exception:
+                  if attempt == 5: raise
+                  time.sleep(10)
           PY
