@@ -228,12 +228,15 @@ def decision(rid: str, fid: str, request: DecisionRequest, user: dict = Depends(
 
 
 @router.get('/reviews/{rid}/export')
-def export(rid: str, format: Literal['json', 'docx', 'txt'] = 'json', user: dict = Depends(get_current_user)):
+def export(rid: str, format: Literal['json', 'docx', 'txt'] | None = None, user: dict = Depends(get_current_user)):
     r, c = _review(rid, user)
     if r['status'] not in ('completed', 'partial'):
         raise HTTPException(409, '请在审查完成后导出。')
     # Require editing permission for reconstructed originals: viewers can only export redacted reports.
     p, cp = r['payload'], c['payload']
+    format = format or ('docx' if cp['format'] == 'docx' else 'json')
+    if cp['format'] == 'docx' and format == 'txt':
+        raise HTTPException(422, 'Word 合同请导出带修订痕迹的 DOCX；审查报告可单独导出。')
     if format == 'json':
         content = json.dumps(_review_view(r), ensure_ascii=False, indent=2).encode()
         mime, filename = 'application/json', f'review-{rid[:8]}.json'
@@ -244,6 +247,8 @@ def export(rid: str, format: Literal['json', 'docx', 'txt'] = 'json', user: dict
         if format == 'docx':
             if cp['format'] != 'docx':
                 raise HTTPException(422, '仅 DOCX 原件可导出 Word 修订；其他格式请选择文字修改稿。')
+            if not changes:
+                raise HTTPException(409, '尚未选择需要纳入修订稿的修改，请先接受至少一项建议。')
             try:
                 content = documents.redline_docx(base64.b64decode(cp['original_b64']), cp['blocks'], changes)
             except ValueError as exc:

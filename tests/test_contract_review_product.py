@@ -80,7 +80,13 @@ def test_word_parse_and_anchored_revisions():
     with zipfile.ZipFile(io.BytesIO(updated)) as z:
         xml = z.read('word/document.xml').decode()
         assert '<w:del ' in xml and '<w:ins ' in xml
-        assert '验收后90日付款。' in xml and '验收后60日付款。' in xml
+        from lxml import etree
+        root = etree.fromstring(z.read('word/document.xml'))
+        ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        assert ''.join(root.xpath('//w:del//w:delText/text()', namespaces=ns)) == '9'
+        assert ''.join(root.xpath('//w:ins//w:t/text()', namespaces=ns)) == '6'
+        assert root.xpath('//w:p/w:r/w:t[text()="验收后"]', namespaces=ns)
+        assert root.xpath('//w:p/w:r/w:t[text()="0日付款。"]', namespaces=ns)
         assert '附件：金额100万元。' in xml
     with pytest.raises(ValueError, match='未处理的修订'):
         docs.parse_contract(updated, 'a.docx')

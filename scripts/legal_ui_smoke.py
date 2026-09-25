@@ -79,7 +79,7 @@ try:
         page.on('dialog',lambda dialog:dialog.accept())
         page.route('http://127.0.0.1:8000/**',route_api)
         page.add_init_script("localStorage.setItem('token','synthetic-test-token');localStorage.setItem('user',JSON.stringify({id:'u1',username:'测试法务',role:'user'}));")
-        page.goto('http://127.0.0.1:4173/agent')
+        page.goto('http://127.0.0.1:4173/legal')
         page.get_by_role('button',name='选择一份合同开始').wait_for()
         expect(page.get_by_role('button',name='＋ 上传合同')).to_be_enabled()
         page.locator('input[type=file]').set_input_files({'name':'测试采购合同.txt','mimeType':'text/plain','buffer':'测试采购合同'.encode()})

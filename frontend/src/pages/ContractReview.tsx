@@ -131,7 +131,7 @@ export default function ContractReview() {
     const response = await fetch(`${apiBase()}/legal/reviews/${review.id}/export?format=${format}`, withAuth());
     if (!response.ok) throw await readApiError(response);
     const blob = await response.blob(); const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `${format === 'json' ? '审查报告' : '合同修订稿'}.${format}`;
+    const a = document.createElement('a'); a.href = url; a.download = `${format === 'json' ? '审查报告' : '合同修订稿（含修订痕迹）'}.${format}`;
     document.body.appendChild(a); a.click(); a.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   const displayedBlocks = preview || contract?.blocks || [];
@@ -202,7 +202,7 @@ export default function ContractReview() {
             {review && <details className="legal-coverage"><summary>检查覆盖与依据（{review.coverage.length}）</summary>{review.coverage.map(c => <p key={c.rule_id}><strong>{c.title} · {COVERAGE[c.status] || c.status}</strong><br />{c.note}</p>)}<p>{review.notice}</p></details>}
           </section>
         </div>
-        {done && <footer className="legal-export"><div><strong>交付前再复核</strong><small>原件修改稿会恢复真实信息，且只应用你接受的修改；不是脱敏文件。Word 修订保留删除内容，勿作为脱敏副本分享。</small></div><button disabled={busy} onClick={() => void run(() => download('json'))}>导出审查报告</button><button disabled={busy} onClick={() => { if (window.confirm('导出包含真实主体信息的原件修改稿？仅应用已接受修改，请在分享前复核。')) void run(() => download(contract.format === 'docx' ? 'docx' : 'txt')); }}>导出{contract.format === 'docx' ? ' Word 修订稿' : '文字修改稿'}</button></footer>}
+        {done && <footer className="legal-export"><div><strong>交付前再复核</strong><small>先接受需要纳入修订稿的建议。导出的 Word 保留新增、删除痕迹，可在 Word「审阅」中逐项接受或拒绝；原格式尽量保留。文件恢复真实信息并保留删除内容，不是脱敏副本。</small></div><button disabled={busy} onClick={() => void run(() => download('json'))}>导出审查报告</button><button disabled={busy || (contract.format === 'docx' && accepted === 0)} onClick={() => { if (window.confirm('导出包含真实主体信息的修订稿？所选建议在 Word 中仍是待接受或拒绝的修订。请在分享前复核。')) void run(() => download(contract.format === 'docx' ? 'docx' : 'txt')); }}>导出{contract.format === 'docx' ? ' Word（含修订痕迹）' : '文字修改稿'}</button></footer>}
       </main>}
     </div>
   </div>;
