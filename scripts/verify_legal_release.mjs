@@ -12,7 +12,8 @@ export async function verifyLegalRelease(environment, fetcher = fetch) {
       || version.max_only !== true || version.model_gateway !== 'ydata'
       || version.model_selection_version !== 1 || version.review_engine_version !== 2
       || version.followup_questions !== true || version.collaboration_version !== 1
-      || version.audit_foundation_version !== 1 || version.draft_release_version !== 1) {
+      || version.audit_foundation_version !== 1 || version.draft_release_version !== 1
+      || version.transaction_brief_version !== 1 || version.evidence_screening_version !== 1) {
     throw new Error('Contract backend version is incompatible with this frontend.');
   }
   return { ready: true, version: version.version };

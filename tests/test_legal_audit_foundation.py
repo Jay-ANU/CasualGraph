@@ -139,7 +139,7 @@ def select(runtime, text=None, decision='accepted'):
 
 
 def test_manual_edit_cannot_reuse_candidate_approval(runtime):
-    with pytest.raises(HTTPException, match='') as exc:
+    with pytest.raises(HTTPException) as exc:
         select(runtime, runtime[2]['suggested_text'].replace('60', '30'))
     assert exc.value.status_code == 409
     select(runtime, runtime[2]['suggested_text'].replace('60', '30'), 'draft')
@@ -275,3 +275,15 @@ def test_disclosure_does_not_certify_configured_region(monkeypatch):
     d = boundary.disclosure()
     assert d['raw_upload_before_redaction'] is True and d['region_verified'] is False
     assert 'Sydney' in d['storage_region']
+
+
+def test_changed_transaction_brief_invalidates_exact_export_approval(runtime):
+    select(runtime)
+    rid, cid, _ = runtime
+    checked = release.check(rid, 'u1', 'context', lambda: None, model=supported)
+    release.approve(rid, 'u1', checked['fingerprint'], True)
+    r = store.review(rid)
+    r['payload']['transaction_brief'] = {'context': {'attachments_status':'存在未提供附件'}}
+    with pytest.raises(HTTPException) as error:
+        release.assert_exportable(r, store.contract(cid))
+    assert error.value.status_code == 409

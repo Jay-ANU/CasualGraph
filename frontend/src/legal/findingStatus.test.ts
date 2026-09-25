@@ -17,3 +17,7 @@ describe('audit risk summary', () => {
     expect(findingStatus(finding({ verification_status: 'rejected', missing_facts: ['未知'] }))).toBe('rejected');
   });
 });
+it('does not promote a legal citation to a verified law version', () => {
+  expect(findingStatus(finding({ kind: 'legal', evidence_status: 'source_matched', version_status: 'needs_verification' }))).toBe('unconfirmed');
+  expect(findingCounts([finding({ kind: 'legal', evidence_status: 'source_matched' })]).high).toBe(0);
+});

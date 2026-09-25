@@ -88,7 +88,7 @@ def test_trade_role_changes_interest_focus(role):
     p=build_plan(base,BLOCKS,{'our_role':role},[])
     assert '我方利益检查' in p[0]['checks'] and p[0]['queries']
 def test_evidence_budget_keeps_whole_provision():
-    source={'id':'a','text':'第一条 '+('甲'*8000)+'。第二条 这是可保留的完整规定。'}
+    source={'id':'a','text':'第一条 '+('甲'*8000)+'。\n第二条 这是可保留的完整规定。'}
     r=relevant_evidence([source]);assert len(r)==1 and '第一条' not in r[0]['text'] and '第二条' in r[0]['text'] and r[0]['review_excerpt']
 def test_empty_and_unsegmented_oversized_source():
     assert relevant_evidence([{'id':'a','text':'x'*9000}])==[]

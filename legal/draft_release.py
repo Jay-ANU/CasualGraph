@@ -85,7 +85,7 @@ def snapshot(r: dict, c: dict) -> dict:
     identity = {'review_id': r['id'], 'contract_id': c['id'], 'revision': c['revision'],
                 'source_hash': cp.get('content_hash') or digest(cp.get('blocks', [])),
                 'redacted_hash': digest(original), 'mapping_hash': digest(cp.get('mapping', {})),
-                'profile': p.get('profile'), 'policies': p.get('policies', []),
+                'profile': p.get('profile'), 'transaction_brief': p.get('transaction_brief'), 'policies': p.get('policies', []),
                 'findings': p.get('findings', []), 'coverage': p.get('coverage', []),
                 'decisions': p.get('decisions', {}), 'final_hash': digest(final)}
     return {'fingerprint': digest(identity), 'final_hash': digest(final),
@@ -152,7 +152,7 @@ def check(rid: str, user_id: str, request_id: str, authorize, *, model=None) -> 
         selected_sources = [source for source in sources if source['id'] in cited]
         if cited != {source['id'] for source in selected_sources}:
             raise HTTPException(409, '所选修改的法律来源缺失，请重新审查。')
-        request = {**data, 'profile': payload['profile'], 'legal_sources': selected_sources,
+        request = {**data, 'profile': payload['profile'], 'transaction_brief': payload.get('transaction_brief'), 'legal_sources': selected_sources,
                    'company_policies': payload.get('policies', []), 'coverage': payload.get('coverage', []),
                    'parsing_warnings': c['payload'].get('warnings', [])}
         if len(json.dumps(request, ensure_ascii=False)) + len(SYSTEM) > MAX_INPUT_CHARACTERS:

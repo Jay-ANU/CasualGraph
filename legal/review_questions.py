@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from legal import review_quality as quality, review_store as store, ydata
 from legal.review_v2 import all_sources
 from legal.review_plan import relevant_evidence
+from legal.law_evidence import NON_AUTHORITIES
 
 QUESTION_SCHEMA = '''CREATE TABLE IF NOT EXISTS legal_questions (
     id TEXT PRIMARY KEY, review_id TEXT NOT NULL, user_id TEXT NOT NULL,
@@ -67,7 +68,11 @@ def validate_answer(raw: dict, blocks: list[dict], sources: list[dict]) -> dict:
     answer = quality.text(raw.get('answer'), 4001)
     if len(answer) > 4000:
         answer = ''
-    unsupported_legal = (re.search(r'违法|无效|合法|依法|法定|第.+?条|法律规定', answer) and not citations)
+    legal_claim = re.search(r'违法|无效|合法|依法|法定|第.+?条|法律规定', answer)
+    source_types = {s['id']: s.get('source_kind') for s in sources}
+    if legal_claim:
+        citations = [c for c in citations if source_types.get(c['source_id']) not in NON_AUTHORITIES]
+    unsupported_legal = legal_claim and not citations
     if not answer.strip() or not (refs or citations) or unsupported_legal:
         answer = '本轮材料不足以支持这个回答。请查看相关原文和已检索依据；涉及新的法律问题或事实时，需要补充材料后重新审查。'
         return {'answer': answer, 'block_refs': [], 'citations': [], 'uncertain': True}
@@ -109,7 +114,7 @@ def ask(r: dict, c: dict, user: dict, question: str, request_id: str, authorize)
         authorize()
         sources = relevant_evidence(all_sources(p))
         blocks = c['payload']['redacted_blocks']
-        data = {'profile': p['profile'], 'question': question, 'contract_blocks': blocks, 'sources': sources,
+        data = {'profile': p['profile'], 'transaction_brief': p.get('transaction_brief'), 'question': question, 'contract_blocks': blocks, 'sources': sources,
                 'findings': [{'title': f['title'], 'block_id': f.get('block_id'), 'reason': f['reason'],
                     'verification_status': f.get('verification_status', 'uncertain'), 'evidence_status': f.get('evidence_status'),
                     'decision': p.get('decisions', {}).get(f['id'], {}).get('decision', 'pending')} for f in p.get('findings', [])],

@@ -51,6 +51,12 @@ def route_api(route):
         assert payload['review_mode']=='multi_agent'
         assert payload['our_party']=={'block_id':'p1','quote':'【脱敏1】'}
         assert payload['our_role']=='采购方' and payload['instructions']=='重点关注付款安排'
+        assert payload['transaction_context']=={'performance_stage':'谈判中','attachments_status':'未知','business_priority':'付款与回款','deal_value':'1000000.05','currency':'CNY'}
+        review['profile'].update(transaction_context=payload['transaction_context'])
+        review['transaction_brief']={'version':1,'context':payload['transaction_context'],'context_source':'user_statement_not_independently_verified',
+            'material_references':[], 'gaps':[{'code':'date_unknown','message':'交易日期未提供，法律时间适用仍需核验。','source':'not_provided'}],
+            'notice':'合成背景，不是已核实交易事实。'}
+        review['evidence_health']={'queried_topics':6,'topics_with_sources':4,'failed_or_empty_topics':2,'source_count':0,'non_authoritative_sources':0,'version_pending':0,'status':'gaps','notice':'合成检索状态。'}
         contract['reviews']=[{'id':'r1','status':'completed'}]; data=review
     elif path=='/legal/reviews/r1':data=review
     elif path=='/legal/reviews/r1/findings/f1':
@@ -101,6 +107,13 @@ try:
         page.get_by_label('我方角色').select_option('采购方')
         page.get_by_label('我方主体所在段落').select_option('p1')
         page.get_by_label('我方主体原文').fill('【脱敏1】')
+        page.get_by_text('交易背景与法律适用',exact=True).click()
+        page.get_by_label('履行阶段').select_option('谈判中')
+        page.get_by_label('关键附件状态').select_option('未知')
+        page.get_by_label('业务优先级').select_option('付款与回款')
+        page.get_by_label('交易金额',exact=True).fill('-3')
+        expect(page.get_by_text('交易金额必须是非负数字，最多两位小数，不使用单位或科学计数法。',exact=True)).to_be_visible()
+        page.get_by_label('交易金额',exact=True).fill('1000000.05')
         consent=page.get_by_label('允许将脱敏正文、补充要求及适用公司规范经 YData 网关发送给所选模型。')
         consent.check();page.get_by_label('审查方式').select_option('standard');expect(consent).not_to_be_checked()
         page.get_by_label('审查方式').select_option('multi_agent')
@@ -109,6 +122,9 @@ try:
         page.get_by_role('button',name='开始审查',exact=True).click()
         page.get_by_role('heading',name='有 1 项值得进一步处理').wait_for()
         expect(page.get_by_label('协作进度')).to_be_visible()
+        expect(page.get_by_label('交易背景与资料缺口')).to_be_visible()
+        expect(page.get_by_text('1000000.05 CNY',exact=True)).to_be_visible()
+        expect(page.get_by_text('有 2 项检索未取得来源，不能据此排除法律风险。',exact=True)).to_be_visible()
         page.get_by_role('button',name='接受修改',exact=True).click()
         page.locator('.lv-decision').filter(has_text='已纳入修订').wait_for()
         expect(page.get_by_role('button',name='导出文字修改稿',exact=True)).to_be_disabled()
@@ -136,6 +152,13 @@ try:
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+2')
         page.locator('.lv-conversation').evaluate('(el) => { el.scrollTop = 0; }')
         page.screenshot(path=str(OUT/'legal-v2-mobile.png'),full_page=True)
+        page.set_viewport_size({'width':1440,'height':1000})
+        page.wait_for_function("document.querySelector('.lv-sidebar').getBoundingClientRect().left >= 0")
+        page.get_by_role('button',name='新建审查').click()
+        page.locator('input[type=file]').set_input_files({'name':'new.txt','mimeType':'text/plain','buffer':'第二份合成合同'.encode()})
+        page.get_by_text('交易背景与法律适用',exact=True).click()
+        expect(page.get_by_label('履行阶段')).to_have_value('未知')
+        expect(page.get_by_label('交易金额',exact=True)).to_have_value('')
         assert not errors,errors
         browser.close()
     print('PASS: actual built UI with synthetic APIs: Max gate, models, consent, collaboration, decisions, report, mobile.')

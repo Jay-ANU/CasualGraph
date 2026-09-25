@@ -2,6 +2,7 @@ import React from 'react';
 import type { Catalog, Finding, Policy, Review } from './types';
 import { diffText } from './diff';
 import { findingStatus } from './findingStatus';
+import { SourceDetails, sourceKindLabel } from './ReviewContext';
 
 const PATHS: Record<string, string[]> = {
   plus: ['M10 4v12M4 10h12'], close: ['M5 5l10 10M15 5L5 15'], menu: ['M3 5h14M3 10h14M3 15h14'],
@@ -50,7 +51,7 @@ export class FindingCard extends React.Component<FindingProps, { open: boolean; 
         {f.missing_facts.length > 0 && <div className="lv-inline-warning"><strong>还需要确认</strong>{f.missing_facts.map((item, i) => <p key={i}>{item}</p>)}</div>}
         {f.validation_warnings?.map((w, i) => <p key={i} className="lv-inline-warning">{w}</p>)}
         {f.conflict_group && <p className="lv-inline-warning">这一段还有其他修改方案。请选择或人工合并，不会把相互覆盖的建议同时写入。</p>}
-        {f.citations.map((citation, i) => { const source = r.sources.find(x => x.id === citation.source_id); return source ? <details className="lv-citation" key={`${citation.source_id}-${i}`}><summary><Icon name="book" />{source.title}</summary><blockquote>{citation.supporting_quote}</blockquote><a href={source.url} target="_blank" rel="noreferrer noopener">核对外部原文 ↗</a><small>检索于 {new Date(source.retrieved_at).toLocaleString('zh-CN')} · 版本和适用性需人工核验</small></details> : null; })}
+        {f.citations.map((citation, i) => { const source = r.sources.find(x => x.id === citation.source_id); return source ? <details className="lv-citation" key={`${citation.source_id}-${i}`}><summary><Icon name="book" />{source.title}</summary><blockquote>{citation.supporting_quote}</blockquote><a href={source.url} target="_blank" rel="noreferrer noopener">核对外部原文 ↗</a><SourceDetails source={source} /></details> : null; })}
         {f.policy_ids.map(id => { const p = r.policies.find(x => x.id === id); return p ? <details className="lv-citation" key={id}><summary><Icon name="book" />公司规范：{p.title} · v{p.version}</summary><p>{p.text}</p><small>这是内部标准，不是法律规定。</small></details> : null; })}
         {f.evidence_status === 'unverified' && <p className="lv-inline-warning">依据不足或复核未支持，不能直接纳入修订。</p>}
         {f.suggested_text && <div className="lv-suggestion"><div><h4>建议这样改</h4><button className="lv-text-button" onClick={() => this.setState({ editing: !this.state.editing })}>{this.state.editing ? '查看修改对比' : '编辑建议'}</button></div>{this.state.editing ? <label className="lv-edit-label">本段完整替代文本<textarea aria-label="编辑本段建议" rows={5} value={this.state.text} maxLength={12000} onChange={e => this.setState({ text: e.target.value, manual: false, legalBasis: false })} /></label> : <div className="lv-diff" aria-label="原文与建议修改对比">{diffText(original || f.original_quote, this.state.text).map((part, i) => part.kind === 'del' ? <del key={i}>{part.text}</del> : part.kind === 'ins' ? <ins key={i}>{part.text}</ins> : <span key={i}>{part.text}</span>)}</div>}<small>仅展示文字差异。导出 DOCX 会保留 Word 原生修订。</small></div>}
@@ -72,13 +73,20 @@ export class PolicyEditor extends React.Component<PolicyProps, { draft: Draft; e
 }
 const escaped = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export function ReviewReport(review: Review): string {
-  const out = ['# 合同审查报告', '', `审查编号：${review.id}`, `审查状态：${review.status}`, `模型：${review.profile?.model?.id || '历史记录未提供'}`, `我方角色：${review.profile?.our_role || '未记录'}`, `审查方式：${review.profile?.review_mode === 'multi_agent' ? '多 Agent 协作' : '常规审查'}`, '', review.notice, '', '## 逐条意见'];
+  const out = ['# 合同审查报告', '', `审查编号：${review.id}`, `审查状态：${review.status}`, `模型：${review.profile?.model?.id || '历史记录未提供'}`, `我方角色：${review.profile?.our_role || '未记录'}`, `审查方式：${review.profile?.review_mode === 'multi_agent' ? '多 Agent 协作' : '常规审查'}`, '', review.notice];
+  if (review.transaction_brief) {
+    const b = review.transaction_brief;
+    out.push('', '## 交易背景（用户填写，尚未独立核实）', `履行阶段：${escaped(b.context.performance_stage || '未知')}`, `附件声明：${escaped(b.context.attachments_status || '未知')}`, `业务重点：${escaped(b.context.business_priority || '综合审查')}`, `金额：${escaped(b.context.deal_value == null ? '未提供' : `${b.context.deal_value} ${b.context.currency}`)}`);
+    for (const gap of b.gaps) out.push('', `资料缺口：${escaped(gap.message)}`);
+  }
+  if (review.evidence_health) out.push('', '## 法律检索状态', `取得来源：${review.evidence_health.topics_with_sources}/${review.evidence_health.queried_topics} 项；版本待核验：${review.evidence_health.version_pending} 个来源。`, review.evidence_health.notice);
+  out.push('', '## 逐条意见');
   for (const [index, f] of review.findings.entries()) {
     out.push('', `### ${index + 1}. ${escaped(f.title)}`, `类别：${f.kind}；证据/复核状态：${findingStatus(f)}；优先级：${findingStatus(f) === 'supported' ? f.severity : '不作为已成立风险计级'}；原文：${f.block_id || '待确定插入位置'}`, '', '原文：', escaped(f.original_quote), '', '对我方的影响：', escaped(f.impact), '', '判断理由：', escaped(f.reason));
     if (f.agent_title) out.push('', `提出意见：${escaped(f.agent_title)}`);
     if (f.missing_facts.length) out.push('', '待确认信息：', ...f.missing_facts.map(escaped));
     if (f.verification_note) out.push('', '模型复核说明（不等于法律认证）：', escaped(f.verification_note));
-    for (const c of f.citations) { const s = review.sources.find(source => source.id === c.source_id); if (s) out.push('', `依据：${escaped(s.title)}`, escaped(c.supporting_quote), s.url, `检索时间：${s.retrieved_at}；版本和适用性待人工核验。`); }
+    for (const c of f.citations) { const s = review.sources.find(source => source.id === c.source_id); if (s) out.push('', `依据：${escaped(s.title)}`, escaped(c.supporting_quote), s.url, `来源类型（规则初筛）：${sourceKindLabel(s)}；检索时间：${s.retrieved_at}；版本和适用性待人工核验。`); }
     for (const id of f.policy_ids) { const p = review.policies.find(item => item.id === id); if (p) out.push('', `公司规范：${escaped(p.title)} v${p.version}`, escaped(p.text)); }
     const decision = review.decisions[f.id];
     out.push('', `处理决定：${decision?.decision || 'pending'}`);

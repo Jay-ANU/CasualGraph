@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 from xml.etree import ElementTree
+from legal.law_evidence import ARTICLE_START, screen_page
 
 import httpx
 
@@ -38,7 +39,7 @@ def _public_host(host: str) -> None:
         raise LawRetrievalError('blocked_network_target')
 
 
-def _read(client: httpx.Client, method: str, url: str, *, official: bool = False, **kwargs) -> str:
+def _read(client: httpx.Client, method: str, url: str, *, official: bool = False, trace: dict | None = None, **kwargs) -> str:
     # Redirects are checked before following; original contracts are never sent here.
     for _ in range(4):
         if not official:
@@ -56,6 +57,8 @@ def _read(client: httpx.Client, method: str, url: str, *, official: bool = False
                 method = 'GET'
                 continue
             response.raise_for_status()
+            if trace is not None:
+                trace['url'] = str(response.url)
             if official and 'text/html' not in response.headers.get('content-type', '') and 'text/plain' not in response.headers.get('content-type', ''):
                 raise LawRetrievalError('unsupported_source_format')
             raw = bytearray()
@@ -99,16 +102,38 @@ def html_text(raw: str) -> str:
     return re.sub(r'[ \t]+', ' ', re.sub(r'\n\s*\n', '\n', ''.join(parser.parts))).strip()
 
 
+def article_units(text: str) -> list[str]:
+    """Split only at provision headings, never an in-sentence cross-reference."""
+    starts = sorted({0, *(m.start() for m in ARTICLE_START.finditer(text))})
+    return [text[a:b] for a, b in zip(starts, starts[1:] + [len(text)])]
+
+
 def excerpt(text: str, keywords: list[str], limit: int = 16000) -> str:
-    """Keep entire numbered provisions where possible; excerpts are never a full-law claim."""
-    chunks = re.split(r'(?=第[一二三四五六七八九十百千万零〇两\d]+条(?:\s|　|[：:]))', text)
+    """Keep complete provisions. An oversized sole provision is not evidence."""
+    chunks = article_units(text)
     ranked = sorted(enumerate(chunks), key=lambda x: sum(x[1].count(k) for k in keywords), reverse=True)
     chosen, size = [], 0
     for index, chunk in ranked:
-        if any(k in chunk for k in keywords) and len(chunk) <= limit - size:
+        cost = len(chunk) + (len('\n[…]\n') if chosen else 0)
+        if any(k in chunk for k in keywords) and cost <= limit - size:
             chosen.append((index, chunk))
-            size += len(chunk)
-    return '\n[…]\n'.join(c for _, c in sorted(chosen)) if chosen else text[:limit]
+            size += cost
+    return '\n[…]\n'.join(c for _, c in sorted(chosen))
+
+
+# Addresses only, not cached statutes or a claim that these are the latest law.
+# They are refetched through the same allowlist/content limits as discovered URLs.
+DIRECT_ORIGINS = (
+    (('民法典',), 'https://www.court.gov.cn/zixun/xiangqing/233181.html', '中华人民共和国民法典'),
+    (('合同编通则', '违约金', '合同'), 'https://www.court.gov.cn/fabu/xiangqing/419382.html', '合同编通则司法解释'),
+    (('个人信息',), 'https://www.cac.gov.cn/2021-08/20/c_1631050028355286.htm', '中华人民共和国个人信息保护法'),
+)
+
+
+def public_search_query(query: str) -> str:
+    # Use the exact same domain scope for discovery and source admission.
+    scope = ' OR '.join('site:' + host for host in sorted(OFFICIAL_HOSTS))
+    return query + ' (' + scope + ')'
 
 
 def provider_status() -> dict:
@@ -117,58 +142,79 @@ def provider_status() -> dict:
         provider = 'tavily' if os.getenv('TAVILY_API_KEY') else 'bing_rss'
     return {'provider': provider, 'configured': provider == 'bing_rss' or (provider == 'tavily' and bool(os.getenv('TAVILY_API_KEY'))),
             'mode': 'external_only', 'live_verified': False,
+            'direct_official_fallback': os.getenv('LEGAL_DIRECT_OFFICIAL_FALLBACK', 'true').lower() == 'true',
             'notice': '公开网页检索不是完整法规库；原文、版本及适用性仍需复核。检索失败不会视为无风险。'}
 
 
 def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None = None) -> dict:
-    """Queries must come from the server's public rule catalogue, not contract contents."""
+    """Use only server-defined public topics. Never send contract contents here."""
     status = provider_status()
+    if not status['configured']:
+        return {**status, 'sources': [], 'status': 'unavailable', 'warnings': ['检索服务未配置。']}
     own = client is None
-    client = client or httpx.Client(timeout=httpx.Timeout(12, connect=5), follow_redirects=False,
-                                   headers={'User-Agent': 'CausalGraph-Legal/1.0 (+legal-evidence-retrieval)'})
-    sources, warnings, candidates = [], [], []
-    try:
-        if not status['configured']:
-            return {'sources': [], 'status': 'unavailable', 'warnings': ['检索服务未配置。'], **status}
-        if status['provider'] == 'tavily':
-            import json
-            raw = _read(client, 'POST', 'https://api.tavily.com/search', headers={'Authorization': 'Bearer ' + os.environ['TAVILY_API_KEY']}, json={
-                'query': query,
-                'search_depth': 'basic', 'max_results': 5, 'include_answer': False,
-                'include_domains': sorted(OFFICIAL_HOSTS)})
-            candidates = [(x.get('url', ''), x.get('title', '')) for x in json.loads(raw).get('results', [])]
-        else:
-            raw = _read(client, 'GET', 'https://www.bing.com/search', params={'q': query + ' site:gov.cn', 'format': 'rss'})
-            # Reject entity declarations rather than allowing XML expansion from the network.
-            if '<!DOCTYPE' in raw.upper() or '<!ENTITY' in raw.upper():
-                raise LawRetrievalError('invalid_search_response')
-            tree = ElementTree.fromstring(raw)
-            candidates = [(x.findtext('link', ''), x.findtext('title', '')) for x in tree.findall('.//item')]
-        seen = set()
-        for url, title in candidates[:8]:
-            if not official_url(url) or url in seen:
+    client = client or httpx.Client(timeout=httpx.Timeout(12, connect=5), follow_redirects=False, trust_env=False,
+                                   headers={'User-Agent': 'CausalGraph-Legal/1.1 (+legal-evidence-retrieval)'})
+    sources, warnings, candidates, seen = [], [], [], set()
+    discovery_failed = False
+    failures = (httpx.HTTPError, OSError, ValueError, ElementTree.ParseError, LawRetrievalError)
+
+    def fetch_candidates(rows: list, method: str) -> None:
+        for url, title in rows[:8]:
+            if not isinstance(url, str) or not official_url(url) or url in seen:
                 continue
             seen.add(url)
+            trace = {}
             try:
-                body = html_text(_read(client, 'GET', url, official=True))
+                raw = _read(client, 'GET', url, official=True, trace=trace)
+                body = html_text(raw)
                 if len(body) < 100:
                     continue
                 quote = excerpt(body, keywords)
-                if not any(k in quote for k in keywords):
+                if not quote:
+                    warnings.append('有来源没有预算内完整的相关条文，未截断条文作为依据。')
                     continue
-                sources.append({'id': 'law_' + hashlib.sha256((url + '\n' + quote).encode()).hexdigest()[:16],
-                                'title': title[:300], 'url': url, 'text': quote,
+                resolved = trace.get('url', url)
+                metadata = screen_page(raw, body, title if isinstance(title, str) else '')
+                sources.append({'id': 'law_' + hashlib.sha256((resolved + '\n' + quote).encode()).hexdigest()[:16],
+                                **metadata, 'url': resolved, 'requested_url': url, 'text': quote,
                                 'retrieved_at': datetime.now(timezone.utc).isoformat(),
                                 'content_hash': hashlib.sha256(body.encode()).hexdigest(),
-                                'source_status': 'official_page_fetched', 'version_status': 'needs_verification',
-                                'is_excerpt': True, 'query': query})
-            except (httpx.HTTPError, OSError, ValueError, LawRetrievalError):
+                                'source_status': 'official_page_fetched', 'is_excerpt': quote != body,
+                                'discovery': method, 'query': query})
+            except failures:
                 warnings.append('有候选来源无法读取或未通过来源检查。')
             if len(sources) >= 2:
                 break
-        return {**status, 'sources': sources, 'status': 'retrieved' if sources else 'no_verified_source', 'warnings': warnings}
-    except (httpx.HTTPError, OSError, ValueError, ElementTree.ParseError, LawRetrievalError):
-        return {**status, 'sources': [], 'status': 'unavailable', 'warnings': ['外部检索失败；本轮不能据此排除法律风险。']}
+    try:
+        try:
+            if status['provider'] == 'tavily':
+                import json
+                raw = _read(client, 'POST', 'https://api.tavily.com/search', headers={'Authorization': 'Bearer ' + os.environ['TAVILY_API_KEY']}, json={
+                    'query': query, 'search_depth': 'basic', 'max_results': 5, 'include_answer': False,
+                    'include_domains': sorted(OFFICIAL_HOSTS)})
+                value = json.loads(raw)
+                if not isinstance(value, dict) or not isinstance(value.get('results'), list):
+                    raise ValueError('invalid_search_response')
+                candidates = [(x.get('url', ''), x.get('title', '')) for x in value['results'] if isinstance(x, dict)]
+            else:
+                raw = _read(client, 'GET', 'https://www.bing.com/search', params={'q': public_search_query(query), 'format': 'rss'})
+                if '<!DOCTYPE' in raw.upper() or '<!ENTITY' in raw.upper():
+                    raise LawRetrievalError('invalid_search_response')
+                tree = ElementTree.fromstring(raw)
+                candidates = [(x.findtext('link', ''), x.findtext('title', '')) for x in tree.findall('.//item')]
+        except failures:
+            discovery_failed = True
+            warnings.append('公开搜索未完成，不能将搜索失败解释为没有法律风险。')
+        fetch_candidates(candidates, 'search')
+        if not sources and status['direct_official_fallback']:
+            direct = [(url, title) for terms, url, title in DIRECT_ORIGINS if any(t in query for t in terms)][:2]
+            fetch_candidates(direct, 'direct_official')
+            if sources:
+                warnings.append('搜索未取得可用来源，已实时读取有限的官方原文地址；仍须核对最新版本与适用性。')
+        return {**status, 'sources': sources,
+                'status': 'retrieved' if sources else ('unavailable' if discovery_failed else 'no_verified_source'),
+                'warnings': list(dict.fromkeys(warnings)),
+                'discovery_status': 'unavailable' if discovery_failed else 'completed'}
     finally:
         if own:
             client.close()

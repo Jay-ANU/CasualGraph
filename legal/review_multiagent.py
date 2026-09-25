@@ -14,6 +14,7 @@ from typing import Callable
 from legal import external_law, review_quality as quality, review_store as store, ydata
 from legal.agent_team import SPECIALISTS, build_tasks, enforce_specialist_scope, initial_team
 from legal.review_plan import build_plan, relevant_evidence
+from legal.transaction_brief import apply_material_gates
 from legal import review_v2 as v2
 
 COLLABORATION_VERSION = 1
@@ -99,6 +100,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                     stopped.set()
                     raise ydata.GatewayError('legal_call_budget', '协作调用达到本次预算，未完成步骤已保留。', 429)
                 request = {**deepcopy(data), 'profile': deepcopy(p['profile']),
+                           'transaction_brief': deepcopy(p.get('transaction_brief')),
                            'agent_context': {'id': agent_id, 'collaboration_version': COLLABORATION_VERSION}}
                 if len(system) + len(json.dumps(request, ensure_ascii=False)) > v2.MAX_INPUT_CHARACTERS:
                     raise ydata.GatewayError('legal_context_budget', '本步骤上下文超过预算，合同未被静默截断。', 422)
@@ -181,7 +183,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                     'company_policies': selected_policies, 'facts': p['intake']['facts'],
                     'parsing_warnings': contract['payload'].get('warnings', []),
                     'specialist': {'id': agent_id, 'allowed_kind': task['kind']}}
-                input_hash = digest({'task': task, 'data': data, 'profile': p['profile']})
+                input_hash = digest({'task': task, 'data': data, 'profile': p['profile'], 'transaction_brief': p.get('transaction_brief')})
                 with lock:
                     prior = p['batches'].get(task['id'])
                     reuse = prior and prior.get('input_hash') == input_hash and task['id'] not in p['batch_errors']
@@ -189,6 +191,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                     try:
                         raw = generate(agent_id, v2.REVIEW + '\n本 Agent 的职责：' + task['instructions'] + '\n仅输出kind=' + task['kind'] + '的候选意见。', data)
                         checked = enforce_specialist_scope(quality.validate(raw, group, blocks, sources, selected_policies), task)
+                        apply_material_gates(checked, p.get('transaction_brief'))
                         status('critic', 'running')
                         verified = generate('critic', v2.VERIFY, {**data, 'findings': checked['findings'], 'coverage': checked['coverage']})
                         quality.apply_verification(checked, verified)
@@ -247,12 +250,13 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
             data = {'rules': [v2.CONSISTENCY], 'contract_blocks': blocks, 'legal_sources': sources,
                 'company_policies': policies, 'facts': p['intake']['facts'],
                 'previous_findings': findings, 'missing_tasks': sorted(p['batch_errors'])}
-            arbiter_hash = digest({'data': data, 'coverage': coverage, 'profile': p['profile']})
+            arbiter_hash = digest({'data': data, 'coverage': coverage, 'profile': p['profile'], 'transaction_brief': p.get('transaction_brief')})
             arbitration = p.get('arbitration')
         if not arbitration or arbitration.get('input_hash') != arbiter_hash:
             try:
                 status('arbiter', 'running')
                 extra = quality.validate(generate('arbiter', v2.REVIEW, data), [v2.CONSISTENCY], blocks, sources, policies)
+                apply_material_gates(extra, p.get('transaction_brief'))
                 for finding in extra['findings']:
                     finding.update(agent_id='arbiter', agent_title='全文协调与冲突检查')
                 combined = {'findings': deepcopy(findings) + extra['findings'], 'coverage': deepcopy(coverage) + extra['coverage']}

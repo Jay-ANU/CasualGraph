@@ -18,3 +18,17 @@
 .lv-original-comparison { display: block; padding-top: 12px; margin-top: 12px; border-top: 1px dashed var(--lv-border, #dedbd5); white-space: pre-wrap; }
 .lv-original-comparison strong { display: block; font-size: 12px; margin-bottom: 6px; }
 .lv-draft-check { margin: 16px 0; }
+
+.lv-money { display: flex; gap: 8px; min-width: 0; }
+.lv-money input { min-width: 0; flex: 1; }
+.lv-money select { max-width: 88px; }
+.lv-context-review { margin: 18px 0; }
+.lv-context-review .lv-details { padding: 14px; border: 1px solid var(--lv-line); border-radius: 10px; margin: 12px 0; }
+.lv-context-review p { margin-top: 9px; overflow-wrap: anywhere; }
+.lv-brief-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.lv-brief-fields dt { font-size: 11px; color: var(--lv-muted); }
+.lv-brief-fields dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.lv-source-meta { padding: 10px 0; font-size: 12px; overflow-wrap: anywhere; }
+.lv-source-meta small { display: block; }
+.lv-source-meta q { display: block; padding: 5px 0; }
+@media(max-width:760px) { .lv-advanced .lv-fields { grid-template-columns: 1fr; } }

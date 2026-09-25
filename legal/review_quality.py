@@ -6,6 +6,7 @@ import re
 from collections import Counter
 from difflib import SequenceMatcher
 from typing import Any
+from legal.law_evidence import NON_AUTHORITIES
 
 TOKENS = re.compile(r'【(?:补充)?脱敏\d+】')
 ARTICLE = re.compile(r'第[一二三四五六七八九十百千万零〇两\d]+条')
@@ -93,6 +94,9 @@ def validate(raw: Any, rules: list[dict], blocks: list[dict], sources: list[dict
             rejected += 1
             continue
         refs = citations(item.get('citations'), sources)
+        source_types = {s['id']: s.get('source_kind') for s in sources}
+        if kind == 'legal':
+            refs = [c for c in refs if source_types.get(c['source_id']) not in NON_AUTHORITIES]
         evidence_ok = kind != 'legal' or bool(refs)
         missing = [text(s, 500) for s in rows(item.get('missing_facts'))[:10] if isinstance(s, str) and s.strip()]
         warnings = []

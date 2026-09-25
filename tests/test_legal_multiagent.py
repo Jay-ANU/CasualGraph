@@ -170,3 +170,20 @@ def test_identical_issue_with_different_edits_is_not_silently_deduplicated():
     b={**a,'id':'b','suggested_text':'30日'}
     found,_=q.consolidate({'second':{'findings':[b]},'first':{'findings':[a]}})
     assert len(found)==2 and all(f['conflict_group']=='p1' for f in found)
+
+
+def test_team_critic_and_arbiter_cannot_erase_material_gap(runtime):
+    from legal.transaction_brief import build_brief
+    cp = runtime['contract']['payload']
+    cp['redacted_blocks'][0]['text'] += '验收标准详见附件一。'
+    payload = runtime['job']['payload']
+    payload['profile']['transaction_context'] = {'performance_stage':'谈判中', 'attachments_status':'未知'}
+    payload['transaction_brief'] = build_brief(payload['profile'], cp['redacted_blocks'], [])
+    seen = []
+    def model(system, data):
+        seen.append(data)
+        return fake(system, data)
+    run(runtime, model=model)
+    assert runtime['job']['status'] == 'partial'
+    assert all(d['transaction_brief']['material_references'] for d in seen)
+    assert all(f['missing_facts'] and not f['revision_allowed'] for f in runtime['job']['payload']['findings'])

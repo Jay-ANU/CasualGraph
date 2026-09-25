@@ -2,7 +2,7 @@ import type { Finding } from './types';
 
 export function findingStatus(f: Finding): 'supported' | 'unconfirmed' | 'rejected' {
   if (f.verification_status === 'rejected') return 'rejected';
-  if (f.verification_status !== 'supported' || f.evidence_status === 'unverified' || f.missing_facts.length > 0) return 'unconfirmed';
+  if (f.verification_status !== 'supported' || f.evidence_status === 'unverified' || f.missing_facts.length > 0 || (f.kind === 'legal' && f.version_status !== 'verified')) return 'unconfirmed';
   return 'supported';
 }
 

@@ -1,7 +1,7 @@
 """Public-topic retrieval plans; contracts and user instructions never become search queries."""
 from __future__ import annotations
 from copy import deepcopy
-import re
+from legal.external_law import article_units
 
 # Search topics, not a bundled legal database or conclusions of law.
 TOPICS = {
@@ -51,7 +51,7 @@ def relevant_evidence(sources: list[dict], limit: int = 24000) -> list[dict]:
         if allowance <= 0:
             break
         if len(body) > allowance:
-            parts = re.split(r'(?=第[一二三四五六七八九十百千万零〇两\d]+条)', body)
+            parts = article_units(body)
             selected, size = [], 0
             for part in parts:
                 separator_length = len('\n[…]\n') if selected else 0
