@@ -16,7 +16,7 @@ from lxml import etree
 import app
 from api import deps
 from api.routers import contract_review as contracts, recruitment, research_graph
-from legal import contract_documents
+from legal import contract_documents, draft_release
 from services import db as db_service
 
 
@@ -81,9 +81,22 @@ def export_data(monkeypatch):
     buf = io.BytesIO(); doc.save(buf)
     raw = buf.getvalue()
     cp = contract_documents.parse_contract(raw, '合同.docx')
-    cp.update(original_b64=base64.b64encode(raw).decode(), mapping={})
-    c = {'payload':cp,'matter_id':'m','org_id':'o'}
-    r = {'status':'completed','payload':{'decisions':{'f1':{'block_id':'p1','decision':'accepted','text':'验收后60日付款。'}}}}
+    cp.update(original_b64=base64.b64encode(raw).decode(), mapping={},
+              redacted_blocks=cp['blocks'], redaction_version=2)
+    c = {'id':'c','status':'ready','revision':1,'payload':cp,'matter_id':'m','org_id':'o'}
+    r = {'id':'r','status':'completed','payload':{
+        'engine_version':2,'audit_foundation_version':1,'contract_revision':1,
+        'profile':{'external_processing_provider':'ydata','our_party':{'block_id':'p1','quote':'验收'}},
+        'findings':[{'id':'f1','block_id':'p1','kind':'commercial','revision_allowed':True,
+                     'verification_status':'supported','missing_facts':[],
+                     'suggested_text':'验收后60日付款。','reason':'合成回款周期修改。'}],
+        'decisions':{'f1':{'block_id':'p1','decision':'accepted','text':'验收后60日付款。','version':1}}}}
+    # Exporter fixture represents an already approved exact draft. The real
+    # check/approve transitions are covered in test_legal_audit_foundation.py.
+    approved = draft_release.snapshot(r, c)
+    r['payload']['draft_approval'] = {'version':draft_release.VERSION,
+        'fingerprint':approved['fingerprint'],'final_hash':approved['final_hash']}
+    monkeypatch.setattr(draft_release, 'current', lambda conn,rid: (r,c))
     monkeypatch.setattr(contracts, '_review', lambda rid,user: (r,c))
     monkeypatch.setattr(contracts, '_access', lambda *a,**kw: None)
     monkeypatch.setattr(contracts.store, 'transaction', lambda: nullcontext(object()))
@@ -122,3 +135,22 @@ def test_original_identity_export_still_requires_edit_permission(export_data, mo
     with pytest.raises(HTTPException) as error:
         contracts.export('r', user={'id':'viewer'})
     assert error.value.status_code == 403
+
+
+def test_native_export_requires_exact_draft_approval(export_data):
+    export_data[0]['payload'].pop('draft_approval')
+    with pytest.raises(HTTPException) as error:
+        contracts.export('r', user={'id':'u'})
+    assert error.value.status_code == 409
+
+
+def test_native_export_refuses_decision_changed_during_generation(export_data, monkeypatch):
+    original = contract_documents.redline_docx
+    def changed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        export_data[0]['payload']['decisions']['f1']['text'] = '验收后30日付款。'
+        return result
+    monkeypatch.setattr(contract_documents, 'redline_docx', changed)
+    with pytest.raises(HTTPException) as error:
+        contracts.export('r', user={'id':'u'})
+    assert error.value.status_code == 409
