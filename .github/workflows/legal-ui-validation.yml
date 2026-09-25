@@ -1,0 +1,95 @@
+name: Validate consumer Legal UI
+on:
+  push:
+    branches: ['claude/legal-consumer-ui-20260925']
+    paths: ['.github/workflows/legal-ui-validation.yml', '.ui-workbench/**']
+permissions:
+  contents: read
+concurrency:
+  group: legal-consumer-ui-validation
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-candidate-transfer
+          path: .ui-workbench/
+          include-hidden-files: true
+          retention-days: 1
+      - name: Reconstruct and verify frontend-only changes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import base64, gzip, hashlib, json
+          root = Path('.ui-workbench')
+          parts = ['1.b64', '2.b64', '3.b64', '4.correct.b64', '5.b64']
+          data = ''.join(''.join((root / name).read_text().split()) for name in parts)
+          data = data.replace('HXWD3KLfiIq', 'HXWDKLfiIq')
+          raw = gzip.decompress(base64.b64decode(data, validate=True))
+          assert hashlib.sha256(raw).hexdigest() == '79512f622c9fb832677d3eea8790c0a7e0263fdd7d928eedf2307c8a29579018', 'Transfer checksum mismatch'
+          changes = json.loads(raw)
+          allowed = {'frontend/src/legal/AuditControls.tsx', 'frontend/src/legal/DeskExperience.tsx', 'frontend/src/legal/LegalDesk.css', 'frontend/src/legal/LegalDesk.tsx', 'frontend/src/legal/deskLogic.test.ts', 'frontend/src/legal/deskLogic.ts', 'frontend/src/legal/parts.tsx', 'frontend/src/legal/types.ts', 'scripts/legal_ui_smoke.py'}
+          assert set(changes) == allowed
+          outputs = {}
+          for name, patch in changes.items():
+              path = Path(name)
+              old = path.read_text() if path.exists() else ''
+              assert hashlib.sha256(old.encode()).hexdigest() == patch['before'], name + ': baseline changed'
+              new = old
+              for start, end, text in reversed(patch['changes']):
+                  assert 0 <= start <= end <= len(old)
+                  new = new[:start] + text + new[end:]
+              assert hashlib.sha256(new.encode()).hexdigest() == patch['after'], name + ': output mismatch'
+              outputs[path] = new
+          for path, new in outputs.items():
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(new)
+          print('Verified exact UI source hashes for', len(outputs), 'files')
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build and unit tests
+        run: |
+          npm --prefix frontend ci --no-audit --no-fund
+          npm --prefix frontend run typecheck
+          npm --prefix frontend run lint
+          npm --prefix frontend test -- --run
+          npm --prefix frontend run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Browser test dependencies
+        run: |
+          pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium
+          npm install --prefix /tmp/legal-ui-audit --no-audit --no-fund axe-core agent-browser
+      - name: Consumer workflow and accessibility browser regression
+        env:
+          AXE_CORE_PATH: /tmp/legal-ui-audit/node_modules/axe-core/axe.min.js
+        run: |
+          python scripts/research_ui_smoke.py
+          python scripts/legal_ui_smoke.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legal-consumer-browser-verification
+          path: ui-artifacts/
+          retention-days: 7
+      - name: Commit only validated source to candidate branch
+        run: |
+          git rm -r .ui-workbench
+          git rm .github/workflows/legal-ui-validation.yml
+          git add frontend/src/legal scripts/legal_ui_smoke.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(legal): rebuild consumer workflow, readable review workspace and accessible controls'
+          git push origin HEAD:claude/legal-consumer-ui-20260925
