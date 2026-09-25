@@ -9,21 +9,21 @@ export const CONTRACT_STATUS: Record<string, string> = {
 
 /** Review-level status shown next to the open contract. */
 export const REVIEW_STATUS: Record<string, string> = {
-  queued: '排队中', running: '审查中', completed: '待你处理', partial: '部分完成', failed: '已暂停', cancelled: '已停止',
+  queued: '排队中', running: '审查中', completed: '待复核', partial: '部分完成', failed: '已暂停', cancelled: '已停止',
 };
 
 export const KIND_LABEL: Record<string, string> = { legal: '法律风险', commercial: '商业利益', company_policy: '公司规范' };
-export const KIND_FILTERS: [string, string][] = [['all', '全部意见'], ['legal', '法律风险'], ['commercial', '商业利益'], ['company_policy', '公司规范']];
+export const KIND_FILTERS: [string, string][] = [['all', '全部'], ['legal', '法律风险'], ['commercial', '商业利益'], ['company_policy', '公司规范']];
 
 export const AGENT_STATUS: Record<string, string> = {
-  pending: '等待开始', running: '进行中', completed: '已完成', partial: '部分完成', paused: '已暂停', not_applicable: '本轮不适用',
+  pending: '待开始', running: '进行中', completed: '已完成', partial: '部分完成', paused: '已暂停', not_applicable: '不适用',
 };
 
 export const COVERAGE_STATUS: Record<string, string> = {
-  reviewed: '已检查', not_applicable: '不适用', needs_information: '待确认', not_reviewed: '未完成',
+  reviewed: '已审查', not_applicable: '不适用', needs_information: '待补充', not_reviewed: '未完成',
 };
 
-export const STEPS = ['检查脱敏', '确认立场', '逐条处理', '核验导出'];
+export const STEPS = ['脱敏确认', '审查设置', '审查意见', '核验导出'];
 
 export type Tone = 'high' | 'mid' | 'low' | 'unconfirmed' | 'excluded';
 
@@ -36,7 +36,7 @@ export function findingTone(f: Finding): Tone {
 }
 
 export const TONE_LABEL: Record<Tone, string> = {
-  high: '高风险', mid: '中风险', low: '提示', unconfirmed: '待核实', excluded: '复核已排除',
+  high: '高风险', mid: '中风险', low: '提示', unconfirmed: '待核实', excluded: '已排除',
 };
 
 const TONE_RANK: Record<Tone, number> = { high: 0, mid: 1, unconfirmed: 2, low: 3, excluded: 9 };

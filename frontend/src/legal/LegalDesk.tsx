@@ -177,10 +177,10 @@ export default class LegalDesk extends React.Component<Props, State> {
     const problem = uploadIssue(file);
     if (problem) { this.setState({ error: problem }); return; }
     if (!this.state.workspace || !this.state.caps?.encryption_configured) {
-      this.setState({ error: '安全存储尚未就绪，合同没有上传。请稍后重试。' }); return;
+      this.setState({ error: '安全存储未就绪，请稍后重试。' }); return;
     }
     if (!this.state.caps.upload_disclosure) {
-      this.setState({ error: '服务端暂不支持原件上传说明，请稍后再试。' }); return;
+      this.setState({ error: '服务暂不可用，请稍后重试。' }); return;
     }
     this.setState({ pendingFile: file, error: '' });
   };
@@ -188,9 +188,9 @@ export default class LegalDesk extends React.Component<Props, State> {
     if (!file || !this.state.workspace) return;
     const problem = uploadIssue(file);
     if (problem) throw new Error(problem);
-    if (!this.state.caps?.encryption_configured) throw new Error('安全存储尚未就绪，合同没有上传。');
+    if (!this.state.caps?.encryption_configured) throw new Error('安全存储未就绪，请稍后重试。');
     const disclosure = this.state.caps?.upload_disclosure;
-    if (!disclosure) throw new Error('服务端暂不支持原件上传说明，请稍后再试。');
+    if (!disclosure) throw new Error('服务暂不可用，请稍后重试。');
     const workspace = this.state.workspace;
     const contractType = !this.state.contract && currentScenario(this.state.caps?.scenario_catalog, this.state.contractType) ? this.state.contractType : '采购合同';
     const form = new FormData(); form.set('matter_id', workspace.matter_id); form.set('file', file); form.set('original_upload_confirmed', 'true'); form.set('upload_notice_version', disclosure.version);
@@ -213,16 +213,16 @@ export default class LegalDesk extends React.Component<Props, State> {
     this.setState({ preview: preview.blocks });
     if (confirmed) {
       const contract = await this.api<Contract>(`/legal/contracts/${c.id}`);
-      if (this.live) this.setState({ contract, confirmingRedaction: false, originalBlocks: null, showDocument: wide(), notice: '脱敏已确认。下一步：说明你的立场。' });
+      if (this.live) this.setState({ contract, confirmingRedaction: false, originalBlocks: null, showDocument: wide(), notice: '脱敏已确认' });
       if (this.state.workspace) await this.refreshList(this.state.workspace);
     }
   };
   private start = async () => {
     const s = this.state;
     if (!s.contract || !s.modelId || !s.consent || !s.ourRole || !s.ourPartyBlock || !s.ourPartyQuote) return;
-    if (!scenarioRoleValid(s.caps?.scenario_catalog, s.contractType, s.ourRole)) throw new Error('请根据当前合同类型重新选择我方角色。');
+    if (!scenarioRoleValid(s.caps?.scenario_catalog, s.contractType, s.ourRole)) throw new Error('请重新选择我方身份。');
     const amount = transactionAmount(s.dealValue);
-    if (!amount.valid) throw new Error('交易金额须为不超过一万亿元、最多两位小数的非负数字。');
+    if (!amount.valid) throw new Error('交易金额格式有误。');
     const review = await this.api<Review>(`/legal/contracts/${s.contract.id}/reviews`, jsonRequest('POST', {
       model_id: s.modelId, external_processing_provider: 'ydata', external_processing_confirmed: true,
       scenario_revision: s.caps?.scenario_catalog?.revision,
@@ -271,13 +271,13 @@ export default class LegalDesk extends React.Component<Props, State> {
     let blob: Blob;
     if (format === 'md') {
       const data: Review = await response.json();
-      if (data.id !== r.id) throw new Error('报告与本轮审查不一致，请刷新页面。');
+      if (data.id !== r.id) throw new Error('报告与当前审查不一致，请刷新页面。');
       blob = new Blob([ReviewReport(data)], { type: 'text/markdown;charset=utf-8' });
     } else blob = await response.blob();
     const url = URL.createObjectURL(blob), a = document.createElement('a');
-    a.href = url; a.download = `${format === 'md' ? '合同审查报告' : format === 'docx' ? '合同修订稿（含修订痕迹）' : '合同文字修改稿'}.${format}`;
+    a.href = url; a.download = `${format === 'md' ? '合同审查报告' : format === 'docx' ? '合同修订版' : '合同修订文本'}.${format}`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
-    if (this.live) this.setState({ exportFormat: null, notice: format === 'md' ? '审查报告已导出。' : format === 'docx' ? '修订稿已导出。请在 Word 的“审阅”中逐项确认。' : '文字修改稿已导出。它不含 Word 修订标记，请对照原合同复核。' });
+    if (this.live) this.setState({ exportFormat: null, notice: format === 'md' ? '审查报告已导出' : format === 'docx' ? 'Word 修订版已导出' : '修订文本已导出' });
   };
   private ask = async () => {
     const r = this.state.review, question = this.state.question.trim();
@@ -329,23 +329,22 @@ export default class LegalDesk extends React.Component<Props, State> {
     const blocks = s.preview || c.blocks;
     const query = s.documentQuery.trim().toLocaleLowerCase();
     const visibleBlocks = blocks.filter(block => block.text.toLocaleLowerCase().includes(query));
-    const startIssue = c.redaction_version !== 2 ? '这份合同需要重新上传，并确认新版脱敏。'
-      : !scenarioValid ? '请先选择合同类型和你的角色。'
-      : !partyValid ? '请确认合同中代表你的主体。'
-      : !amountValid ? '请修正交易金额，或者留空。'
-      : s.modelsLoading ? '正在读取可用模型…'
-      : !s.modelId || s.caps?.model_configured === false ? '暂时没有可用的审查模型，请刷新模型列表。'
-      : !s.consent ? '最后，请勾选同意发送给 AI 模型。' : '';
+    const startIssue = c.redaction_version !== 2 ? '当前合同需重新上传并完成脱敏确认。'
+      : !scenarioValid ? '请选择我方身份。'
+      : !partyValid ? '请选择我方主体。'
+      : !amountValid ? '交易金额格式有误。'
+      : s.modelsLoading ? '正在加载模型…'
+      : !s.modelId || s.caps?.model_configured === false ? '暂无可用模型，请刷新后重试。'
+      : !s.consent ? '请勾选模型分析授权。' : '';
     const canStart = !(s.busy || active || s.modelsLoading || !s.consent || !s.modelId || !scenarioValid || !partyValid || !amountValid || c.redaction_version !== 2 || s.caps?.model_configured === false);
     const values: SetupValues = { contractType: s.contractType, ourRole: s.ourRole, ourPartyBlock: s.ourPartyBlock, ourPartyQuote: s.ourPartyQuote,
       instructions: s.instructions, performanceStage: s.performanceStage, attachmentsStatus: s.attachmentsStatus, businessPriority: s.businessPriority,
       dealValue: s.dealValue, currency: s.currency, date: s.date, reviewMode: s.reviewMode, modelId: s.modelId, consent: s.consent };
     const setup = <SetupForm contract={c} caps={s.caps} catalog={s.catalog} values={values} hasReview={Boolean(r)} busy={s.busy} locked={active}
-      modelsLoading={s.modelsLoading} scenarioValid={scenarioValid} partyValid={partyValid} canStart={canStart} startIssue={startIssue}
+      modelsLoading={s.modelsLoading} canStart={canStart} startIssue={startIssue}
       onType={this.changeType} onChange={this.changeSetup} onConsent={consent => this.setState({ consent })}
       onRefreshModels={() => void this.loadModels()} onStart={() => void this.run(this.start)} />;
     const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: motion(), block: 'start' });
-    const focusStatus = (statusFilter: string) => this.setState({ statusFilter, filter: 'all', resultQuery: '' }, () => scrollTo('legal-results'));
     const counts = r ? findingCounts(r.findings) : null;
     const handled = r && counts ? counts.actionable - pendingDecisions(r) : 0;
     const step = c.status === 'redaction_pending' ? 0 : !r ? 1 : r.draft_approval ? 3 : 2;
@@ -363,8 +362,8 @@ export default class LegalDesk extends React.Component<Props, State> {
       <div className={`lv-workbench ${s.showDocument ? 'with-document' : ''}`}>
         <main id="legal-main" tabIndex={-1} className="lv-work" aria-label="合同审查工作区">
           <div className="lv-work-inner">
-            {c.status === 'ready' && c.redaction_version !== 2 && <p className="lv-note is-warn">这份合同使用的是旧版脱敏。历史报告仍可查看；如需指定我方主体和导出修订稿，请新建审查并重新上传。</p>}
-            {c.warnings.length > 0 && <details className="lv-disclosure lv-parse-note"><summary>文档解析提示 · {c.warnings.length} 项</summary>
+            {c.status === 'ready' && c.redaction_version !== 2 && <p className="lv-note is-warn">该合同使用旧版脱敏，仅可查看历史报告；重新审查请重新上传。</p>}
+            {c.warnings.length > 0 && <details className="lv-disclosure lv-parse-note"><summary>解析提示（{c.warnings.length}）</summary>
               <div className="lv-disclosure-body">{c.warnings.map((w, i) => <p key={i}>{w}</p>)}</div></details>}
             {c.status === 'redaction_pending' ? <RedactionStep contract={c} busy={s.busy} comparing={Boolean(s.originalBlocks)} showingDocument={s.showDocument}
               terms={s.terms} excludedTerms={s.excludedTerms} onShowDocument={() => this.setState({ showDocument: true })}
@@ -372,17 +371,16 @@ export default class LegalDesk extends React.Component<Props, State> {
               onExcluded={excludedTerms => this.setState({ excludedTerms, preview: null })} onPreview={() => void this.run(() => this.redact(false))}
               onConfirm={() => this.setState({ confirmingRedaction: true, error: '' })} />
             : !r ? <section className="lv-stage" aria-labelledby="legal-setup-title">
-              <h2 id="legal-setup-title">说明你的立场</h2>
-              <p className="lv-stage-lede">审查会站在你这一方，找出对你不利的条款，并给出修改建议。</p>
+              <div className="lv-stage-head"><h2 id="legal-setup-title">审查设置</h2></div>
               {setup}
             </section>
             : <>
               {active && <ReviewProgress review={r} canCancel={(s.caps?.review_engine_version || 0) >= 2} busy={s.busy} onCancel={() => this.reviewAction('cancel')} />}
-              {done && <ReviewSummary review={r} onPending={() => focusStatus('pending')} onUnconfirmed={() => focusStatus('unconfirmed')} onExport={() => scrollTo('legal-release')} />}
+              {done && <ReviewSummary review={r} onExport={() => scrollTo('legal-release')} />}
               {(r.error || r.resumable || ['failed', 'cancelled'].includes(r.status)) && <ReviewIssue review={r} busy={s.busy} onResume={() => this.reviewAction('resume')} />}
               <section className="lv-settings" aria-label="审查设置">
                 <button className="lv-settings-toggle" aria-expanded={s.setupOpen} aria-controls="legal-setup-body" onClick={() => this.setState({ setupOpen: !s.setupOpen })}>
-                  <SlidersHorizontal {...ic} /><span className="lv-settings-title">本轮审查设置</span>
+                  <SlidersHorizontal {...ic} /><span className="lv-settings-title">审查设置</span>
                   <span className="lv-settings-summary">{[s.contractType, s.ourRole && `我方：${s.ourRole}`, s.reviewMode === 'multi_agent' ? '深度审查' : '标准审查', r.profile?.model?.id || s.modelId].filter(Boolean).join(' · ')}</span>
                   <ChevronDown {...ic} />
                 </button>
@@ -393,7 +391,7 @@ export default class LegalDesk extends React.Component<Props, State> {
                 onKind={filter => this.setState({ filter })} onStatus={statusFilter => this.setState({ statusFilter })} onQuery={resultQuery => this.setState({ resultQuery })}
                 onClear={() => this.setState({ resultQuery: '', filter: 'all', statusFilter: 'all' })} onLocate={this.locate}
                 onDecision={(f, value, text, legalBasis, manual) => void this.run(() => this.decide(f, value, text, legalBasis, manual))} />}
-              <ReviewDetails review={r} blocks={blocks} active={active} onLocate={this.locate} />
+              {!active && <ReviewDetails review={r} onLocate={this.locate} />}
               {done && s.caps?.followup_questions && <FollowUp review={r} blocks={blocks} answers={s.answers} question={s.question} busy={s.questionBusy}
                 consent={s.questionConsent} onQuestion={question => this.setState({ question })} onConsent={questionConsent => this.setState({ questionConsent })}
                 onAsk={() => void this.ask()} onLocate={this.locate} />}
@@ -409,12 +407,12 @@ export default class LegalDesk extends React.Component<Props, State> {
                 onReport={() => void this.run(() => this.download('md'))}
                 onDraft={() => void this.run(() => this.download(c.format === 'docx' ? 'docx' : 'txt'))} />}
             </>}
-            <p className="lv-footnote">AI 辅助审查，不构成法律意见。引用的法条请核实版本和适用范围。</p>
+            <p className="lv-footnote">审查结果仅供参考，不构成法律意见。</p>
           </div>
           {done && counts && counts.actionable > 0 && <div className="lv-dock" role="region" aria-label="处理进度">
-            <span className="lv-dock-text"><strong>{handled}</strong> / {counts.actionable} 项已处理</span>
+            <span className="lv-dock-text">已处理 <strong>{handled}/{counts.actionable}</strong></span>
             <span className="lv-dock-bar" aria-hidden="true"><i style={{ width: `${Math.round((handled / counts.actionable) * 100)}%` }} /></span>
-            <button className="lv-secondary lv-btn-sm" onClick={() => scrollTo('legal-release')}>去导出<ArrowRight {...ic} size={14} /></button>
+            <button className="lv-secondary lv-btn-sm" onClick={() => scrollTo('legal-release')}>导出<ArrowRight {...ic} size={14} /></button>
           </div>}
         </main>
         {s.showDocument && <DocumentPane contract={c} review={r} blocks={blocks} visibleBlocks={visibleBlocks} query={s.documentQuery}
@@ -432,7 +430,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     const statusTone = ({ redaction_pending: 'is-mid', running: 'is-low', queued: 'is-low', completed: 'is-ink', partial: 'is-mid', failed: 'is-high', cancelled: 'is-high' } as Record<string, string>)[statusKey] || '';
     if (s.denied) return <div className="legal-v2"><main className="lv-denied">
       <img src="/brand/logo-mark.svg" alt="" width={32} height={32} />
-      <h1>合同审查仅向 Max 会员开放</h1><p>当前账户的会员状态已变化，合同内容已从页面移除。</p>
+      <h1>会员权限已变更</h1><p>合同审查为 Max 会员专享，合同内容已从页面移除。</p>
       <a className="lv-primary" href="/agent">返回研究工作台</a>
     </main></div>;
     return <div className={`legal-v2 ${s.mobileMenu ? 'lv-menu-open' : ''}`}>
@@ -461,56 +459,54 @@ export default class LegalDesk extends React.Component<Props, State> {
         </header>
         {s.error && !dialogOpen && <div className="lv-banner lv-error" role="alert"><AlertCircle {...ic} /><span>{s.error}</span><button className="lv-icon" aria-label="关闭错误" onClick={() => this.setState({ error: '' })}><X {...ic} /></button></div>}
         {s.notice && <div className="lv-banner lv-notice" role="status"><Check {...ic} /><span>{s.notice}</span><button className="lv-icon" aria-label="关闭提示" onClick={() => this.setState({ notice: '' })}><X {...ic} /></button></div>}
-        {s.caps && !s.caps.encryption_configured && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>安全存储尚未配置，暂时不能上传合同。请联系管理员；系统不会跳过加密上传。</span></div>}
-        {s.modelError && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>{s.modelError}</span><button className="lv-text-button" onClick={() => void this.loadModels()}>重新读取模型</button></div>}
+        {s.caps && !s.caps.encryption_configured && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>安全存储未配置，暂不可上传，请联系管理员。</span></div>}
+        {s.modelError && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>{s.modelError}</span><button className="lv-text-button" onClick={() => void this.loadModels()}>重新加载</button></div>}
         <input ref={el => { this.uploadInput = el; }} type="file" accept=".docx,.pdf,.txt" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; this.queueUpload(file); }} />
-        {s.loading ? <main className="lv-loading" role="status"><Spinner />正在打开工作空间…</main>
-          : !s.workspace ? <main id="legal-main" className="lv-loading"><AlertCircle {...ic} size={22} /><h1>暂时打不开工作空间</h1>
-            <p>合同没有上传。请检查网络后重试，不需要重新选择文件。</p><button className="lv-primary" onClick={() => void this.initialize()}>重新打开</button></main>
+        {s.loading ? <main className="lv-loading" role="status"><Spinner />加载中…</main>
+          : !s.workspace ? <main id="legal-main" className="lv-loading"><AlertCircle {...ic} size={22} /><h1>工作空间加载失败</h1>
+            <p>请检查网络后重试。</p><button className="lv-primary" onClick={() => void this.initialize()}>重试</button></main>
           : s.tab === 'policies' ? <PolicyEditor catalog={s.caps?.scenario_catalog} policies={s.policies} busy={s.busy}
             onSave={(draft, existing) => void this.run(async () => {
               if (!s.workspace) return;
               await this.api(`/legal/policies${existing ? `/${existing.id}` : ''}?org_id=${encodeURIComponent(s.workspace.org_id)}`, jsonRequest(existing ? 'PUT' : 'POST', { ...draft, version: existing?.version }));
               await this.refreshList(s.workspace);
             })} onArchive={policy => this.setState({ archivePolicy: policy, error: '' })} />
-          : !c ? <Welcome caps={s.caps} disabled={!canUpload} instructions={s.instructions} contractType={s.contractType}
+          : !c ? <Welcome disabled={!canUpload}
             onUpload={() => this.uploadInput?.click()} onDrop={files => {
-              if (files.length !== 1) { this.setState({ error: '请一次上传一份合同。' }); return; }
+              if (files.length !== 1) { this.setState({ error: '每次仅支持上传一份合同。' }); return; }
               this.queueUpload(files[0]);
-            }} onInstructions={instructions => this.setState({ instructions, consent: false })} onScenario={this.changeType} />
+            }} />
           : this.renderWorkspace(c)}
       </div>
-      {s.pendingFile && <ConfirmDialog title="上传前，确认这份原件的处理方式" confirmLabel="确认授权并上传" busy={s.busy}
+      {s.pendingFile && <ConfirmDialog title="上传确认" confirmLabel="同意并上传" busy={s.busy}
         onCancel={() => this.setState({ pendingFile: null, error: '' })} onConfirm={() => void this.run(() => this.upload(s.pendingFile || undefined))}>
         <div className="lv-upload-file"><FileText {...ic} size={18} /><span>{s.pendingFile.name}<small>{(s.pendingFile.size / 1024).toFixed(1)} KB</small></span></div>
         <ul className="lv-dialog-points">
-          <li>原件会上传到服务器，解析后加密保存，并在服务器上完成脱敏。</li>
-          <li>这一步不会把合同发送给 AI 模型。开始审查前，还需要你单独同意。</li>
-          <li>存储地域：<strong>{s.caps?.upload_disclosure?.storage_region}</strong>（运营方声明，未经独立核验）</li>
+          <li>原件将在服务器端解析、脱敏并加密存储</li>
+          <li>上传不会调用模型，审查前需另行授权</li>
+          <li>存储地域：{s.caps?.upload_disclosure?.storage_region}（运营方声明）</li>
         </ul>
-        <div className="lv-disclosure-text"><strong>处理说明全文</strong><p>{s.caps?.upload_disclosure?.notice}</p></div>
+        <details className="lv-disclosure-text"><summary>《原件处理说明》</summary><p>{s.caps?.upload_disclosure?.notice}</p></details>
         {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
       </ConfirmDialog>}
-      {s.confirmingRedaction && <ConfirmDialog title="确认已检查脱敏内容？" confirmLabel="确认脱敏并继续" busy={s.busy}
+      {s.confirmingRedaction && <ConfirmDialog title="确认脱敏结果" confirmLabel="确认并继续" busy={s.busy}
         onCancel={() => this.setState({ confirmingRedaction: false, error: '' })} onConfirm={() => void this.run(() => this.redact(true))}>
-        <p>请确认公司名称、联系人和账户等敏感信息已按需隐藏，交易金额、期限等审查需要的信息仍然可读。</p>
-        <p className="lv-note">确认后，这一版的脱敏结果不能再修改。发送给 AI 模型之前，下一步还会单独征求你的同意。</p>
+        <p>确认后脱敏结果将锁定，模型分析需在下一步单独授权。</p>
         {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
       </ConfirmDialog>}
-      {s.exportFormat && <ConfirmDialog title="导出前，检查文件中的敏感信息" confirmLabel="确认并导出修订稿" busy={s.busy}
+      {s.exportFormat && <ConfirmDialog title="导出确认" confirmLabel="确认导出" busy={s.busy}
         onCancel={() => this.setState({ exportFormat: null, error: '' })} onConfirm={() => { const format = s.exportFormat; if (format) void this.run(() => this.download(format, true)); }}>
-        <p>这份修订稿包含真实信息和被删除的内容，不是脱敏副本。请确认接收人和分享范围，避免原件中的隐私继续传播。</p>
-        <p>导出不会签署合同，也不会覆盖你的原文件。</p>
+        <p>修订版包含未脱敏的真实信息及删除内容，请确认接收范围。导出不会签署合同或覆盖原文件。</p>
         {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
       </ConfirmDialog>}
-      {s.archivePolicy && <ConfirmDialog title="归档这条公司规范？" confirmLabel="确认归档" busy={s.busy}
+      {s.archivePolicy && <ConfirmDialog title="归档规范" confirmLabel="确认归档" busy={s.busy}
         onCancel={() => this.setState({ archivePolicy: null, error: '' })} onConfirm={() => void this.run(async () => {
           const policy = this.state.archivePolicy; const workspace = this.state.workspace; if (!policy || !workspace) return;
           await this.api(`/legal/policies/${policy.id}?org_id=${encodeURIComponent(workspace.org_id)}&version=${policy.version}`, { method: 'DELETE' });
-          if (this.live) this.setState({ archivePolicy: null, notice: '规范已归档。已完成的审查仍保留当时的版本。' });
+          if (this.live) this.setState({ archivePolicy: null, notice: '规范已归档' });
           await this.refreshList(workspace);
         })}>
-        <p>“{s.archivePolicy.title}”将不再用于新的审查。已完成的审查保留当时的版本，不会被改写。</p>
+        <p>“{s.archivePolicy.title}”归档后不再用于新审查，历史报告不受影响。</p>
         {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
       </ConfirmDialog>}
     </div>;

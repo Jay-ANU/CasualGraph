@@ -34,15 +34,15 @@ export function Sidebar(p: Props) {
       <select className="lv-select" aria-label="事项工作区" value={p.workspace?.matter_id || ''} disabled={p.busy} onChange={e => p.onMatter(e.target.value)}>
         {p.matters.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
       </select></label>}
-    <div className="lv-history-head">我的合同</div>
+    <div className="lv-history-head">审查记录</div>
     <label className="lv-search"><Search {...ic} size={15} /><input aria-label="查找历史合同" placeholder="搜索合同" value={p.query} onChange={e => p.onQuery(e.target.value)} /></label>
     <div className="lv-history">
       {matches.map(item => <button key={item.id} disabled={p.busy} className={p.currentId === item.id ? 'selected' : ''} aria-current={p.currentId === item.id ? 'true' : undefined} onClick={() => p.onOpen(item.id)}>
         <span className="lv-history-name">{fileTitle(item.name)}</span>
         <span className="lv-history-meta"><i className={`lv-dot is-${item.status}`} aria-hidden="true" />{CONTRACT_STATUS[item.status] || item.status}{formatDate(item.created_at) && ` · ${formatDate(item.created_at)}`}</span>
       </button>)}
-      {!p.loading && !p.contracts.length && <p>审查过的合同会保存在这里，随时回来继续。</p>}
-      {p.contracts.length > 0 && !matches.length && <p role="status">没有找到这份合同，换个关键词试试。</p>}
+      {!p.loading && !p.contracts.length && <p>暂无记录</p>}
+      {p.contracts.length > 0 && !matches.length && <p role="status">无匹配结果</p>}
     </div>
     <div className="lv-sidebar-bottom">
       <a href="/agent"><ArrowLeft {...ic} size={15} />返回研究工作台</a>

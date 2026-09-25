@@ -3,9 +3,9 @@ import { findingStatus } from './findingStatus';
 
 /** Local preflight only. Parsing and permissions are still enforced by the API. */
 export function uploadIssue(file: Pick<File, 'name' | 'size'>): string {
-  if (!/\.(docx|pdf|txt)$/i.test(file.name)) return '请选择 DOCX、文字型 PDF 或 TXT。旧版 .doc 请先另存为 .docx。';
-  if (file.size === 0) return '这份文件是空的，请检查文件后重新选择。';
-  if (file.size > 10 * 1024 * 1024) return '文件超过 10 MB，请拆分附件后上传。';
+  if (!/\.(docx|pdf|txt)$/i.test(file.name)) return '仅支持 DOCX、PDF（文本型）、TXT 格式，.doc 文件请另存为 .docx。';
+  if (file.size === 0) return '文件内容为空。';
+  if (file.size > 10 * 1024 * 1024) return '文件超过 10 MB 上限。';
   return '';
 }
 
