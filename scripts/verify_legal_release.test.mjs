@@ -13,5 +13,9 @@ test('production blocks an incompatible or HTML response', async () => {
   await assert.rejects(verifyLegalRelease('production', async () => new Response('<html>not an API</html>')));
 });
 test('production proceeds only with the required product version', async () => {
-  assert.deepEqual(await verifyLegalRelease('production', async () => Response.json({ product: 'contract-review', version: '1.0.0' })), { ready: true, version: '1.0.0' });
+  assert.deepEqual(await verifyLegalRelease('production', async () => Response.json({ product: 'contract-review', version: '1.0.0', max_only: true, model_gateway: 'ydata', model_selection_version: 1 })), { ready: true, version: '1.0.0' });
+});
+
+test('production blocks an old backend without Max enforcement', async () => {
+  await assert.rejects(verifyLegalRelease('production', async () => Response.json({product:'contract-review',version:'1.0.0'})), /incompatible/);
 });

@@ -9,7 +9,7 @@ export async function verifyLegalRelease(environment, fetcher = fetch) {
   });
   if (!response.ok) throw new Error(`Contract backend not ready (HTTP ${response.status}).`);
   const version = await response.json();
-  if (version.product !== 'contract-review' || version.version !== '1.0.0') {
+  if (version.product !== 'contract-review' || version.version !== '1.0.0' || version.max_only !== true || version.model_gateway !== 'ydata' || version.model_selection_version !== 1) {
     throw new Error('Contract backend version is incompatible with this frontend.');
   }
   return { ready: true, version: version.version };

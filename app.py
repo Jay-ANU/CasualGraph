@@ -20,6 +20,8 @@ from api.routers.graph import router as graph_router  # noqa: E402
 from api.routers.memory import router as memory_router  # noqa: E402
 from api.routers.rag import router as rag_router  # noqa: E402
 from api.routers.system import router as system_router  # noqa: E402
+from api.routers.contract_review import public_router as contract_public_router
+from api.routers.max_memberships import router as max_memberships_router
 from api.routers.contract_review import router as contract_review_router  # noqa: E402
 from configs.settings import EMBEDDING_FALLBACK_DIM, VECTOR_STORE_PROVIDER  # noqa: E402
 from rag.bm25_index import warm_bm25_index  # noqa: E402
@@ -109,7 +111,7 @@ def create_app() -> FastAPI:
             response.headers['X-Content-Type-Options'] = 'nosniff'
         return response
     application.on_event("startup")(startup)
-    for router in (*ROUTERS, *_optional_routers()):
+    for router in (*ROUTERS, contract_public_router, max_memberships_router, *_optional_routers()):
         application.include_router(router)
     return application
 

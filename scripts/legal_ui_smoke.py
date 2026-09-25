@@ -44,6 +44,8 @@ def route_api(route):
     if method == 'OPTIONS': route.fulfill(status=204, headers=headers); return
     status, data = 200, {}
     if path == '/auth/me': data={'user':{'id':'u1','username':'测试法务','email':'test@example.com','role':'user','plan':'free'}}
+    elif path == '/legal/access': data={'allowed':True,'plan':'max','required_plan':'max'}
+    elif path == '/legal/models': data={'models':[{'id':'glm-5.2','family':'GLM'},{'id':'claude-test','family':'Claude'}],'families':['GPT','Claude','DeepSeek','Kimi','GLM'],'default_model':'glm-5.2','catalog_source':'gateway','notice':'mock'}
     elif path == '/legal/workspace': data={'matter_id':'m1','org_id':'o1'}
     elif path == '/matters': data={'matters':[{'id':'m1','org_id':'o1','name':'采购审查'}]}
     elif path == '/legal/capabilities': data={'product':'contract-review','model_configured':True,'encryption_configured':True,'law_search':{'provider':'test-only','notice':'mock'}}
@@ -55,6 +57,8 @@ def route_api(route):
         if request.get('confirmed'): contract['status']='ready'
         data={'blocks':contract['blocks'],'confirmed':request.get('confirmed'), 'replacement_count':1}
     elif path == '/legal/contracts/c1/reviews':
+        assert req.post_data_json['model_id'] == 'glm-5.2'
+        assert req.post_data_json['external_processing_provider'] == 'ydata'
         assert req.post_data_json['external_processing_confirmed'] is True
         assert contract['status']=='ready'
         data=review
@@ -85,7 +89,7 @@ try:
         page.locator('input[type=file]').set_input_files({'name':'测试采购合同.txt','mimeType':'text/plain','buffer':'测试采购合同'.encode()})
         page.get_by_role('button',name='已检查，确认脱敏').click()
         page.get_by_label('我方角色').select_option('采购方')
-        page.get_by_label('允许将脱敏正文及适用公司规范发送给已配置的审查模型。').check()
+        page.get_by_label('允许将脱敏正文及适用公司规范经 YData 网关发送给所选模型。').check()
         page.get_by_role('button',name='开始审查',exact=True).click()
         page.get_by_role('heading',name='付款与交货保障不匹配').wait_for()
         page.get_by_role('button',name='接受修改',exact=True).click()

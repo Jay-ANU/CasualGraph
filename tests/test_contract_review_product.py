@@ -257,7 +257,7 @@ def ready_review():
     c = store.contract(cid)
     store.confirm_redaction(cid, 'u1', 1, c['payload']['blocks'], {})
     return store.create_review(store.contract(cid), 'u1', 'checkpoint-test',
-                              {'contract_revision': 1, 'profile': {'our_role': '采购方'}, 'policies': []})[0]
+                              {'contract_revision': 1, 'profile': {'our_role': '采购方', 'external_processing_provider': 'ydata', 'model': {'id': 'glm-5.2', 'provider': 'ydata'}}, 'policies': []})[0]
 
 
 def test_worker_resume_keeps_completed_batches(db, monkeypatch):
@@ -321,6 +321,8 @@ def test_api_requires_permission_redaction_and_consent(db, monkeypatch):
     application = FastAPI()
     application.include_router(router_module.router)
     application.dependency_overrides[router_module.get_current_user] = lambda: actor
+    application.dependency_overrides[router_module.require_legal_max] = router_module.get_current_user
+    monkeypatch.setattr(router_module.ydata, 'select_model', lambda mid: {'provider':'ydata','id':mid,'family':'GLM'})
     def member(mid, user, min_role='viewer', require_active=False):
         if user['id'] != 'u1' or mid != 'm1': raise HTTPException(403, 'no access')
         return {'matter':{'id':'m1','org_id':'o1'}, 'role':'lead'}
@@ -329,7 +331,7 @@ def test_api_requires_permission_redaction_and_consent(db, monkeypatch):
     submitted = []
     monkeypatch.setattr(engine, 'submit', submitted.append)
     client = TestClient(application)
-    profile = {'our_role':'采购方','contract_type':'采购合同','external_processing_confirmed':True}
+    profile = {'our_role':'采购方','contract_type':'采购合同','external_processing_confirmed':True,'external_processing_provider':'ydata','model_id':'glm-5.2'}
     upload = client.post('/legal/contracts', data={'matter_id':'m1'}, files={'file':('sample.txt','联系人：张三；付款100万元。'.encode(),'text/plain')})
     assert upload.status_code == 201
     cid = upload.json()['id']

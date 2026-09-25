@@ -13,6 +13,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import useDocumentTitle from './utils/useDocumentTitle';
 
 // Loaded on demand: only admins and candidates with an offer link open these.
+const MaxMemberships = lazy(() => import('./pages/MaxMemberships'));
 const ContractReview = lazy(() => import('./pages/ContractReview'));
 const Recruitment = lazy(() => import('./pages/Recruitment'));
 const OfferView = lazy(() => import('./pages/OfferView'));
@@ -69,6 +70,7 @@ const Shell: React.FC = () => {
             <Route path="/research" element={<ProtectedRoute><Agent /></ProtectedRoute>} />
             <Route path="/legal" element={<ProtectedRoute><ContractReview /></ProtectedRoute>} />
             <Route path="/admin" element={<AdminRoute><Admin /></AdminRoute>} />
+            <Route path="/admin/memberships" element={<AdminRoute><MaxMemberships /></AdminRoute>} />
             <Route path="/admin/recruitment" element={<AdminRoute><Recruitment /></AdminRoute>} />
             <Route path="/offer/:token" element={<OfferView />} />
             <Route path="/about" element={<About />} />

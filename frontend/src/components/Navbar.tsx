@@ -107,6 +107,7 @@ const Navbar: React.FC = () => {
                         Admin console
                       </Link>
                     )}
+                    {isAdmin && <Link to="/admin/memberships" className="menu-item" role="menuitem">Max 会员</Link>}
                     {isAdmin && <Link to="/admin/recruitment" className="menu-item" role="menuitem">Recruitment</Link>}
                     <button type="button" onClick={handleLogout} className="menu-item" role="menuitem">
                       <LogOut className="h-4 w-4 text-ink-4" />
@@ -171,6 +172,7 @@ const Navbar: React.FC = () => {
                 <div className="flex flex-wrap gap-2">
                   <Link to="/agent" className="btn btn-primary">Open research desk</Link>
                   {isAdmin && <Link to="/admin" className="btn btn-secondary">Admin console</Link>}
+                  {isAdmin && <Link to="/admin/memberships" className="btn btn-secondary">Max 会员</Link>}
                   {isAdmin && <Link to="/admin/recruitment" className="btn btn-secondary">Recruitment</Link>}
                   <button type="button" onClick={handleLogout} className="btn btn-secondary">Sign out</button>
                 </div>
