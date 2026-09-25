@@ -14,12 +14,13 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.deps import get_current_user
 from services.db import get_db
 from legal.access import require_legal_max, access_status
-from legal import ydata, data_boundary, draft_release
+from legal import ydata, data_boundary, draft_release, scenarios
+from legal.review_plan import build_plan
 from legal.transaction_brief import TransactionContext, build_brief
 from legal.law_evidence import evidence_health
 from services import matters
@@ -47,8 +48,9 @@ class ReviewRequest(BaseModel):
     transaction_context: TransactionContext = Field(default_factory=TransactionContext)
     model_id: str = Field(min_length=1, max_length=160, pattern=r'^[A-Za-z0-9][A-Za-z0-9._/-]*$')
     external_processing_provider: Literal['ydata']
-    our_role: Literal['采购方', '供应方', '服务提供方', '服务接受方', '披露方', '接收方']
-    contract_type: Literal['采购合同', '服务合同', '保密协议', '其他商事合同']
+    our_role: str = Field(min_length=1, max_length=40)
+    contract_type: str = Field(min_length=1, max_length=80)
+    scenario_revision: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
     jurisdiction: Literal['中国大陆'] = '中国大陆'
     transaction_date: date | None = None
     external_processing_confirmed: bool = False
@@ -57,11 +59,35 @@ class ReviewRequest(BaseModel):
     review_mode: Literal["standard", "multi_agent"] = "multi_agent"
 
 
+    @field_validator('contract_type')
+    @classmethod
+    def valid_type(cls, value):
+        return scenarios.normalize_type(value)
+
+    @model_validator(mode='after')
+    def valid_pair(self):
+        self.our_role = scenarios.validate_role(self.contract_type, self.our_role)
+        return self
+
+
 class PolicyRequest(BaseModel):
     title: str = Field(min_length=1, max_length=150)
     text: str = Field(min_length=5, max_length=2500)
-    contract_type: Literal['全部', '采购合同', '服务合同', '保密协议', '其他商事合同'] = '全部'
+    contract_type: str = Field(default='全部', min_length=1, max_length=80)
+    our_roles: list[str] = Field(default_factory=list, max_length=8)
     version: int | None = Field(default=None, ge=1)
+
+    @field_validator('contract_type')
+    @classmethod
+    def valid_type(cls, value):
+        return scenarios.normalize_type(value, policy=True)
+
+    @model_validator(mode='after')
+    def valid_scope(self):
+        if self.contract_type == '全部' and self.our_roles:
+            raise ValueError('角色限定需先选择具体合同类型。')
+        self.our_roles = list(dict.fromkeys(scenarios.validate_role(self.contract_type, r) for r in self.our_roles))
+        return self
 
 
 class DecisionRequest(BaseModel):
@@ -124,7 +150,7 @@ def _review_view(r: dict):
 @public_router.get('/version')
 def version():
     return {'product': 'contract-review', 'version': '1.0.0', 'law_source': 'external', 'rules_source': 'database',
-            'max_only': True, 'model_gateway': 'ydata', 'model_selection_version': 1, 'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': 1, 'transaction_brief_version': 1, 'evidence_screening_version': 1}
+            'max_only': True, 'model_gateway': 'ydata', 'model_selection_version': 1, 'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': 1, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION}
 
 
 @public_router.get('/access')
@@ -134,6 +160,11 @@ async def legal_access(user: dict = Depends(get_current_user), db=Depends(get_db
 
 def _gateway_failure(exc):
     return HTTPException(exc.status_code, {'error': exc.code, 'message': exc.message})
+
+
+@router.get('/scenarios')
+def scenario_catalog():
+    return scenarios.catalog()
 
 
 @router.get('/models')
@@ -153,8 +184,8 @@ def capabilities(user: dict = Depends(get_current_user)):
     except Exception:
         encrypted = False
     return {'product': 'contract-review', 'model_configured': ydata.configured(), 'model_gateway': 'ydata', 'encryption_configured': encrypted,
-            'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': 1, 'transaction_brief_version': 1, 'evidence_screening_version': 1,
-            'upload_disclosure': data_boundary.disclosure(), 'law_search': external_law.provider_status(), 'contract_types': ['采购合同', '服务合同', '保密协议', '其他商事合同'],
+            'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': 1, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION,
+            'scenario_catalog': scenarios.catalog(), 'upload_disclosure': data_boundary.disclosure(), 'law_search': external_law.provider_status(), 'contract_types': [scene['label'] for scene in scenarios.catalog()['scenarios']],
             'limits': {'max_upload_mb': 10, 'max_characters': documents.MAX_TEXT, 'max_blocks': documents.MAX_BLOCKS}}
 
 
@@ -241,20 +272,26 @@ def start_review(cid: str, request: ReviewRequest, user: dict = Depends(get_curr
         raise HTTPException(409, '请先确认脱敏，并授权将脱敏合同及适用公司规范交给已配置模型审查。')
     if c['payload'].get('redaction_version') != 2:
         raise HTTPException(409, '此合同仍使用旧版脱敏，请重新上传并检查新脱敏预览。历史报告仍可查看。')
+    catalog = scenarios.catalog()
+    if request.scenario_revision and request.scenario_revision != catalog['revision']:
+        raise HTTPException(409, '合同场景目录已更新，请刷新并重新确认审查类型与我方角色。')
+    scene = scenarios.get_scenario(request.contract_type)
     party = data_boundary.bind_party(request.our_party.model_dump() if request.our_party else None, c['payload']['redacted_blocks'])
     try:
         selected = ydata.select_model(request.model_id)
     except ydata.GatewayError as exc:
         raise _gateway_failure(exc) from None
-    profile = request.model_dump(mode='json', exclude={'external_processing_confirmed', 'fresh_review', 'external_processing_provider', 'model_id'})
+    profile = request.model_dump(mode='json', exclude={'external_processing_confirmed', 'fresh_review', 'external_processing_provider', 'model_id', 'scenario_revision'})
     profile['our_party'] = party
+    profile['scenario'] = scenarios.descriptor(scene, request.our_role)
     profile['model'] = selected
     profile['external_processing_provider'] = 'ydata'
     profile['review_date'] = date.today().isoformat()
-    policies = [p for p in store.policies(c['org_id'], str(user['id'])) if p['contract_type'] in ('全部', request.contract_type)]
+    policies = scenarios.matching_policies(store.policies(c['org_id'], str(user['id'])), request.contract_type, request.our_role)
     policies, profile['instructions'] = data_boundary.redact_materials(c['payload'], policies, profile.get('instructions', ''))
     brief = build_brief(profile, c['payload']['redacted_blocks'], c['payload'].get('warnings', []))
     snapshot = {'transaction_brief': brief, 'audit_foundation_version': 1, 'engine_version': 2, 'contract_revision': c['revision'], 'profile': profile, 'policies': policies, 'stage': '等待执行', 'findings': [], 'coverage': []}
+    snapshot['plan'] = build_plan(engine.RULES, c['payload']['redacted_blocks'], profile, policies, scenario=scene)
     fingerprint = hashlib.sha256(json.dumps({'contract': cid, **snapshot, 'nonce': uuid.uuid4().hex if request.fresh_review else ''},
                                                sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     rid, created = store.create_review(c, str(user['id']), fingerprint, snapshot)

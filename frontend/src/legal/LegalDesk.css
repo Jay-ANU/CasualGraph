@@ -32,3 +32,13 @@
 .lv-source-meta small { display: block; }
 .lv-source-meta q { display: block; padding: 5px 0; }
 @media(max-width:760px) { .lv-advanced .lv-fields { grid-template-columns: 1fr; } }
+
+/* Scenario choices share one backend catalogue; guide copy remains secondary. */
+.legal-v2 .lv-scenario-picker { margin: 0 0 18px; min-width: 0; }
+.legal-v2 .lv-scenario-guide { font-size: 13px; line-height: 1.7; margin-top: 10px; }
+.legal-v2 .lv-scenario-guide summary { cursor: pointer; overflow-wrap: anywhere; }
+.legal-v2 .lv-scenario-guide p { margin: 10px 0; }
+.legal-v2 .lv-scenario-guide small { display: block; line-height: 1.7; }
+.legal-v2 .lv-policy-roles { border: 0; padding: 0; margin: 12px 0; }
+.legal-v2 .lv-policy-roles label { display: flex; align-items: center; gap: 8px; }
+.legal-v2 .lv-policy-roles input { width: auto; }

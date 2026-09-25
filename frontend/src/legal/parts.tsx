@@ -1,9 +1,11 @@
 import React from 'react';
-import type { Catalog, Finding, Policy, Review } from './types';
+import type { Catalog, Finding, Policy, Review, ScenarioCatalog } from './types';
 import { diffText } from './diff';
 import { findingStatus } from './findingStatus';
 import { SourceDetails } from './ReviewContext';
 import { sourceKindLabel } from './sourceLabels';
+import { ScenarioOptions } from './ScenarioPicker';
+import { currentScenario, usableCatalog } from './scenarioInput';
 
 const PATHS: Record<string, string[]> = {
   plus: ['M10 4v12M4 10h12'], close: ['M5 5l10 10M15 5L5 15'], menu: ['M3 5h14M3 10h14M3 15h14'],
@@ -64,17 +66,26 @@ export class FindingCard extends React.Component<FindingProps, { open: boolean; 
   }
 }
 
-type Draft = { title: string; text: string; contract_type: string };
-type PolicyProps = { policies: Policy[]; busy: boolean; onSave: (draft: Draft, existing: Policy | null) => void; onArchive: (policy: Policy) => void };
+type Draft = { title: string; text: string; contract_type: string; our_roles: string[] };
+type PolicyProps = { catalog?: ScenarioCatalog; policies: Policy[]; busy: boolean; onSave: (draft: Draft, existing: Policy | null) => void; onArchive: (policy: Policy) => void };
 export class PolicyEditor extends React.Component<PolicyProps, { draft: Draft; editing: Policy | null }> {
-  state = { draft: { title: '', text: '', contract_type: '全部' }, editing: null as Policy | null };
-  render() { const { policies, busy, onSave, onArchive } = this.props; const { draft, editing } = this.state;
-    return <main className="lv-policy-page"><p className="lv-eyebrow">COMPANY PLAYBOOK</p><h1>让它知道公司的底线</h1><p className="lv-subtitle">写清必须满足的条件，以及允许的例外。每轮审查保留当时版本，内部规范不会被当作法律。</p><div className="lv-policy-layout"><section className="lv-policy-list"><h2>正在使用的规范 <span>{policies.length}</span></h2>{!policies.length && <div className="lv-policy-empty"><Icon name="book" /><p>还没有公司规范</p><small>可以先审查合同，再逐步补充付款、责任及审批要求。</small></div>}{policies.map(p => <article key={p.id}><div><h3>{p.title}</h3><small>v{p.version}</small></div><span className="lv-policy-type">{p.contract_type}</span><p>{p.text}</p><div className="lv-actions"><button className="lv-secondary" disabled={busy} onClick={() => this.setState({ editing: p, draft: { title: p.title, text: p.text, contract_type: p.contract_type } })}>编辑</button><button className="lv-text-button" disabled={busy} onClick={() => onArchive(p)}>归档</button></div></article>)}</section><form className="lv-policy-form" onSubmit={e => { e.preventDefault(); onSave(draft, editing); }}><h2>{editing ? '编辑规范' : '新增规范'}</h2><label>规范标题<input required maxLength={150} value={draft.title} onChange={e => this.setState({ draft: { ...draft, title: e.target.value } })} placeholder="例如：采购预付款要求" /></label><label>适用合同<select value={draft.contract_type} onChange={e => this.setState({ draft: { ...draft, contract_type: e.target.value } })}>{['全部', '采购合同', '服务合同', '保密协议', '其他商事合同'].map(t => <option key={t}>{t}</option>)}</select></label><label>审查要求<textarea required minLength={5} maxLength={2500} rows={6} value={draft.text} onChange={e => this.setState({ draft: { ...draft, text: e.target.value } })} placeholder="例如：我方作为采购方时，预付款超过合同价款的 30% 需业务负责人批准。这是公司要求，不是法定比例。" /></label><p className="lv-muted">仅组织管理员可更改规范。不要填写与审查无关的秘密。</p><div className="lv-actions"><button className="lv-primary" disabled={busy}>保存规范</button>{editing && <button type="button" className="lv-secondary" onClick={() => this.setState({ editing: null, draft: { title: '', text: '', contract_type: '全部' } })}>取消编辑</button>}</div></form></div></main>;
+  state = { draft: { title: '', text: '', contract_type: '全部', our_roles: [] as string[] }, editing: null as Policy | null };
+  render() { const { policies, busy, onSave, onArchive, catalog } = this.props; const { draft, editing } = this.state;
+    const scene = currentScenario(catalog, draft.contract_type);
+    const validScope = usableCatalog(catalog) && (draft.contract_type === '全部' || !!scene) && draft.our_roles.every(r => scene?.roles.some(x => x.value === r));
+    return <main className="lv-policy-page"><p className="lv-eyebrow">COMPANY PLAYBOOK</p><h1>让它知道公司的底线</h1><p className="lv-subtitle">写清必须满足的条件，以及允许的例外。每轮审查保留当时版本，内部规范不会被当作法律。</p><div className="lv-policy-layout"><section className="lv-policy-list"><h2>正在使用的规范 <span>{policies.length}</span></h2>{!policies.length && <div className="lv-policy-empty"><Icon name="book" /><p>还没有公司规范</p><small>可以先审查合同，再逐步补充付款、责任及审批要求。</small></div>}{policies.map(p => <article key={p.id}><div><h3>{p.title}</h3><small>v{p.version}</small></div><span className="lv-policy-type">{p.contract_type} · {p.our_roles?.length ? p.our_roles.join(" / ") : "不限我方角色"}</span><p>{p.text}</p><div className="lv-actions"><button className="lv-secondary" disabled={busy} onClick={() => this.setState({ editing: p, draft: { title: p.title, text: p.text, contract_type: p.contract_type, our_roles: p.our_roles || [] } })}>编辑</button><button className="lv-text-button" disabled={busy} onClick={() => onArchive(p)}>归档</button></div></article>)}</section><form className="lv-policy-form" onSubmit={e => { e.preventDefault(); if (validScope && !busy) onSave(draft, editing); }}><h2>{editing ? '编辑规范' : '新增规范'}</h2><label>规范标题<input required maxLength={150} value={draft.title} onChange={e => this.setState({ draft: { ...draft, title: e.target.value } })} placeholder="例如：采购预付款要求" /></label><label>适用合同<select aria-label="规范适用合同" value={draft.contract_type} disabled={busy || !usableCatalog(catalog)} onChange={e => this.setState({ draft: { ...draft, contract_type: e.target.value, our_roles: [] } })}><option value="全部">全部</option><ScenarioOptions catalog={catalog} /></select></label>
+        {scene && <fieldset className="lv-policy-roles" disabled={busy}><legend>仅限以下我方角色（不选表示该类型全部角色）</legend>{scene.roles.map(role => <label key={role.value}><input type="checkbox" checked={draft.our_roles.includes(role.value)} onChange={e => this.setState({ draft: { ...draft, our_roles: e.target.checked ? [...draft.our_roles, role.value] : draft.our_roles.filter(r => r !== role.value) } })} />{role.value}</label>)}</fieldset>}
+        {!validScope && <p role="alert">适用场景或角色未匹配，请检查目录和选择后再保存。</p>}
+        <label>审查要求<textarea required minLength={5} maxLength={2500} rows={6} value={draft.text} onChange={e => this.setState({ draft: { ...draft, text: e.target.value } })} placeholder="例如：我方作为采购方时，预付款超过合同价款的 30% 需业务负责人批准。这是公司要求，不是法定比例。" /></label><p className="lv-muted">仅组织管理员可更改规范。不要填写与审查无关的秘密。</p><div className="lv-actions"><button className="lv-primary" disabled={busy || !validScope}>保存规范</button>{editing && <button type="button" className="lv-secondary" onClick={() => this.setState({ editing: null, draft: { title: '', text: '', contract_type: '全部', our_roles: [] } })}>取消编辑</button>}</div></form></div></main>;
   }
 }
 const escaped = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export function ReviewReport(review: Review): string {
   const out = ['# 合同审查报告', '', `审查编号：${review.id}`, `审查状态：${review.status}`, `模型：${review.profile?.model?.id || '历史记录未提供'}`, `我方角色：${review.profile?.our_role || '未记录'}`, `审查方式：${review.profile?.review_mode === 'multi_agent' ? '多 Agent 协作' : '常规审查'}`, '', review.notice];
+  if (review.profile?.scenario) {
+    const scenario = review.profile.scenario;
+    out.push('', '## 本轮合同场景', `${escaped(scenario.label)} · 目录版本 ${scenario.catalog_version}`, escaped(scenario.role_focus || ''), ...scenario.checks.map(c => `专项检查：${escaped(c.title)}`), `核对材料：${scenario.materials.map(escaped).join('；')}`, escaped(scenario.limits));
+  }
   if (review.transaction_brief) {
     const b = review.transaction_brief;
     out.push('', '## 交易背景（用户填写，尚未独立核实）', `履行阶段：${escaped(b.context.performance_stage || '未知')}`, `附件声明：${escaped(b.context.attachments_status || '未知')}`, `业务重点：${escaped(b.context.business_priority || '综合审查')}`, `金额：${escaped(b.context.deal_value == null ? '未提供' : `${b.context.deal_value} ${b.context.currency}`)}`);

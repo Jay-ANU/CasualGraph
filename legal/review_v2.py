@@ -107,7 +107,9 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
             raise ydata.GatewayError('legal_new_review_required', '本轮已有人工决定，请新建审查，避免覆盖已确认修改。', 409)
         blocks = contract['payload']['redacted_blocks']
         policies = p.get('policies', [])
-        plan = p.setdefault('plan', build_plan(legacy.RULES, blocks, p['profile'], policies))
+        if 'plan' not in p:
+            p['plan'] = build_plan(legacy.RULES, blocks, p['profile'], policies)
+        plan = p['plan']
         if 'intake' not in p:
             save('正在读合同，提取可回到原文的交易事实', 'intake')
             p['intake'] = quality.validate_facts(generate(INTAKE, {'contract_blocks': blocks}), blocks)
