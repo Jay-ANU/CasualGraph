@@ -17,11 +17,15 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from api.deps import get_current_user
+from services.db import get_db
+from legal.access import require_legal_max, access_status
+from legal import ydata
 from services import matters
 from legal import contract_documents as documents
 from legal import external_law, review_engine as engine, review_store as store
 
-router = APIRouter(prefix='/legal', tags=['contract-review'])
+router = APIRouter(prefix='/legal', tags=['contract-review'], dependencies=[Depends(require_legal_max)])
+public_router = APIRouter(prefix='/legal', tags=['contract-review'])
 
 
 class RedactionRequest(BaseModel):
@@ -31,6 +35,8 @@ class RedactionRequest(BaseModel):
 
 
 class ReviewRequest(BaseModel):
+    model_id: str = Field(min_length=1, max_length=160, pattern=r'^[A-Za-z0-9][A-Za-z0-9._/-]*$')
+    external_processing_provider: Literal['ydata']
     our_role: Literal['采购方', '供应方', '服务提供方', '服务接受方', '披露方', '接收方']
     contract_type: Literal['采购合同', '服务合同', '保密协议', '其他商事合同']
     jurisdiction: Literal['中国大陆'] = '中国大陆'
@@ -93,21 +99,38 @@ def _review_view(r: dict):
             'notice': '法律意见为辅助审查，原文匹配不代表版本和法律适用已核实。未发现意见不代表无风险。修改由有权限的用户确认。'}
 
 
-@router.get('/version')
+@public_router.get('/version')
 def version():
-    return {'product': 'contract-review', 'version': '1.0.0', 'law_source': 'external', 'rules_source': 'database'}
+    return {'product': 'contract-review', 'version': '1.0.0', 'law_source': 'external', 'rules_source': 'database',
+            'max_only': True, 'model_gateway': 'ydata', 'model_selection_version': 1}
+
+
+@public_router.get('/access')
+async def legal_access(user: dict = Depends(get_current_user), db=Depends(get_db)):
+    return await access_status(user, db)
+
+
+def _gateway_failure(exc):
+    return HTTPException(exc.status_code, {'error': exc.code, 'message': exc.message})
+
+
+@router.get('/models')
+def models():
+    try:
+        return ydata.model_catalog()
+    except ydata.GatewayError as exc:
+        raise _gateway_failure(exc) from None
 
 
 @router.get('/capabilities')
 def capabilities(user: dict = Depends(get_current_user)):
-    from configs.settings import openai_configured
     from services.crypto import get_fernet
     try:
         get_fernet()
         encrypted = True
     except Exception:
         encrypted = False
-    return {'product': 'contract-review', 'model_configured': openai_configured(), 'encryption_configured': encrypted,
+    return {'product': 'contract-review', 'model_configured': ydata.configured(), 'model_gateway': 'ydata', 'encryption_configured': encrypted,
             'law_search': external_law.provider_status(), 'contract_types': ['采购合同', '服务合同', '保密协议', '其他商事合同'],
             'limits': {'max_upload_mb': 10, 'max_characters': documents.MAX_TEXT, 'max_blocks': documents.MAX_BLOCKS}}
 
@@ -188,10 +211,13 @@ def start_review(cid: str, request: ReviewRequest, user: dict = Depends(get_curr
     c = _contract(cid, user, True)
     if c['status'] != 'ready' or not request.external_processing_confirmed:
         raise HTTPException(409, '请先确认脱敏，并授权将脱敏合同及适用公司规范交给已配置模型审查。')
-    from configs.settings import openai_configured
-    if not openai_configured():
-        raise HTTPException(503, '审查模型尚未配置，不会生成模拟审查结论。')
-    profile = request.model_dump(mode='json', exclude={'external_processing_confirmed', 'fresh_review'})
+    try:
+        selected = ydata.select_model(request.model_id)
+    except ydata.GatewayError as exc:
+        raise _gateway_failure(exc) from None
+    profile = request.model_dump(mode='json', exclude={'external_processing_confirmed', 'fresh_review', 'external_processing_provider', 'model_id'})
+    profile['model'] = selected
+    profile['external_processing_provider'] = 'ydata'
     profile['review_date'] = date.today().isoformat()
     policies = [p for p in store.policies(c['org_id'], str(user['id'])) if p['contract_type'] in ('全部', request.contract_type)]
     snapshot = {'contract_revision': c['revision'], 'profile': profile, 'policies': policies, 'stage': '等待执行', 'findings': [], 'coverage': []}
@@ -216,6 +242,8 @@ def resume(rid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(409, '该任务已结束。需要重新检索时请新建审查。')
     if r['status'] == 'running' and r['lease_until'] > time.time():
         raise HTTPException(409, '任务仍在执行，不重复提交。')
+    if r['payload'].get('profile', {}).get('external_processing_provider') != 'ydata':
+        raise HTTPException(409, '旧任务未确认 YData 处理授权，请选择模型并新建审查。')
     # A failed external search is retried on resume; successful evidence remains timestamped.
     engine.submit(rid)
     return _review_view(r)

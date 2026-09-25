@@ -4,6 +4,8 @@ import { apiFetch, jsonRequest, readApiError, withAuth } from '../api/client';
 import { apiBase } from '../api/config';
 import { useAuth } from '../contexts/AuthContext';
 import './ContractReview.css';
+import LegalAccessGate from '../components/LegalAccessGate';
+import LegalModelPicker from '../components/LegalModelPicker';
 
 type Block = { id: string; text: string; page: number | null };
 type Policy = { id: string; title: string; text: string; version: number; contract_type: string };
@@ -13,7 +15,7 @@ type Contract = ContractSummary & { matter_id: string; org_id: string; format: s
 type Source = { id: string; title: string; url: string; retrieved_at: string; text: string; version_status: string };
 type Finding = { id: string; block_id: string | null; original_quote: string; title: string; kind: string; severity: string; impact: string; reason: string; suggested_text: string; evidence_status: string; missing_facts: string[]; citations: { source_id: string; supporting_quote: string }[]; policy_ids: string[] };
 type Decision = { decision: string; text: string; version: number };
-type Review = { id: string; status: string; stage: string; resumable: boolean; error?: string; findings: Finding[]; coverage: { rule_id: string; title: string; status: string; note: string }[]; sources: Source[]; decisions: Record<string, Decision>; policies: Policy[]; notice: string };
+type Review = { profile?: { model?: { id: string; provider: string } }; id: string; status: string; stage: string; resumable: boolean; error?: string; findings: Finding[]; coverage: { rule_id: string; title: string; status: string; note: string }[]; sources: Source[]; decisions: Record<string, Decision>; policies: Policy[]; notice: string };
 type Capabilities = { model_configured: boolean; encryption_configured: boolean; law_search: { provider: string; notice: string } };
 const TYPES = ['采购合同', '服务合同', '保密协议', '其他商事合同'];
 const ROLES = ['采购方', '供应方', '服务提供方', '服务接受方', '披露方', '接收方'];
@@ -23,6 +25,10 @@ const COVERAGE: Record<string, string> = { reviewed: '已检查', not_applicable
 const errorText = (e: unknown) => e instanceof Error ? e.message : '操作未完成，请重试。';
 
 export default function ContractReview() {
+  return <LegalAccessGate><ContractWorkbench /></LegalAccessGate>;
+}
+
+function ContractWorkbench() {
   const { user, logout } = useAuth();
   const [workspace, setWorkspace] = useState<{ matter_id: string; org_id: string } | null>(null);
   const [matters, setMatters] = useState<Matter[]>([]);
@@ -38,6 +44,8 @@ export default function ContractReview() {
   const [contractType, setContractType] = useState('采购合同');
   const [transactionDate, setTransactionDate] = useState('');
   const [consent, setConsent] = useState(false);
+  const [modelId, setModelId] = useState('');
+  const selectModel = useCallback((id: string) => { setModelId(id); setConsent(false); }, []);
   const [terms, setTerms] = useState('');
   const [preview, setPreview] = useState<Block[] | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
@@ -112,10 +120,10 @@ export default function ContractReview() {
     }
   }
   async function start(fresh = false) {
-    if (!contract) return;
+    if (!contract || !modelId || !consent) return;
     const r = await apiFetch<Review>(`/legal/contracts/${contract.id}/reviews`, jsonRequest('POST', {
       our_role: ourRole, contract_type: contractType, jurisdiction: '中国大陆', transaction_date: transactionDate || null,
-      external_processing_confirmed: consent, fresh_review: fresh,
+      external_processing_confirmed: consent, fresh_review: fresh, model_id: modelId, external_processing_provider: 'ydata',
     }));
     setReview(r);
   }
@@ -154,6 +162,7 @@ export default function ContractReview() {
         </select></label>
         <button className="legal-primary legal-upload" disabled={busy || !workspace || caps?.encryption_configured === false} onClick={() => uploadInput.current?.click()}>＋ 上传合同</button>
         <input ref={uploadInput} type="file" accept=".docx,.pdf,.txt" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; void run(() => upload(f)); }} />
+        <LegalModelPicker value={modelId} onChange={selectModel} disabled={busy || ['queued', 'running'].includes(review?.status || '')} />
         <p className="legal-eyebrow">本事项合同 <span>{contracts.length}</span></p>
         <div className="legal-file-list">{contracts.map(c => <button key={c.id} className={contract?.id === c.id ? 'selected' : ''} disabled={busy} onClick={() => { setTab('review'); void run(() => openContract(c.id)); }}><span>{c.name}</span><small>{STATE[c.status] || c.status}</small></button>)}</div>
         <div className="legal-boundary"><strong>法规外部检索</strong><p>公司规范存入组织数据库；法律依据在审查时检索并保存本轮来源快照。</p><p>不依赖模型记忆生成法条。未查到不等于无风险。</p><small>检索方式：{caps?.law_search.provider || '正在检查'}</small></div>
@@ -189,10 +198,10 @@ export default function ContractReview() {
           <label>我方角色<select value={ourRole} onChange={e => setOurRole(e.target.value)}>{ROLES.map(r => <option key={r}>{r}</option>)}</select></label>
           <label>合同类型<select value={contractType} onChange={e => setContractType(e.target.value)}>{TYPES.map(t => <option key={t}>{t}</option>)}</select></label>
           <label>交易日期（未知可留空）<input type="date" value={transactionDate} onChange={e => setTransactionDate(e.target.value)} /></label>
-          <label className="legal-consent"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />允许将脱敏正文及适用公司规范发送给已配置的审查模型。</label>
-          <button className="legal-primary" disabled={busy || !consent || caps?.model_configured === false || (review !== null && ['queued', 'running'].includes(review.status))} onClick={() => void run(() => start(Boolean(done)))}>{done ? '新建一轮审查' : '开始审查'}</button>
+          <label className="legal-consent"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />允许将脱敏正文及适用公司规范经 YData 网关发送给所选模型。</label>
+          <button className="legal-primary" disabled={busy || !consent || !modelId || caps?.model_configured !== true || (review !== null && ['queued', 'running'].includes(review.status))} onClick={() => void run(() => start(Boolean(done)))}>{done ? '新建一轮审查' : '开始审查'}</button>
         </section>}
-        {review && <div className="legal-progress" role="status"><span>{review.stage}</span><small>已记录 {review.coverage.length} 项检查 · {review.findings.length} 条意见 · 已接受 {accepted} 条</small>{review.resumable && <button disabled={busy} onClick={() => void run(async () => { setReview(await apiFetch<Review>(`/legal/reviews/${review.id}/resume`, { method: 'POST' })); })}>从检查点重试</button>}</div>}
+        {review && <div className="legal-progress" role="status"><span>{review.stage}</span><small>模型：{review.profile?.model?.id || '旧版未记录'} · 已记录 {review.coverage.length} 项检查 · {review.findings.length} 条意见 · 已接受 {accepted} 条</small>{review.resumable && <button disabled={busy} onClick={() => void run(async () => { setReview(await apiFetch<Review>(`/legal/reviews/${review.id}/resume`, { method: 'POST' })); })}>从检查点重试</button>}</div>}
         {review?.error && <p className="legal-warning">{review.error}</p>}
         <div className="legal-panes">
           <section className="legal-document" aria-label="脱敏合同正文"><div className="legal-pane-title"><h2>合同正文</h2><span>{displayedBlocks.length} 个段落 · 脱敏视图</span></div><div className="legal-paper">{displayedBlocks.map(b => { const count = review?.findings.filter(f => f.block_id === b.id).length || 0; return <button key={b.id} className={`legal-block ${selectedBlock === b.id ? 'selected' : ''} ${count ? 'has-findings' : ''}`} onClick={() => setSelectedBlock(selectedBlock === b.id ? null : b.id)}><span className="legal-block-id">{b.id}{b.page ? ` · 第 ${b.page} 页` : ''}{count > 0 && <b>{count} 条意见</b>}</span><span>{b.text}</span></button>; })}</div></section>

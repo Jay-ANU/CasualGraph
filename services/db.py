@@ -186,6 +186,8 @@ async def _init_auth_db():
         await db.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR lower(role) NOT IN ('admin', 'user')")
         for statement in MATTER_SCHEMA_STATEMENTS:
             await db.execute(statement)
+        from services.max_membership import init_max_memberships
+        await init_max_memberships(db)
         await init_user_memory_db(db)
         admin_emails = sorted(_admin_email_set())
         if admin_emails:

@@ -46,6 +46,9 @@ async def _is_rag_pro_user(db: aiosqlite.Connection, current_user: Optional[Dict
 async def _rag_account_plan(db: aiosqlite.Connection, current_user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if _is_admin_user(current_user):
         return {"plan": "max", "plan_label": "Max", "points_limit": None, "unlimited": True}
+    from services.max_membership import has_max_membership
+    if await has_max_membership(db, str((current_user or {}).get("id") or "")):
+        return {"plan": "max", "plan_label": "Max", "points_limit": None, "unlimited": True}
     if await _is_rag_pro_user(db, current_user):
         return {"plan": "pro", "plan_label": "Pro", "points_limit": _RAG_PRO_DAILY_POINTS, "unlimited": False}
     return {"plan": "free", "plan_label": "Free", "points_limit": _RAG_FREE_DAILY_POINTS, "unlimited": False}
