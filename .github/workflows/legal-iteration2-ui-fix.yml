@@ -1,0 +1,43 @@
+name: Correct legal UI export boundary
+on:
+  push:
+    branches: ['fix/legal-audit-foundation-20260925']
+    paths: ['.github/workflows/legal-iteration2-ui-fix.yml']
+permissions:
+  contents: write
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.ref == 'refs/heads/fix/legal-audit-foundation-20260925'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Separate presentation labels from React component exports
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, subprocess
+          def blob(text):
+              value=text.encode()
+              return hashlib.sha1(b'blob '+str(len(value)).encode()+b'\0'+value).hexdigest()
+          p=Path('frontend/src/legal/ReviewContext.tsx'); s=p.read_text()
+          assert blob(s)=='e3827486f667310b2bb08031ea52bad6d9b2f540'
+          a=s.index('export function sourceKindLabel'); b=s.index('export function SourceDetails')
+          labels="import type { Source } from './types';\n\n"+s[a:b]
+          component=s[:a]+"import { sourceKindLabel } from './sourceLabels';\n\n"+s[b:]
+          pp=Path('frontend/src/legal/parts.tsx'); parts=pp.read_text()
+          assert blob(parts)=='7e4f35b245288c5430ee4b19bf6379a4508d9061'
+          parts=parts.replace("import { SourceDetails, sourceKindLabel } from './ReviewContext';", "import { SourceDetails } from './ReviewContext';\nimport { sourceKindLabel } from './sourceLabels';")
+          target=Path('frontend/src/legal/sourceLabels.ts')
+          assert not target.exists()
+          assert blob(component)=='162838dfc8995284cc09eead1a01c554d9d1fe98'
+          assert blob(parts)=='7ab62c3c737970a5c40391421032eae093624ef5'
+          assert blob(labels)=='fce1c76c76a258ec961655a8ea6a535e08f3667a'
+          p.write_text(component); pp.write_text(parts); target.write_text(labels)
+          subprocess.run(['git','add','--',str(p),str(pp),str(target)],check=True)
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(legal): separate source labels from React refresh boundary'
+          git push origin HEAD:refs/heads/fix/legal-audit-foundation-20260925
