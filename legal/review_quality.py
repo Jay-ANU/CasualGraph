@@ -209,7 +209,10 @@ def consolidate(batches: dict) -> tuple[list[dict], list[dict]]:
 def finding_status(f: dict) -> str:
     if f.get('verification_status') == 'rejected':
         return 'rejected'
-    if f.get('verification_status') != 'supported' or f.get('evidence_status') == 'unverified' or f.get('missing_facts'):
+    # A matched official-page excerpt is traceability, not proof that the
+    # provision was effective and applicable on the transaction date.
+    if (f.get('verification_status') != 'supported' or f.get('evidence_status') == 'unverified'
+            or f.get('missing_facts') or (f.get('kind') == 'legal' and f.get('version_status') != 'verified')):
         return 'unconfirmed'
     return 'supported'
 
