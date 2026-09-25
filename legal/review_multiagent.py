@@ -30,6 +30,12 @@ ARBITRATE = v2.VERIFY + '''\n你是汇总复核 Agent，不按投票数决定结
 同一段的不同替代文本不能同时接受；定义、付款条件、责任例外和解除机制冲突须标conflict。缺少某个审查任务时不能宣称全文无遗漏。
 复核通过仍是模型判断，法律版本及适用仍需人工确认。'''
 
+COUNTED_PHASES = frozenset({'intake', 'collaboration', 'arbitration'})
+
+def task_topics(task: dict) -> str:
+    """Rule titles without the specialist prefix, for progress notes only."""
+    return '、'.join(rule['title'].split(' / ', 1)[-1] for rule in task['rules'])
+
 def digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
@@ -67,13 +73,20 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
             raise ydata.GatewayError('contract_version_changed', '合同状态已变化，请新建审查。', 409)
         if p.get('profile', {}).get('external_processing_provider') != 'ydata':
             raise ydata.GatewayError('legacy_review_restart_required', '请重新确认外部处理授权。', 409)
-    def checkpoint(stage: str | None = None, phase: str | None = None) -> None:
+    def checkpoint(stage: str | None = None, phase: str | None = None,
+                   completed: int | None = None, total: int | None = None) -> None:
         guard()
         if stage is not None:
             p['stage'] = stage
         if phase is not None:
-            p['progress'] = {'phase': phase, 'completed': len(p.get('batches', {})),
-                             'total': len(p.get('agent_tasks', [])) + 1}
+            p['progress'] = {'phase': phase, 'completed': 0, 'total': 0}
+        progress = p.get('progress')
+        if isinstance(progress, dict):
+            if completed is not None:
+                progress.update(completed=completed, total=total or 0)
+            elif progress.get('phase') in COUNTED_PHASES:
+                # Counted on every checkpoint, so the step count moves while agents work.
+                progress.update(completed=len(p.get('batches', {})), total=len(p.get('agent_tasks', [])) + 1)
         p['findings'], p['coverage'] = quality.consolidate(p.get('batches', {}))
         for f in p['findings']:
             f['revision_allowed'] = False
@@ -144,11 +157,12 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 p['intake'] = facts
                 checkpoint()
         searches = p.setdefault('searches', {})
-        for rule in p['plan']:
-            if not rule.get('queries') or searches.get(rule['id'], {}).get('status') == 'retrieved':
+        law_rules = [rule for rule in p['plan'] if rule.get('queries')]
+        for index, rule in enumerate(law_rules):
+            if searches.get(rule['id'], {}).get('status') == 'retrieved':
                 continue
             with lock:
-                checkpoint('法律资料检索：' + rule['title'], 'retrieval')
+                checkpoint('法律资料检索：' + rule['title'], 'retrieval', index, len(law_rules))
             sources, warnings, attempts = {}, [], []
             for query_index, query in enumerate(rule['queries']):
                 with lock:
@@ -174,7 +188,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 return
             status(agent_id, 'running')
             errors = 0
-            for task in own_tasks:
+            for index, task in enumerate(own_tasks, 1):
                 if stopped.is_set():
                     break
                 group = task['rules']
@@ -190,10 +204,11 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                     reuse = prior and prior.get('input_hash') == input_hash and task['id'] not in p['batch_errors']
                 if not reuse:
                     try:
+                        status(agent_id, 'running', f'第 {index}/{len(own_tasks)} 项：{task_topics(task)}')
                         raw = generate(agent_id, v2.REVIEW + '\n本 Agent 的职责：' + task['instructions'] + '\n仅输出kind=' + task['kind'] + '的候选意见。', data)
                         checked = enforce_specialist_scope(quality.validate(raw, group, blocks, sources, selected_policies), task)
                         apply_material_gates(checked, p.get('transaction_brief'))
-                        status('critic', 'running')
+                        status('critic', 'running', f'复核{task["title"]}：{task_topics(task)}')
                         verified = generate('critic', v2.VERIFY, {**data, 'findings': checked['findings'], 'coverage': checked['coverage']})
                         quality.apply_verification(checked, verified)
                         checked.update(input_hash=input_hash, agent_id=agent_id, sources=sources)
@@ -224,7 +239,8 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                             a['completed'] = sum(t['id'] in p['batches'] for t in own_tasks)
                         elif a['id'] == 'critic':
                             a['completed'] = sum(t['id'] in p['batches'] for t in tasks)
-                    checkpoint()
+                    finished = sum(t['id'] in p['batches'] for t in tasks)
+                    checkpoint(f'多个审查 Agent 正在分别检查合同（已完成 {finished}/{len(tasks)} 项）')
             with lock:
                 done = sum(t['id'] in p['batches'] for t in own_tasks)
                 for t in own_tasks:
@@ -255,7 +271,9 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
             arbitration = p.get('arbitration')
         if not arbitration or arbitration.get('input_hash') != arbiter_hash:
             try:
-                status('arbiter', 'running')
+                with lock:
+                    checkpoint('正在全文协调：交叉检查各项结论与修改建议', 'arbitration')
+                status('arbiter', 'running', f'汇总 {len(findings)} 条候选意见，检查相互冲突')
                 extra = quality.validate(generate('arbiter', v2.REVIEW, data), [v2.CONSISTENCY], blocks, sources, policies)
                 apply_material_gates(extra, p.get('transaction_brief'))
                 for finding in extra['findings']:
