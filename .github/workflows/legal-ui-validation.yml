@@ -53,6 +53,7 @@ jobs:
           print('Verified exact UI source hashes for', len(outputs), 'files')
           PY
           python .ui-workbench/followup.py
+          python .ui-workbench/menu-focus.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
