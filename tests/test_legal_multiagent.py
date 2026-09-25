@@ -207,3 +207,23 @@ def test_frozen_sales_scene_reaches_all_review_steps(runtime, monkeypatch):
     covered = {c['rule_id'].split(':')[-1] for c in runtime['job']['payload']['coverage']}
     assert expected <= covered
     assert calls and all(d['profile']['scenario']['id'] == 'sales' for d in calls)
+
+def test_progress_moves_while_agents_work(runtime):
+    run(runtime)
+    snaps=[s['payload'] for s in runtime['snapshots']]
+    phases=[s['progress']['phase'] for s in snaps if s.get('progress')]
+    order=list(dict.fromkeys(phases))
+    assert order==['intake','retrieval','collaboration','arbitration','complete']
+    retrieval=[s['progress'] for s in snaps if s.get('progress',{}).get('phase')=='retrieval']
+    assert retrieval[0]['completed']==0 and all(r['total']==retrieval[0]['total']>0 for r in retrieval)
+    counts=[s['progress']['completed'] for s in snaps if s.get('progress',{}).get('phase')=='collaboration']
+    assert counts==sorted(counts) and counts[0]==0 and counts[-1]==4
+    assert any('已完成 4/4 项' in s['stage'] for s in snaps if s['progress']['phase']=='collaboration')
+    notes={(a['id'],a['note']) for s in snaps for a in s.get('collaboration',{}).get('agents',[]) if a['status']=='running' and a['note']}
+    assert ('legal','第 1/2 项：'+runtime['job']['payload']['agent_tasks'][0]['rules'][0]['title'].split(' / ')[-1]+'、'
+            +runtime['job']['payload']['agent_tasks'][0]['rules'][1]['title'].split(' / ')[-1]+'、'
+            +runtime['job']['payload']['agent_tasks'][0]['rules'][2]['title'].split(' / ')[-1]) in notes
+    assert any(i=='critic' and n.startswith('复核') for i,n in notes) and any(i=='arbiter' and n.startswith('汇总') for i,n in notes)
+    final=runtime['job']['payload']
+    assert runtime['job']['status']=='completed' and final['progress']=={'phase':'complete','completed':5,'total':5}
+    assert all(a['note']=='' for a in final['collaboration']['agents'] if a['id']!='policy')

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { CSSProperties } from 'react';
 import { Check, ChevronDown, ExternalLink } from 'lucide-react';
 import type { Block, Finding, Review } from './types';
 import { diffText } from './diff';
@@ -10,11 +11,11 @@ import { RichText } from './ui';
 import { ic } from './icon';
 
 type Props = {
-  finding: Finding; review: Review; block?: Block; busy: boolean; initiallyOpen: boolean;
+  finding: Finding; review: Review; block?: Block; busy: boolean; index: number; initiallyOpen: boolean;
   onLocate: (id: string) => void; onDecision: (value: string, text: string, legalBasis: boolean, manual: boolean) => void;
 };
 
-export function FindingCard({ finding: f, review: r, block, busy, initiallyOpen, onLocate, onDecision }: Props) {
+export function FindingCard({ finding: f, review: r, block, busy, index, initiallyOpen, onLocate, onDecision }: Props) {
   const decision = r.decisions[f.id];
   const [open, setOpen] = useState(initiallyOpen);
   const [text, setText] = useState(decision?.text || f.suggested_text);
@@ -41,7 +42,7 @@ export function FindingCard({ finding: f, review: r, block, busy, initiallyOpen,
   const accepted = decision?.decision === 'accepted';
   const sources = f.citations.map(c => ({ c, source: r.sources.find(x => x.id === c.source_id) })).filter(x => x.source);
   const policies = f.policy_ids.map(id => r.policies.find(x => x.id === id)).filter(Boolean);
-  return <article id={`legal-finding-${f.id}`} tabIndex={-1} data-block-id={f.block_id || undefined}
+  return <article id={`legal-finding-${f.id}`} tabIndex={-1} data-block-id={f.block_id || undefined} style={{ '--i': Math.min(index, 8) } as CSSProperties}
     className={`lv-finding tone-${tone} ${accepted ? 'is-accepted' : ''} ${decision?.decision === 'rejected' ? 'is-kept' : ''}`}>
     <div className="lv-finding-meta">
       <span className={`lv-risk tone-${tone}`}>{TONE_LABEL[tone]}</span>

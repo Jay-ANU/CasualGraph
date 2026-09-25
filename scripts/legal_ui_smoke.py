@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
 from urllib.parse import urlparse
 from playwright.sync_api import expect, sync_playwright
 
@@ -31,8 +32,18 @@ review={'id':'r1','contract_id':'c1','status':'completed','stage':'检查完成�
 review['collaboration']={'version':1,'max_parallel':3,'call_budget':40,'agents':[{'id':'legal','title':'法律风险审查','status':'completed','completed':2,'total':2,'note':''}]}
 policies=[]; calls=[]; allowed={'value':True,'plan':'max','unavailable':False}
 # The started review stays running until the test has checked the progress view.
-running={'value':False}
-def running_review():return {**review,'status':'running','stage':'正在审查付款与交付条款','findings':[],'progress':{'phase':'review','completed':1,'total':6}}
+running={'value':False,'step':0}
+def running_review():
+    # A multi-agent review mid-flight; the test advances `step` to show an agent finishing an item.
+    step=running['step']
+    agents=[{'id':'legal','title':'法律风险审查','status':'running','completed':step,'total':2,'note':f'第 {step+1}/2 项：付款与交付、验收'},
+            {'id':'commercial','title':'公司利益审查','status':'running','completed':1,'total':2,'note':'第 2/2 项：违约责任、争议解决'},
+            {'id':'policy','title':'公司规范审查','status':'not_applicable','completed':0,'total':0,'note':'本轮没有适用的公司规范，不自行生成公司制度。'},
+            {'id':'critic','title':'证据与覆盖复核','status':'running','completed':1+step,'total':4,'note':''},
+            {'id':'arbiter','title':'全文协调与冲突检查','status':'pending','completed':0,'total':1,'note':''}]
+    return {**review,'status':'running','stage':'多个审查 Agent 正在分别检查合同','findings':[],'created_at':time.time()-95,
+            'progress':{'phase':'collaboration','completed':1+step,'total':5},'metrics':{'model_calls':5+2*step},
+            'collaboration':{**review['collaboration'],'agents':agents}}
 headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,PATCH,DELETE,OPTIONS','Access-Control-Allow-Headers':'authorization,content-type'}
 def route_api(route):
     req=route.request; path=urlparse(req.url).path; method=req.method; calls.append((method,path))
@@ -108,12 +119,18 @@ def capture_failure():
         raise
 
 AXE_VIOLATIONS = []
+def settle(page):
+    """Wait for entrance animations; looping ones (live progress) are left running."""
+    page.evaluate("""() => Promise.all(document.getAnimations()
+        .filter(a => a.effect && a.effect.getComputedTiming().endTime !== Infinity)
+        .map(a => a.finished.catch(() => null)))""")
 def audit_layout(page, label):
     """Real DOM reflow and optional axe checks; synthetic data only."""
     widths = (320, 390, 768, 1024, 1440)
     for width in widths:
         page.set_viewport_size({'width': width, 'height': 960 if width >= 768 else 844})
         page.wait_for_timeout(80)
+        settle(page)
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 2'), (label, width)
         page.screenshot(path=str(OUT/f'{label}-{width}.png'), full_page=True)
     axe_path = os.getenv('AXE_CORE_PATH')
@@ -209,9 +226,21 @@ try:
         page.get_by_label('审查模型').select_option('glm-5.2');consent.check()
         page.screenshot(path=str(OUT/'legal-scenario-setup.png'),full_page=True)
         page.get_by_role('button',name='开始审查',exact=True).click()
-        # While the review runs, progress and the collaborating review dimensions are shown.
+        # While the review runs, the phase, each agent's current item, elapsed time and a live feed are shown.
         expect(page.get_by_role('heading',name='审查中')).to_be_visible()
-        expect(page.get_by_label('协作进度')).to_be_visible()
+        agents=page.get_by_label('协作进度')
+        expect(agents).to_be_visible()
+        expect(page.get_by_role('list',name='审查阶段').locator('[aria-current="step"]')).to_have_text('分项审查')
+        expect(page.get_by_role('progressbar',name='审查完成度')).to_have_attribute('aria-valuetext','分项审查 · 已完成 1/4 项')
+        expect(agents).to_contain_text('第 1/2 项：付款与交付、验收')
+        expect(page.get_by_label('审查进度').get_by_text(re.compile(r'^\d+:\d{2}$'))).to_be_visible()
+        feed=page.get_by_role('log',name='审查动态')
+        expect(feed).to_contain_text('已提交审查')
+        running['step']=1  # an agent finishes an item; the next poll turns that into feed entries
+        expect(feed).to_contain_text('法律风险审查完成第 1/2 项',timeout=8000)
+        expect(feed).to_contain_text('法律风险审查 · 第 2/2 项：付款与交付、验收')
+        audit_layout(page, 'legal-live')
+        page.set_viewport_size({'width':1440,'height':1000})
         running['value']=False  # the next 2.5 s poll returns the completed review
         page.get_by_role('heading',name='审查结果').wait_for(timeout=15000)
         expect(page.get_by_label('风险分布')).to_contain_text('审查意见')
@@ -294,6 +323,13 @@ try:
         expect(page.get_by_label('履行阶段')).to_have_value('未知')
         expect(page.get_by_label('交易金额',exact=True)).to_have_value('')
         assert not errors,errors
+        # Reduced motion: the desk renders fully with no animation left running.
+        still=browser.new_context(viewport={'width':1440,'height':900},reduced_motion='reduce')
+        still.add_init_script("localStorage.setItem('token','synthetic');localStorage.setItem('user',JSON.stringify({id:'u1',role:'user',plan:'max'}));")
+        quiet=still.new_page();quiet.route('http://127.0.0.1:8000/**',route_api)
+        quiet.goto('http://127.0.0.1:4173/legal');quiet.get_by_role('heading',name='合同风险审查').wait_for()
+        assert quiet.evaluate('document.getAnimations().length')==0
+        still.close()
         assert not AXE_VIOLATIONS, AXE_VIOLATIONS
         browser.close()
     print('PASS: actual built UI with synthetic APIs: Max gate, 20 scenarios, role scopes, frozen settings, policies, decisions, report, mobile.')

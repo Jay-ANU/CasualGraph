@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Search } from 'lucide-react';
 import type { Block, Finding, Review } from './types';
 import { findingStatus } from './findingStatus';
@@ -16,10 +17,12 @@ type Props = {
 export function FindingList(p: Props) {
   const open = p.findings.filter(f => findingStatus(f) !== 'rejected');
   const excluded = p.findings.filter(f => findingStatus(f) === 'rejected');
-  const card = (f: Finding, first: boolean) => <FindingCard key={`${p.review.id}-${f.id}-${p.review.decisions[f.id]?.version || 0}`} finding={f} review={p.review}
-    block={p.blocks.find(b => b.id === f.block_id)} busy={p.busy} initiallyOpen={first} onLocate={p.onLocate}
+  const [entering, setEntering] = useState(true);
+  useEffect(() => { const t = setTimeout(() => setEntering(false), 900); return () => clearTimeout(t); }, []);
+  const card = (f: Finding, index: number, first: boolean) => <FindingCard key={`${p.review.id}-${f.id}-${p.review.decisions[f.id]?.version || 0}`} finding={f} review={p.review}
+    block={p.blocks.find(b => b.id === f.block_id)} busy={p.busy} index={index} initiallyOpen={first} onLocate={p.onLocate}
     onDecision={(value, text, legalBasis, manual) => p.onDecision(f, value, text, legalBasis, manual)} />;
-  return <section className="lv-results" id="legal-results" aria-labelledby="legal-results-title">
+  return <section className={`lv-results ${entering ? 'is-entering' : ''} ${p.active ? 'is-live' : ''}`} id="legal-results" aria-labelledby="legal-results-title">
     <div className="lv-section-head">
       <h2 id="legal-results-title">审查意见</h2>
       <span>{p.findings.length}</span>
@@ -34,10 +37,10 @@ export function FindingList(p: Props) {
         <option value="accepted">已采纳</option><option value="draft">人工修订</option><option value="rejected">保留原文</option>
       </select>
     </div>
-    {open.map((f, i) => card(f, i === 0))}
+    {open.map((f, i) => card(f, i, i === 0))}
     {excluded.length > 0 && <details className="lv-disclosure lv-excluded">
       <summary>已排除（{excluded.length}）</summary>
-      {excluded.map(f => card(f, false))}
+      {excluded.map((f, i) => card(f, i, false))}
     </details>}
     {!p.findings.length && <div className="lv-empty-result">
       {!p.active && <NoMatchSheet />}

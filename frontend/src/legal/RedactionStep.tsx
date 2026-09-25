@@ -10,7 +10,7 @@ export function RedactionStep({ contract, busy, comparing, showingDocument, term
   onPreview: () => void; onConfirm: () => void;
 }) {
   const sample = contract.blocks.map(b => b.text.match(/【(?:补充)?脱敏\d+】/)?.[0]).find(Boolean) || '【脱敏1】';
-  return <section className="lv-stage" aria-labelledby="legal-redaction-title">
+  return <section className="lv-stage lv-enter" aria-labelledby="legal-redaction-title">
     <div className="lv-stage-head">
       <h2 id="legal-redaction-title">脱敏确认</h2>
       <div className="lv-inline-actions">

@@ -1,13 +1,15 @@
 import type React from 'react';
 import { ArrowLeft, BookOpen, FileText, LogOut, Plus, Search, X } from 'lucide-react';
 import type { ContractSummary, Matter, User, Workspace } from './types';
-import { CONTRACT_STATUS, fileTitle, formatDate } from './labels';
+import { CONTRACT_STATUS, REVIEW_STATUS, fileTitle, formatDate } from './labels';
 import { ic } from './icon';
 
 type Props = {
   open: boolean; busy: boolean; loading: boolean; tab: 'review' | 'policies';
   user: User | null; matters: Matter[]; workspace: Workspace | null;
   contracts: ContractSummary[]; currentId?: string; policyCount: number;
+  /** The open contract's review while it is queued or running. */
+  activeReview?: { contractId: string; status: string };
   query: string; onQuery: (value: string) => void;
   onNew: () => void; onTab: (tab: 'review' | 'policies') => void; onOpen: (id: string) => void;
   onMatter: (id: string) => void; onClose: () => void; onLogout: () => void;
@@ -37,9 +39,11 @@ export function Sidebar(p: Props) {
     <div className="lv-history-head">审查记录</div>
     <label className="lv-search"><Search {...ic} size={15} /><input aria-label="查找历史合同" placeholder="搜索合同" value={p.query} onChange={e => p.onQuery(e.target.value)} /></label>
     <div className="lv-history">
-      {matches.map(item => <button key={item.id} disabled={p.busy} className={p.currentId === item.id ? 'selected' : ''} aria-current={p.currentId === item.id ? 'true' : undefined} onClick={() => p.onOpen(item.id)}>
+      {matches.map((item, i) => <button key={item.id} style={{ '--i': i } as React.CSSProperties} disabled={p.busy} className={p.currentId === item.id ? 'selected' : ''} aria-current={p.currentId === item.id ? 'true' : undefined} onClick={() => p.onOpen(item.id)}>
         <span className="lv-history-name">{fileTitle(item.name)}</span>
-        <span className="lv-history-meta"><i className={`lv-dot is-${item.status}`} aria-hidden="true" />{CONTRACT_STATUS[item.status] || item.status}{formatDate(item.created_at) && ` · ${formatDate(item.created_at)}`}</span>
+        <span className="lv-history-meta">{p.activeReview?.contractId === item.id
+          ? <><i className={`lv-dot is-${p.activeReview.status}`} aria-hidden="true" />{REVIEW_STATUS[p.activeReview.status]}</>
+          : <><i className={`lv-dot is-${item.status}`} aria-hidden="true" />{CONTRACT_STATUS[item.status] || item.status}</>}{formatDate(item.created_at) && ` · ${formatDate(item.created_at)}`}</span>
       </button>)}
       {!p.loading && !p.contracts.length && <p>暂无记录</p>}
       {p.contracts.length > 0 && !matches.length && <p role="status">无匹配结果</p>}
