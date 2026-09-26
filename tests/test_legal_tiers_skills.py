@@ -206,3 +206,39 @@ def test_importer_brings_external_skills_in_as_inert_drafts(tmp_path):
     assert skill['id'] == 'nda-review' and skill['status'] == 'draft' and skill['source']['license'] == 'MIT'
     assert registry.select({'scenario': {'id': 'nda'}}, [{'id': 'p1', 'text': 'confidential information'}], 'standard', root=skills_root) == []
     registry.reload()
+
+
+def test_rate_limits_back_off_up_to_three_times_without_losing_the_truncation_retry(runtime, monkeypatch):
+    monkeypatch.setattr(v2, 'RATE_LIMIT_PAUSE', 0.01)
+    monkeypatch.setattr(v2.random, 'uniform', lambda a, b: 0.0)
+    failures = {'limited': 0, 'truncated': 0}
+
+    def model(system, data):
+        if system.startswith(v2.REVIEW) and data['rules'][0]['id'] != 'whole_contract':
+            if failures['limited'] < 3:
+                failures['limited'] += 1
+                raise ydata.GatewayError('ydata_rate_limited', '限流', 429, retry_after=0.01)
+            if failures['truncated'] < 1:
+                failures['truncated'] += 1
+                raise ydata.GatewayError('ydata_truncated', '截断', 502)
+        return fake_model(system, data)
+    run_tier(runtime, 'ultra_fast', model=model, retrieve=no_search)
+    assert failures == {'limited': 3, 'truncated': 1}
+    assert runtime['status'] == 'completed' and not runtime['payload']['batch_errors']
+
+
+def test_a_fourth_rate_limit_pauses_the_review_and_keeps_it_retryable(runtime, monkeypatch):
+    monkeypatch.setattr(v2, 'RATE_LIMIT_PAUSE', 0.01)
+    monkeypatch.setattr(v2.random, 'uniform', lambda a, b: 0.0)
+
+    def model(system, data):
+        if data['rules'][0]['id'] == 'whole_contract':
+            raise ydata.GatewayError('ydata_rate_limited', '限流', 429)
+        return fake_model(system, data)
+    run_tier(runtime, 'ultra_fast', model=model, retrieve=no_search)
+    assert runtime['payload']['retryable'] and 'consistency' in runtime['payload']['batch_errors']
+
+
+def test_retry_after_header_is_read_in_seconds_and_capped():
+    assert ydata._retry_after('7') == 7.0 and ydata._retry_after('600') == 60.0
+    assert ydata._retry_after(None) is None and ydata._retry_after('Wed, 21 Oct 2026 07:28:00 GMT') is None

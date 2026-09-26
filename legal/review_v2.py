@@ -23,6 +23,7 @@ from copy import deepcopy
 import hashlib
 import json
 import os
+import random
 import threading
 import time
 from typing import Callable
@@ -35,14 +36,16 @@ ENGINE_VERSION = 2
 TIERS = skill_registry.TIERS
 MAX_CALLS_PER_ATTEMPT = 32
 MAX_INPUT_CHARACTERS = 125000
-RATE_LIMIT_PAUSE = 3.0
+RATE_LIMIT_PAUSE = 2.0
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_MAX_WAIT = 30.0
 
 
 def _concurrency() -> int:
     try:
-        return max(1, min(12, int(os.getenv('LEGAL_MODEL_CONCURRENCY', '6'))))
+        return max(1, min(12, int(os.getenv('LEGAL_MODEL_CONCURRENCY', '12'))))
     except ValueError:
-        return 6
+        return 12
 
 
 # Process-wide bound on simultaneous gateway calls, shared by every running review.
@@ -195,8 +198,16 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                    'agent_context': {'id': agent_id, 'collaboration_version': agents.COLLABORATION_VERSION if team else None}}
         if len(system) + len(json.dumps(request, ensure_ascii=False)) > MAX_INPUT_CHARACTERS:
             raise ydata.GatewayError('legal_context_budget', '本步骤上下文超过预算；未静默截断合同，请缩小审查范围。', 422)
-        prompt, retried = system, False
+        prompt, briefer, limited, wait = system, False, 0, 0.0
         while True:
+            if wait:
+                # Back off without holding a slot, so other calls keep running meanwhile.
+                end = time.monotonic() + wait
+                while time.monotonic() < end:
+                    if stopped.is_set():
+                        raise ydata.GatewayError('team_paused', '审查调用已暂停，成功步骤已保留，可重试。', 429)
+                    time.sleep(min(.5, max(0.0, end - time.monotonic())))
+                wait = 0.0
             while not MODEL_SLOTS.acquire(timeout=.5):
                 if stopped.is_set():
                     raise ydata.GatewayError('team_paused', '审查调用已暂停，成功步骤已保留，可重试。', 429)
@@ -218,12 +229,13 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 try:
                     result = model(prompt, request)
                 except ydata.GatewayError as exc:
-                    if not retried and exc.code == 'ydata_truncated':
-                        prompt, retried = system + BRIEFER, True
+                    if not briefer and exc.code == 'ydata_truncated':
+                        prompt, briefer = system + BRIEFER, True
                         continue
-                    if not retried and exc.code == 'ydata_rate_limited':
-                        retried = True
-                        time.sleep(RATE_LIMIT_PAUSE)
+                    if limited < RATE_LIMIT_RETRIES and exc.code == 'ydata_rate_limited':
+                        limited += 1
+                        backoff = getattr(exc, 'retry_after', None) or RATE_LIMIT_PAUSE * 2 ** (limited - 1)
+                        wait = min(RATE_LIMIT_MAX_WAIT, backoff) + random.uniform(0, 1)
                         continue
                     raise
                 guarded()

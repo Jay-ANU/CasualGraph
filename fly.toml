@@ -16,6 +16,8 @@ primary_region = "syd"
   CAUSALGRAPH_DB_PATH = "/data/causalgraph.db"
   NOTIFICATIONS_DB_PATH = "/data/notifications.db"
   INGESTION_JOB_MAX_WORKERS = "1"
+  # Simultaneous contract-review model calls per machine (1-12), shared by all running reviews.
+  LEGAL_MODEL_CONCURRENCY = "12"
 
 [mounts]
   source = "casualgraph_data"
