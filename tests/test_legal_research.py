@@ -160,3 +160,21 @@ def test_followup_legal_answer_with_model_cited_law_is_kept_but_marked():
            'law_refs': [{'law': '中华人民共和国民法典', 'article': '第五百零六条', 'point': '故意或重大过失造成财产损失的免责条款无效'}], 'uncertain': False}
     result = validate_answer(raw, blocks, [])
     assert result['answer'] == raw['answer'] and result['uncertain'] is True and result['law_refs'][0]['article'] == '第五百零六条'
+
+
+def test_unrelated_search_answer_is_retried_and_official_pages_are_not_crowded_out(monkeypatch):
+    monkeypatch.setenv('LEGAL_SEARCH_PROVIDER', 'bing_rss')
+    monkeypatch.setattr(law, '_public_host', lambda _: None)
+    junk = ''.join(f'<item><title>t</title><link>https://shop{i}.example.com/</link></item>' for i in range(6))
+    searches = []
+    def respond(request):
+        if request.url.host == 'www.bing.com':
+            searches.append(request.url.params['q'])
+            items = junk if len(searches) == 1 else junk + '<item><title>法</title><link>http://www.npc.gov.cn/law</link></item>'
+            return httpx.Response(200, text=f'<rss><channel>{items}</channel></rss>')
+        return httpx.Response(200, headers={'content-type': 'text/html'}, text='<p>' + CODE.replace('\n', '</p><p>') + '</p>')
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = law.retrieve_law('反不正当竞争法 商业秘密 保密义务', ['第五百八十五条'], client=client)
+    assert len(searches) == 2 and searches[1].startswith('反不正当竞争法 商业秘密 (site:')
+    assert result['status'] == 'retrieved' and result['sources'][0]['url'] == 'https://www.npc.gov.cn/law'
+    assert result['sources'][0]['discovery'] == 'search'

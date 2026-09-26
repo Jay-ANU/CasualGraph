@@ -260,9 +260,12 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
     failures = (httpx.HTTPError, OSError, ValueError, ElementTree.ParseError, LawRetrievalError)
 
     def fetch_candidates(rows: list, method: str) -> None:
-        for url, title in rows[:CANDIDATES_PER_QUERY]:
-            url = upgrade_scheme(url) if isinstance(url, str) else url
-            if not isinstance(url, str) or not official_url(url) or url in seen:
+        # Admissible pages first: unrelated results must not crowd official ones out of the budget.
+        # The national law database serves a script-only shell, so it is tried last.
+        admitted = [(upgrade_scheme(url), title) for url, title in rows if isinstance(url, str) and official_url(upgrade_scheme(url))]
+        admitted.sort(key=lambda row: urlparse(row[0]).hostname == 'flk.npc.gov.cn')
+        for url, title in admitted[:CANDIDATES_PER_QUERY]:
+            if url in seen:
                 continue
             seen.add(url)
             trace = {}
@@ -299,6 +302,13 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
         except failures:
             discovery_failed = True
             warnings.append('公开搜索未完成，不能将搜索失败解释为没有法律风险。')
+        if not discovery_failed and status['provider'] == 'bing_rss' and not any(
+                isinstance(url, str) and official_url(upgrade_scheme(url)) for url, _ in candidates):
+            # The RSS endpoint intermittently answers with unrelated pages; retry once with the core terms.
+            try:
+                candidates = discover(client, ' '.join(query.split()[:2]) or query, status['provider'])
+            except failures:
+                candidates = []
         fetch_candidates(candidates, 'search')
         if not sources and status['direct_official_fallback']:
             direct = [(url, title) for terms, url, title in DIRECT_ORIGINS if any(t in query for t in terms)][:2]
