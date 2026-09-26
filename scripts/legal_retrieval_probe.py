@@ -68,15 +68,51 @@ def search_variants() -> list[dict]:
     return report
 
 
+def fetch_variants() -> list[dict]:
+    """How official statute pages answer the production client, one hop at a time. Diagnostic only."""
+    import httpx
+    browser = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
+    pages = ['https://www.npc.gov.cn/npc/c2/c30834/202108/t20210820_313088.html',
+             'http://www.npc.gov.cn/npc/c2/c30834/202108/t20210820_313088.html',
+             'https://www.npc.gov.cn/c2/c30834/202108/t20210823_313123.html',
+             'https://www.court.gov.cn/zixun/xiangqing/233181.html']
+    report = []
+    for url in pages:
+        for agent in ('production', 'browser'):
+            row = {'url': url, 'agent': agent}
+            try:
+                with law._client() as client:
+                    if agent == 'browser':
+                        client.headers['User-Agent'] = browser
+                    response = client.get(url)
+                row.update(status=response.status_code, location=response.headers.get('location'),
+                           content_type=response.headers.get('content-type'), bytes=len(response.content),
+                           text_chars=len(law.html_text(response.text)) if 'html' in response.headers.get('content-type', '') else None)
+                trace = {}
+                try:
+                    with law._client() as client:
+                        if agent == 'browser':
+                            client.headers['User-Agent'] = browser
+                        body = law.html_text(law._read(client, 'GET', law.upgrade_scheme(url), official=True, trace=trace))
+                    row['read'] = f'ok {len(body)} chars'
+                except Exception as exc:  # diagnostic only
+                    row['read'] = law.failure_reason(exc, trace)
+            except Exception as exc:  # diagnostic only
+                row['error'] = f'{type(exc).__name__}: {exc}'[:200]
+            report.append(row)
+    return report
+
+
 summary = {'provider': law.provider_status(), 'queries': []}
 for query, keywords in QUERIES:
     result = law.retrieve_law(query, keywords)
     summary['queries'].append({
         'query': query, 'status': result['status'], 'discovery_status': result.get('discovery_status'),
-        'candidates': candidates(query), 'warnings': result['warnings'],
+        'candidates': candidates(query), 'warnings': result['warnings'], 'rejected': result.get('rejected'),
         'sources': [{k: s.get(k) for k in ('url', 'title', 'source_kind', 'discovery')} | {'excerpt_chars': len(s['text'])}
                     for s in result['sources']]})
 summary['search_variants'] = search_variants()
+summary['fetch_variants'] = fetch_variants()
 Path('legal-retrieval-probe.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2))
 print(json.dumps(summary, ensure_ascii=False, indent=2))
 found = sum(bool(q['sources']) for q in summary['queries'])

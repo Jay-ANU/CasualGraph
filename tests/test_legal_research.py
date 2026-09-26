@@ -178,3 +178,26 @@ def test_unrelated_search_answer_is_retried_and_official_pages_are_not_crowded_o
     assert len(searches) == 2 and searches[1].startswith('反不正当竞争法 商业秘密 (site:')
     assert result['status'] == 'retrieved' and result['sources'][0]['url'] == 'https://www.npc.gov.cn/law'
     assert result['sources'][0]['discovery'] == 'search'
+
+
+def test_each_unused_candidate_records_why(monkeypatch):
+    monkeypatch.setenv('LEGAL_SEARCH_PROVIDER', 'bing_rss')
+    monkeypatch.setenv('LEGAL_DIRECT_OFFICIAL_FALLBACK', 'false')
+    monkeypatch.setattr(law, '_public_host', lambda _: None)
+    links = ['https://www.npc.gov.cn/downgrade', 'https://www.gov.cn/forbidden', 'https://www.moj.gov.cn/pdf', 'https://www.cac.gov.cn/unrelated']
+    items = ''.join(f'<item><title>t</title><link>{link}</link></item>' for link in links)
+    def respond(request):
+        if request.url.host == 'www.bing.com':
+            return httpx.Response(200, text=f'<rss><channel>{items}</channel></rss>')
+        if request.url.path == '/downgrade':
+            return httpx.Response(302, headers={'location': 'http://www.npc.gov.cn/downgrade'})
+        if request.url.path == '/forbidden':
+            return httpx.Response(403)
+        if request.url.path == '/pdf':
+            return httpx.Response(200, headers={'content-type': 'application/pdf'}, content=b'%PDF')
+        return httpx.Response(200, headers={'content-type': 'text/html'}, text='<p>' + '无关内容。' * 40 + '</p>')
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = law.retrieve_law('民法典 违约金', ['第五百八十五条'], client=client)
+    assert result['status'] == 'no_verified_source'
+    assert [r['reason'] for r in result['rejected']] == ['non_official_source via http://www.npc.gov.cn', 'http_403',
+                                                          'unsupported_source_format', 'no_matching_provision']

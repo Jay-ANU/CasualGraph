@@ -39,6 +39,19 @@ class LawRetrievalError(RuntimeError):
     pass
 
 
+def failure_reason(exc: Exception, trace: dict | None = None) -> str:
+    """A short, content-free reason a candidate page was not used, for diagnostics."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        reason = f'http_{exc.response.status_code}'
+    elif isinstance(exc, httpx.TimeoutException):
+        reason = 'timeout'
+    elif isinstance(exc, LawRetrievalError):
+        reason = str(exc)
+    else:
+        reason = type(exc).__name__
+    return reason + (' via ' + trace['redirect'] if trace and trace.get('redirect') else '')
+
+
 def upgrade_scheme(url: str) -> str:
     """Search engines often index government pages as http; fetch the same page over https."""
     try:
@@ -78,6 +91,9 @@ def _read(client: httpx.Client, method: str, url: str, *, official: bool = False
         with client.stream(method, url, **kwargs) as response:
             if response.is_redirect:
                 url = str(response.url.join(response.headers.get('location', '')))
+                if trace is not None:
+                    target = urlparse(url)
+                    trace['redirect'] = f'{target.scheme}://{target.hostname}'
                 kwargs = {}
                 method = 'GET'
                 continue
@@ -255,7 +271,7 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
     own = client is None
     cache = own if cache is None else cache
     client = client or _client()
-    sources, warnings, candidates, seen = [], [], [], set()
+    sources, warnings, candidates, seen, rejected = [], [], [], set(), []
     discovery_failed = False
     failures = (httpx.HTTPError, OSError, ValueError, ElementTree.ParseError, LawRetrievalError)
 
@@ -280,10 +296,12 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
                     if cache:
                         _remember((url, resolved), resolved, raw, body)
                 if len(body) < 100:
+                    rejected.append({'url': url, 'reason': 'empty_page'})
                     continue
                 quote = excerpt(body, keywords)
                 if not quote:
                     warnings.append('有来源没有预算内完整的相关条文，未截断条文作为依据。')
+                    rejected.append({'url': url, 'reason': 'no_matching_provision'})
                     continue
                 metadata = screen_page(raw, body, title if isinstance(title, str) else '')
                 sources.append({'id': 'law_' + hashlib.sha256((resolved + '\n' + quote).encode()).hexdigest()[:16],
@@ -292,8 +310,9 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
                                 'content_hash': hashlib.sha256(body.encode()).hexdigest(),
                                 'source_status': 'official_page_fetched', 'is_excerpt': quote != body,
                                 'discovery': method, 'query': query})
-            except failures:
+            except failures as exc:
                 warnings.append('有候选来源无法读取或未通过来源检查。')
+                rejected.append({'url': url, 'reason': failure_reason(exc, trace)})
             if len(sources) >= 2:
                 break
     try:
@@ -319,7 +338,7 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
                 'status': 'retrieved' if sources else ('unavailable' if discovery_failed else 'no_verified_source'),
                 'warnings': list(dict.fromkeys(warnings)),
                 'discovery_status': 'unavailable' if discovery_failed else 'completed',
-                'candidates_found': len(candidates)}
+                'candidates_found': len(candidates), 'rejected': rejected[:8]}
     finally:
         if own:
             client.close()

@@ -104,7 +104,8 @@ def run_retrieval(issues: list[dict], retrieve, authorize, *, deadline: float = 
         for query in issue['queries']:
             result = retrieve(query, _keywords(issue))
             provider = result.get('provider', provider)
-            attempts.append({'query': query, 'status': result.get('status', 'unavailable')})
+            attempts.append({'query': query, 'status': result.get('status', 'unavailable'),
+                             'rejected': result.get('rejected', [])[:5]})
             warnings.extend(result.get('warnings', []))
             for source in result.get('sources', []):
                 sources[source['id']] = {**source, 'laws': [law['name'] for law in issue['laws']]}
