@@ -29,9 +29,18 @@ _PLACEHOLDER_KEYS = {'...', 'your-api-key', 'replace-me', 'bearer ...'}
 
 
 class GatewayError(RuntimeError):
-    def __init__(self, code: str, message: str, status_code: int = 503):
+    def __init__(self, code: str, message: str, status_code: int = 503, retry_after: float | None = None):
         super().__init__(message)
-        self.code, self.message, self.status_code = code, message, status_code
+        self.code, self.message, self.status_code, self.retry_after = code, message, status_code, retry_after
+
+
+def _retry_after(value: str | None) -> float | None:
+    """Seconds from a Retry-After header (delay form only), capped at one minute."""
+    try:
+        seconds = float(value or '')
+    except ValueError:
+        return None
+    return min(60.0, seconds) if seconds >= 0 else None
 
 
 def _read_key(env_name: str) -> str | None:
@@ -133,7 +142,8 @@ def _request(client: httpx.Client, method: str, path: str, key: str, **kwargs) -
                 if status in (401, 403):
                     raise GatewayError('ydata_unauthorized', 'YData 拒绝访问，请管理员检查密钥及模型授权。')
                 if status == 429:
-                    raise GatewayError('ydata_rate_limited', 'YData 请求限额已达到，请稍后重试。', 429)
+                    raise GatewayError('ydata_rate_limited', 'YData 请求限额已达到，请稍后重试。', 429,
+                                       retry_after=_retry_after(response.headers.get('retry-after')))
                 raise GatewayError('ydata_request_failed', 'YData 请求失败，请检查网关及所选模型的聊天接口支持。', 502)
             parts, size = [], 0
             for part in response.iter_bytes():
