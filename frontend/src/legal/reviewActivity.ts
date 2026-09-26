@@ -1,5 +1,5 @@
 import type { Collaboration, Review } from './types';
-import { findingTone, TONE_LABEL } from './labels';
+import { findingTone, tierOf, TONE_LABEL } from './labels';
 
 /**
  * Live progress for a running review, derived only from fields the review API
@@ -17,6 +17,14 @@ export const PHASE_STEPS: { id: 'intake' | 'retrieval' | 'review' | 'coordinatio
   { id: 'review', label: '分项审查' },
   { id: 'coordination', label: '汇总复核' },
 ];
+
+/** The steps a review actually runs: faster tiers skip research and the final pass. */
+export function phaseSteps(r: Review): typeof PHASE_STEPS {
+  const tier = tierOf(r);
+  if (tier === 'ultra_fast') return PHASE_STEPS.filter(s => s.id === 'intake' || s.id === 'review');
+  if (tier === 'fast') return PHASE_STEPS.filter(s => s.id !== 'retrieval').map(s => s.id === 'coordination' ? { ...s, label: '逐项复核' } : s);
+  return PHASE_STEPS;
+}
 
 const SUPPORT_AGENTS = new Set(['critic', 'arbiter']);
 const clamp = (n: number, low = 0, high = 1) => Math.min(high, Math.max(low, Number.isFinite(n) ? n : 0));
@@ -70,7 +78,7 @@ export function reviewPercent(r: Review): number {
 export function phaseDetail(r: Review): string {
   const phase = reviewPhase(r);
   if (phase === 'queued') return '等待开始';
-  if (phase === 'intake') return '读取合同，规划法律检索';
+  if (phase === 'intake') return ['ultra_fast', 'fast'].includes(tierOf(r)) ? '读取合同' : '读取合同，规划法律检索';
   if (phase === 'retrieval') return `法规检索 · 已检索 ${r.retrieval?.length || 0} 项`;
   if (r.collaboration) {
     const team = specialists(r);

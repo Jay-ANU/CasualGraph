@@ -2,13 +2,13 @@ import React from 'react';
 import { AlertCircle, ArrowRight, Check, ChevronDown, FileText, Home, Menu, PanelRight, SlidersHorizontal, X } from 'lucide-react';
 import { apiFetch, jsonRequest, readApiError, withAuth } from '../api/client';
 import { apiBase } from '../api/config';
-import type { Answer, Api, Block, Capabilities, Catalog, Contract, ContractSummary, Decision, Finding, Matter, Policy, Review, User, Workspace } from './types';
+import type { Answer, Api, Block, Capabilities, Catalog, Contract, ContractSummary, Decision, Finding, Matter, Policy, Review, ReviewTier, User, Workspace } from './types';
 import './LegalDesk.css';
 import { findingCounts, findingStatus } from './findingStatus';
 import { pendingDecisions, uploadIssue, visibleFindings } from './deskLogic';
 import { emptyTransactionInputs, transactionAmount } from './transactionInput';
 import { changeScenario, currentScenario, scenarioRoleValid } from './scenarioInput';
-import { CONTRACT_STATUS, STEPS, fileTitle, reviewStatusLabel } from './labels';
+import { CONTRACT_STATUS, STEPS, TIER_LABEL, fileTitle, reviewStatusLabel, tierOf } from './labels';
 import { ReviewReport } from './report';
 import { ConfirmDialog, CountUp, DrawnCheck } from './ui';
 import { ic } from './icon';
@@ -36,7 +36,7 @@ type State = {
   terms: string; preview: Block[] | null; selectedBlock: string | null; filter: string; statusFilter: string;
   historyQuery: string; question: string; answers: Answer[]; questionBusy: boolean; questionConsent: boolean;
   ourPartyBlock: string; ourPartyQuote: string; excludedTerms: string; originalBlocks: Block[] | null;
-  notice: string; denied: boolean; reviewMode: 'standard' | 'multi_agent';
+  notice: string; denied: boolean; reviewTier: ReviewTier;
   performanceStage: string; attachmentsStatus: string; businessPriority: string; dealValue: string; currency: string;
   exportFormat: 'docx' | 'txt' | null; pendingFile: File | null; confirmingRedaction: boolean; archivePolicy: Policy | null; resultQuery: string; documentQuery: string;
 };
@@ -51,7 +51,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     showDocument: false, setupOpen: true, ourRole: '', contractType: '采购合同', date: '', instructions: '', consent: false, modelId: '',
     terms: '', preview: null, selectedBlock: null, filter: 'all', statusFilter: 'all', historyQuery: '', question: '', answers: [],
     ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '', originalBlocks: null,
-    questionBusy: false, questionConsent: false, notice: '', denied: false, reviewMode: 'multi_agent',
+    questionBusy: false, questionConsent: false, notice: '', denied: false, reviewTier: 'standard',
     performanceStage: '未知', attachmentsStatus: '未知', businessPriority: '综合审查', dealValue: '', currency: 'CNY',
     exportFormat: null, pendingFile: null, confirmingRedaction: false, archivePolicy: null, resultQuery: '', documentQuery: '' };
   private live = false;
@@ -169,7 +169,7 @@ export default class LegalDesk extends React.Component<Props, State> {
       this.setState({ review, setupOpen: false, ourRole: review.profile?.our_role || '',
         ourPartyBlock: review.profile?.our_party?.block_id || '', ourPartyQuote: review.profile?.our_party?.quote || '',
         contractType: review.profile?.contract_type || '采购合同', instructions: review.profile?.instructions || '',
-        reviewMode: review.profile?.review_mode || 'standard', date: review.profile?.transaction_date || '',
+        reviewTier: tierOf(review), date: review.profile?.transaction_date || '',
         performanceStage: context?.performance_stage || '未知', attachmentsStatus: context?.attachments_status || '未知',
         businessPriority: context?.business_priority || '综合审查', dealValue: context?.deal_value == null ? '' : String(context.deal_value),
         currency: context?.currency || 'CNY' });
@@ -236,7 +236,7 @@ export default class LegalDesk extends React.Component<Props, State> {
       our_party: { block_id: s.ourPartyBlock, quote: s.ourPartyQuote }, our_role: s.ourRole, contract_type: s.contractType, jurisdiction: '中国大陆', transaction_date: s.date || null,
       transaction_context: { performance_stage: s.performanceStage, attachments_status: s.attachmentsStatus, business_priority: s.businessPriority,
         deal_value: amount.value, currency: s.currency },
-      instructions: s.instructions, fresh_review: Boolean(s.review), review_mode: s.reviewMode,
+      instructions: s.instructions, fresh_review: Boolean(s.review), review_tier: s.reviewTier, review_mode: s.reviewTier === 'deep' ? 'multi_agent' : 'standard',
     }));
     if (this.live) this.setState({ review, setupOpen: false, answers: [], question: '', questionConsent: false }, () => document.getElementById('legal-main')?.scrollTo({ top: 0, behavior: motion() }));
   };
@@ -346,7 +346,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     const canStart = !(s.busy || active || s.modelsLoading || !s.consent || !s.modelId || !scenarioValid || !partyValid || !amountValid || c.redaction_version !== 2 || s.caps?.model_configured === false);
     const values: SetupValues = { contractType: s.contractType, ourRole: s.ourRole, ourPartyBlock: s.ourPartyBlock, ourPartyQuote: s.ourPartyQuote,
       instructions: s.instructions, performanceStage: s.performanceStage, attachmentsStatus: s.attachmentsStatus, businessPriority: s.businessPriority,
-      dealValue: s.dealValue, currency: s.currency, date: s.date, reviewMode: s.reviewMode, modelId: s.modelId, consent: s.consent };
+      dealValue: s.dealValue, currency: s.currency, date: s.date, reviewTier: s.reviewTier, modelId: s.modelId, consent: s.consent };
     const setup = <SetupForm contract={c} caps={s.caps} catalog={s.catalog} values={values} hasReview={Boolean(r)} busy={s.busy} locked={active}
       modelsLoading={s.modelsLoading} canStart={canStart} startIssue={startIssue}
       onType={this.changeType} onChange={this.changeSetup} onConsent={consent => this.setState({ consent })}
@@ -388,7 +388,7 @@ export default class LegalDesk extends React.Component<Props, State> {
               <section className="lv-settings" aria-label="审查设置">
                 <button className="lv-settings-toggle" aria-expanded={s.setupOpen} aria-controls="legal-setup-body" onClick={() => this.setState({ setupOpen: !s.setupOpen })}>
                   <SlidersHorizontal {...ic} /><span className="lv-settings-title">审查设置</span>
-                  <span className="lv-settings-summary">{[s.contractType, s.ourRole && `我方：${s.ourRole}`, s.reviewMode === 'multi_agent' ? '深度审查' : '标准审查', r.profile?.model?.id || s.modelId].filter(Boolean).join(' · ')}</span>
+                  <span className="lv-settings-summary">{[s.contractType, s.ourRole && `我方：${s.ourRole}`, TIER_LABEL[s.reviewTier], r.profile?.model?.id || s.modelId].filter(Boolean).join(' · ')}</span>
                   <ChevronDown {...ic} />
                 </button>
                 {s.setupOpen && <div className="lv-settings-body" id="legal-setup-body">{setup}</div>}

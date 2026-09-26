@@ -1,4 +1,4 @@
-import type { Finding, Review } from './types';
+import type { Finding, Profile, Review, ReviewTier } from './types';
 import { findingStatus } from './findingStatus';
 
 /** Contract-level status shown in “我的合同”. */
@@ -27,9 +27,31 @@ export function reviewOutcome(r: Pick<Review, 'status' | 'batch_errors' | 'retri
 
 export const OUTCOME_LABEL: Record<ReviewOutcome, string> = { failed_steps: '部分完成', evidence_gaps: '依据待核对', to_confirm: '待确认' };
 
-export function reviewStatusLabel(r: Pick<Review, 'status' | 'batch_errors' | 'retrieval' | 'coverage'>): string {
+export function reviewStatusLabel(r: Pick<Review, 'status' | 'batch_errors' | 'retrieval' | 'coverage' | 'review_tier' | 'profile'>): string {
   const outcome = reviewOutcome(r);
+  if (!outcome && r.status === 'completed' && tierOf(r) === 'ultra_fast') return '未复核';
   return outcome ? OUTCOME_LABEL[outcome] : REVIEW_STATUS[r.status] || r.status;
+}
+
+/** Review tiers, fastest first, with what each one leaves out. */
+export const TIERS: { value: ReviewTier; title: string; note: string }[] = [
+  { value: 'ultra_fast', title: '极速', note: '一轮并行审查，直接给出意见和修改建议；不检索法规、不做独立复核，采用前请逐条确认。' },
+  { value: 'fast', title: '快速', note: '分组审查后逐项独立复核；不检索法规，不做全文交叉核对。' },
+  { value: 'standard', title: '标准', note: '分组审查与法规检索同时进行，逐项复核后核对各项修改能否同时采用。' },
+  { value: 'deep', title: '深度', note: '法律、商业与公司规范分别审查，再经独立复核与全文协调；耗时最长。' },
+];
+
+/** Tiers the backend offers; a backend from before tiers only runs standard and deep reviews. */
+export function availableTiers(caps: { review_tiers?: ReviewTier[] } | null) {
+  const offered: ReviewTier[] = caps?.review_tiers?.length ? caps.review_tiers : ['standard', 'deep'];
+  return TIERS.filter(t => offered.includes(t.value));
+}
+
+export const TIER_LABEL: Record<ReviewTier, string> = { ultra_fast: '极速审查', fast: '快速审查', standard: '标准审查', deep: '深度审查' };
+
+/** The tier a review ran at; reviews from before tiers keep their original mode. */
+export function tierOf(r?: { review_tier?: ReviewTier; profile?: Profile } | null): ReviewTier {
+  return r?.review_tier || r?.profile?.review_tier || (r?.profile?.review_mode === 'multi_agent' ? 'deep' : 'standard');
 }
 
 /** Legal issues the research plan searched for without obtaining official text. */

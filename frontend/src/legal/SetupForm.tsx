@@ -1,4 +1,5 @@
-import type { Capabilities, Catalog, Contract } from './types';
+import type { Capabilities, Catalog, Contract, ReviewTier } from './types';
+import { availableTiers, TIER_LABEL } from './labels';
 import { ScenarioPicker } from './ScenarioPicker';
 import { PartyPicker } from './PartyPicker';
 import { transactionAmount } from './transactionInput';
@@ -7,7 +8,7 @@ import { FormRow, ModelSelect, Spinner } from './ui';
 export type SetupValues = {
   contractType: string; ourRole: string; ourPartyBlock: string; ourPartyQuote: string; instructions: string;
   performanceStage: string; attachmentsStatus: string; businessPriority: string; dealValue: string; currency: string; date: string;
-  reviewMode: 'standard' | 'multi_agent'; modelId: string; consent: boolean;
+  reviewTier: ReviewTier; modelId: string; consent: boolean;
 };
 
 type Props = {
@@ -18,13 +19,10 @@ type Props = {
   onConsent: (value: boolean) => void; onRefreshModels: () => void; onStart: () => void;
 };
 
-const MODES: { value: SetupValues['reviewMode']; title: string; note: string }[] = [
-  { value: 'multi_agent', title: '深度审查', note: '法律、商业与公司规范分项审查，交叉复核' },
-  { value: 'standard', title: '标准审查', note: '分组并行审查，耗时较短' },
-];
 
 export function SetupForm(p: Props) {
   const v = p.values, off = p.busy || p.locked;
+  const tiers = availableTiers(p.caps);
   const amount = transactionAmount(v.dealValue);
   const help = p.locked ? '审查进行中，完成后可调整设置重新审查。' : p.startIssue;
   return <div className="lv-setup">
@@ -66,15 +64,15 @@ export function SetupForm(p: Props) {
         </div>
       </details>
     </FormRow>
-    <FormRow label="审查模式">
-      <div className="lv-segmented-radio" role="radiogroup" aria-label="审查模式">
-        {MODES.map(mode => <label key={mode.value} className={v.reviewMode === mode.value ? 'selected' : ''}>
-          <input type="radio" name="legal-review-mode" value={mode.value} aria-label={mode.title}
-            checked={v.reviewMode === mode.value} disabled={off} onChange={() => p.onChange({ reviewMode: mode.value })} />
-          {mode.title}
+    <FormRow label="审查档位">
+      <div className="lv-segmented-radio" role="radiogroup" aria-label="审查档位">
+        {tiers.map(tier => <label key={tier.value} className={v.reviewTier === tier.value ? 'selected' : ''}>
+          <input type="radio" name="legal-review-tier" value={tier.value} aria-label={TIER_LABEL[tier.value]}
+            checked={v.reviewTier === tier.value} disabled={off} onChange={() => p.onChange({ reviewTier: tier.value })} />
+          {tier.title}
         </label>)}
       </div>
-      <p className="lv-hint">{MODES.find(m => m.value === v.reviewMode)?.note}</p>
+      <p className="lv-hint">{tiers.find(t => t.value === v.reviewTier)?.note}</p>
     </FormRow>
     <FormRow label="审查模型">
       <ModelSelect catalog={p.catalog} value={v.modelId} loading={p.modelsLoading} disabled={off} onChange={modelId => p.onChange({ modelId })} onRefresh={p.onRefreshModels} />

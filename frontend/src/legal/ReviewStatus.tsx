@@ -2,9 +2,9 @@ import type { CSSProperties } from 'react';
 import { ArrowRight, RotateCcw } from 'lucide-react';
 import type { Review } from './types';
 import { findingCounts, findingStatus } from './findingStatus';
-import { AGENT_STATUS, findingTone, researchGaps, reviewOutcome, reviewStatusLabel, TONE_LABEL } from './labels';
+import { AGENT_STATUS, findingTone, researchGaps, reviewOutcome, reviewStatusLabel, tierOf, TONE_LABEL } from './labels';
 import type { Tone } from './labels';
-import { agentLine, formatClock, PHASE_STEPS, phaseDetail, remainingLabel, remainingSeconds, reviewPhase } from './reviewActivity';
+import { agentLine, formatClock, phaseDetail, phaseSteps, remainingLabel, remainingSeconds, reviewPhase } from './reviewActivity';
 import type { Agent } from './reviewActivity';
 import { useLiveReview, useNow } from './useLive';
 import { ReviewingSheet } from './art';
@@ -65,7 +65,9 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
   const live = useLiveReview(review);
   const phase = reviewPhase(review);
   const queued = phase === 'queued';
-  const step = PHASE_STEPS.findIndex(item => item.id === phase);
+  const steps = phaseSteps(review);
+  // A phase a tier does not run (e.g. the final pass in ultra-fast) shows as the last step.
+  const step = Math.max(steps.findIndex(item => item.id === phase), phase === 'coordination' ? steps.length - 1 : -1);
   const detail = phaseDetail(review);
   const interim = review.findings.filter(f => findingStatus(f) !== 'rejected').length;
   const agents = review.collaboration?.agents || [];
@@ -86,7 +88,7 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
     </div>
     <div className="lv-live-steps">
       <ol className="lv-phases" aria-label="审查阶段">
-        {PHASE_STEPS.map((item, i) => <li key={item.id} className={i < step ? 'done' : i === step ? 'current' : ''} aria-current={i === step ? 'step' : undefined}>
+        {steps.map((item, i) => <li key={item.id} className={i < step ? 'done' : i === step ? 'current' : ''} aria-current={i === step ? 'step' : undefined}>
           <span className="lv-phase-mark" aria-hidden="true">{i < step && <DrawnCheck />}</span>{item.label}
         </li>)}
       </ol>
@@ -139,7 +141,7 @@ export function ReviewSummary({ review, onExport }: { review: Review; onExport: 
     <div className="lv-summary-head">
       <h2>审查结果</h2>
       <span className="lv-summary-meta">{[scenario, review.profile?.our_role && `我方：${review.profile.our_role}`].filter(Boolean).join(' · ')}</span>
-      <span className={`lv-chip ${outcome ? 'is-mid' : 'is-ink'}`}>{reviewStatusLabel(review)}</span>
+      <span className={`lv-chip ${outcome || tierOf(review) === 'ultra_fast' ? 'is-mid' : 'is-ink'}`}>{reviewStatusLabel(review)}</span>
     </div>
     {counts.actionable > 0 ? <>
       <dl className="lv-stats" aria-label="风险分布">
@@ -148,6 +150,7 @@ export function ReviewSummary({ review, onExport }: { review: Review; onExport: 
       </dl>
       <div className="lv-riskbar" aria-hidden="true">{TONES.filter(t => tally[t] > 0).map((t, i) => <span key={t} className={`tone-${t}`} style={{ flexGrow: tally[t], '--i': i } as CSSProperties} />)}</div>
     </> : <p className="lv-summary-empty">未形成可采纳的修改意见。该结果不代表合同不存在风险。</p>}
+    {tierOf(review) === 'ultra_fast' && review.status !== 'running' && <p className="lv-note">极速审查：意见由模型一轮直接给出，未检索法规、未经独立复核；采用前请逐条确认，可改用标准或深度审查复核。</p>}
     {!issueShown && outcome === 'failed_steps' && <p className="lv-note is-warn">部分审查步骤未完成，未完成部分不能据此排除风险。</p>}
     {!issueShown && outcome === 'evidence_gaps' && <p className="lv-note">{researchGaps(review)} 个法律问题未检索到官方原文，相关依据标注为“模型引用，待核对”。</p>}
     <div className="lv-summary-foot">

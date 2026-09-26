@@ -352,3 +352,40 @@ def test_api_requires_permission_redaction_and_consent(db, monkeypatch):
     assert client.get(f'/legal/contracts/{cid}/original-text').status_code == 403
     assert client.get(f'/legal/contracts/{cid}').status_code == 403
     assert client.get('/legal/reviews/'+response.json()['id']).status_code == 403
+
+
+def test_api_review_tiers_and_skill_snapshot(db, monkeypatch):
+    router_module = pytest.importorskip('api.routers.contract_review')
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    actor = {'id': 'u1'}
+    application = FastAPI()
+    application.include_router(router_module.router)
+    application.dependency_overrides[router_module.get_current_user] = lambda: actor
+    application.dependency_overrides[router_module.require_legal_max] = lambda: actor
+    monkeypatch.setattr(router_module.ydata, 'select_model', lambda mid: {'provider': 'ydata', 'id': mid, 'family': 'GLM'})
+    monkeypatch.setattr(router_module.matters, 'require_matter_member', lambda mid, user, min_role='viewer', require_active=False: {'matter': {'id': 'm1', 'org_id': 'o1'}, 'role': 'lead'})
+    monkeypatch.setattr(engine, 'submit', lambda rid: None)
+    import services.crypto
+    monkeypatch.setattr(services.crypto, 'get_fernet', lambda: Fernet(Fernet.generate_key()))  # never write a key file
+    client = TestClient(application)
+    caps = client.get('/legal/capabilities').json()
+    assert caps['review_tiers'] == ['ultra_fast', 'fast', 'standard', 'deep'] and caps['skills_version'] == 1
+    catalog = client.get('/legal/skills').json()
+    assert {s['id'] for s in catalog['skills']} >= {'review-method', 'personal-information'} and '不是法律依据' in catalog['notice']
+    upload = client.post('/legal/contracts', data={'matter_id': 'm1', 'original_upload_confirmed': 'true', 'upload_notice_version': 'original-upload-v1'},
+                         files={'file': ('sample.txt', '甲方；乙方提供人工智能顾问服务，处理患者个人信息。'.encode(), 'text/plain')})
+    cid = upload.json()['id']
+    assert client.post(f'/legal/contracts/{cid}/redaction', json={'revision': 1, 'confirmed': True}).status_code == 200
+    base = {'our_role': '采购方', 'contract_type': '采购合同', 'external_processing_confirmed': True, 'external_processing_provider': 'ydata',
+            'model_id': 'glm-5.2', 'our_party': {'block_id': 'p1', 'quote': '甲方'}}
+    quick = client.post(f'/legal/contracts/{cid}/reviews', json={**base, 'review_tier': 'ultra_fast'}).json()
+    assert quick['review_tier'] == 'ultra_fast' and quick['profile']['review_mode'] == 'standard'
+    ids = [s['id'] for s in quick['skills']]
+    assert ids[0] == 'review-method' and {'ai-services', 'personal-information'} <= set(ids)
+    assert all('guidance' not in s and s['reason'] for s in quick['skills'])
+    stored = store.review(quick['id'])['payload']['skills']
+    assert all(s['guidance'] and len(s['sha256']) == 64 for s in stored)
+    legacy = client.post(f'/legal/contracts/{cid}/reviews', json={**base, 'review_mode': 'multi_agent', 'fresh_review': True}).json()
+    assert legacy['review_tier'] == 'deep' and legacy['profile']['review_mode'] == 'multi_agent'
+    assert client.post(f'/legal/contracts/{cid}/reviews', json={**base, 'review_tier': 'turbo'}).status_code == 422

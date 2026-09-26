@@ -1,12 +1,14 @@
 import type { Finding } from './types';
 
 /**
- * Rejected by the critic, still unconfirmed, or supported. Legal findings keep a separate
- * basis label (official text attached / model-cited); the reviewer confirms the legal basis
- * before adopting any legal edit, so the label never blocks the risk from being counted.
+ * Rejected by the critic, still unconfirmed, supported, or quick (an ultra-fast finding that
+ * was never sent to a critic: counted by severity, labelled unverified, adopted only as a
+ * human revision). Legal findings keep a separate basis label (official text attached /
+ * model-cited); the reviewer confirms the legal basis before adopting any legal edit.
  */
-export function findingStatus(f: Finding): 'supported' | 'unconfirmed' | 'rejected' {
+export function findingStatus(f: Finding): 'supported' | 'quick' | 'unconfirmed' | 'rejected' {
   if (f.verification_status === 'rejected') return 'rejected';
+  if (f.verification_status === 'skipped' && f.evidence_status !== 'unverified' && f.missing_facts.length === 0) return 'quick';
   if (f.verification_status !== 'supported' || f.evidence_status === 'unverified' || f.missing_facts.length > 0) return 'unconfirmed';
   return 'supported';
 }
@@ -33,7 +35,7 @@ export function revisionState(f: Finding, s: RevisionInput) {
 
 export function findingCounts(findings: Finding[]) {
   return {
-    high: findings.filter(f => findingStatus(f) === 'supported' && f.severity === 'high').length,
+    high: findings.filter(f => ['supported', 'quick'].includes(findingStatus(f)) && f.severity === 'high').length,
     unconfirmed: findings.filter(f => findingStatus(f) === 'unconfirmed').length,
     rejected: findings.filter(f => findingStatus(f) === 'rejected').length,
     actionable: findings.filter(f => findingStatus(f) !== 'rejected').length,

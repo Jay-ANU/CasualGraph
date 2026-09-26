@@ -46,6 +46,7 @@ export function FindingCard({ finding: f, review: r, block, busy, index, initial
       {f.block_id && <button className="lv-clause-link" onClick={() => onLocate(f.block_id!)}>
         <span className="lv-sr">定位原文：</span><RichText text={clauseLabel(block) || `第 ${f.block_id} 段`} />
       </button>}
+      {status === 'quick' && <span className="lv-chip is-mid" title="极速审查未做独立复核">未复核</span>}
       {accepted && <span className="lv-decision"><Check {...ic} size={13} strokeWidth={2.25} />已采纳</span>}
       {decision?.decision === 'draft' && <span className="lv-decision is-draft">人工修订</span>}
       {decision?.decision === 'rejected' && <span className="lv-decision is-kept">保留原文</span>}

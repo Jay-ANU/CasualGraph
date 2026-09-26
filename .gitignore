@@ -57,6 +57,10 @@ data/documents/*
 !/README.md
 !/docs/deepseek-v4-upgrade.md
 !/docs/legal-agent/**
+# Local development encryption key written by services/crypto.py.
+data/.redaction_key
+# Review skills are product content (legal/skill_registry.py loads them).
+!/legal/skills/**
 
 .vercel
 

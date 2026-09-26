@@ -55,7 +55,7 @@ def route_api(route):
         data={'allowed':allowed['value'],'plan':allowed['plan'],'required_plan':'max'}
     elif path=='/legal/workspace':data={'matter_id':'m1','org_id':'o1'}
     elif path=='/matters':data={'matters':[{'id':'m1','org_id':'o1','name':'合成测试事项'}]}
-    elif path=='/legal/capabilities':data={'model_configured':True,'encryption_configured':True,'review_engine_version':2,'followup_questions':True,'collaboration_version':1,'audit_foundation_version':1,'draft_release_version':1,'scenario_catalog':SCENARIOS,'scenario_catalog_version':1,'upload_disclosure':{'version':'original-upload-v1','notice':'合成上传说明：原件先到后端再脱敏。','storage_region':'合成环境'},'law_search':{'provider':'synthetic','notice':'test'}}
+    elif path=='/legal/capabilities':data={'review_tiers':['ultra_fast','fast','standard','deep'],'model_configured':True,'encryption_configured':True,'review_engine_version':2,'followup_questions':True,'collaboration_version':1,'audit_foundation_version':1,'draft_release_version':1,'scenario_catalog':SCENARIOS,'scenario_catalog_version':1,'upload_disclosure':{'version':'original-upload-v1','notice':'合成上传说明：原件先到后端再脱敏。','storage_region':'合成环境'},'law_search':{'provider':'synthetic','notice':'test'}}
     elif path=='/legal/models':data={'models':[{'id':'gpt-fixture','family':'GPT'},{'id':'claude-fixture','family':'Claude'},{'id':'deepseek-fixture','family':'DeepSeek'},{'id':'kimi-fixture','family':'Kimi'},{'id':'glm-5.2','family':'GLM'}],'families':['GPT','Claude','DeepSeek','Kimi','GLM'],'default_model':'glm-5.2','notice':'synthetic'}
     elif path=='/legal/contracts' and method=='GET':data={'contracts':[contract] if any(m=='POST' and p==path for m,p in calls) else []}
     elif path=='/legal/contracts' and method=='POST':
@@ -70,7 +70,7 @@ def route_api(route):
         payload=req.post_data_json
         assert payload['model_id']=='glm-5.2' and payload['external_processing_provider']=='ydata'
         assert payload['external_processing_confirmed'] is True and contract['status']=='ready'
-        assert payload['review_mode']=='multi_agent'
+        assert payload['review_mode']=='multi_agent' and payload['review_tier']=='deep'
         assert payload['our_party']=={'block_id':'p1','quote':'【脱敏1】'}
         assert payload['contract_type']=='销售合同' and payload['our_role']=='销售方'
         assert payload['scenario_revision']==SCENARIOS['revision']
@@ -220,7 +220,12 @@ try:
         consent.check()
         expect(page.get_by_role('button',name='开始审查',exact=True)).to_be_disabled()
         page.get_by_label('合同类型',exact=True).select_option('销售合同');page.get_by_role('radiogroup',name='我方身份').get_by_role('radio',name='销售方',exact=True).check()
-        consent.check();page.get_by_role('radio',name='标准审查',exact=True).check();expect(consent).not_to_be_checked()
+        # Four tiers; standard is the default, and changing the tier withdraws the model-processing consent.
+        tiers=page.get_by_role('radiogroup',name='审查档位')
+        expect(tiers.get_by_role('radio')).to_have_count(4)
+        expect(page.get_by_role('radio',name='标准审查',exact=True)).to_be_checked()
+        consent.check();page.get_by_role('radio',name='极速审查',exact=True).check();expect(consent).not_to_be_checked()
+        expect(page.get_by_text('不检索法规、不做独立复核',exact=False)).to_be_visible()
         page.get_by_role('radio',name='深度审查',exact=True).check()
         consent.check();page.get_by_label('审查模型').select_option('claude-fixture');expect(consent).not_to_be_checked()
         page.get_by_label('审查模型').select_option('glm-5.2');consent.check()
