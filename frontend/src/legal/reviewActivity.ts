@@ -70,7 +70,7 @@ export function reviewPercent(r: Review): number {
 export function phaseDetail(r: Review): string {
   const phase = reviewPhase(r);
   if (phase === 'queued') return '等待开始';
-  if (phase === 'intake') return '读取合同，提取交易事实';
+  if (phase === 'intake') return '读取合同，规划法律检索';
   if (phase === 'retrieval') return `法规检索 · 已检索 ${r.retrieval?.length || 0} 项`;
   if (r.collaboration) {
     const team = specialists(r);

@@ -36,6 +36,9 @@ export function ReviewDetails({ review, onLocate }: { review: Review; onLocate: 
       <summary>法律检索<span className="lv-summary-count">{health.topics_with_sources}/{health.queried_topics}</span></summary>
       <div className="lv-disclosure-body">
         {health.status === 'gaps' && <p className="lv-note is-warn">{health.failed_or_empty_topics} 项检索未获取到来源，相关风险无法排除。</p>}
+        {(review.research?.issues?.length || 0) > 0 && <ul className="lv-plain-list" aria-label="检索规划">{review.research!.issues.map(issue => <li key={issue.key}>
+          {issue.issue}{issue.laws.length > 0 && `（${issue.laws.map(law => law.name + (law.articles.length ? ' ' + law.articles.join('、') : '')).join('；')}）`}
+        </li>)}</ul>}
         {review.sources.map(source => <details className="lv-citation" key={source.id}>
           <summary>{source.title}</summary><SourceDetails source={source} />
           <a href={source.url} target="_blank" rel="noreferrer noopener">查看来源<ExternalLink {...ic} size={13} /></a>

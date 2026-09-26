@@ -1,4 +1,5 @@
 """Project CI: real module imports, synthetic providers and fixture-scoped store."""
+import json
 from uuid import uuid4
 from copy import deepcopy
 import pytest
@@ -9,7 +10,9 @@ LAW={'id':'law1','text':'第一条 这是用于软件测试的完整条文，不
 def search(*args):return {'status':'retrieved','sources':[deepcopy(LAW)],'provider':'synthetic','warnings':[]}
 def fake_model(system,data):
     if system==v2.INTAKE:
-        return {'facts':[{'name':'期限','value':'90日','block_id':'p1','quote':data['contract_blocks'][0]['text']}]}
+        return {'facts':[{'name':'期限','value':'90日','block_id':'p1','quote':data['contract_blocks'][0]['text']}],
+                'issues':[{'rule_ids':['liability'],'issue':'违约金能否调整','laws':[{'name':'中华人民共和国民法典','articles':['第五百八十五条']}],
+                           'queries':['民法典 违约金 调整']}]}
     if system.startswith(v2.VERIFY):
         return {'checks':[{'finding_id':f['id'],'status':'supported','replacement_supported':True,'reason':'合成复核通过。'} for f in data['findings']],
                 'coverage_checks':[{'rule_id':c['rule_id'],'status':'covered','reason':'合成检查范围完整。'} for c in data['coverage']],
@@ -45,9 +48,12 @@ def test_full_versioned_pipeline_and_snapshots(runtime):
     def model(s,d):calls.append((s,d));return fake_model(s,d)
     run(runtime,model=model)
     p=runtime['job']['payload'];assert runtime['job']['status']=='completed'
-    assert len(calls)==7 and len(p['coverage'])==7 and len(p['batches'])==3
+    # planner + three groups x (review, verify) + one compatibility pass over the proposals
+    assert len(calls)==8 and len(p['coverage'])==7 and len(p['batches'])==3
     assert all(d['profile']['model']['id']=='glm-5.2' for _,d in calls)
     assert len(p['intake']['facts'])==1 and all(f['revision_allowed'] for f in p['findings'])
+    assert p['research']['issues'][0]['queries']==['民法典 违约金 调整'] and p['searches']['issue_1']['status']=='retrieved'
+    assert all('anchor' not in b and 'redaction_spans' not in b for _,d in calls for b in d['contract_blocks'])
 def test_zero_findings_still_requires_independent_coverage_review(runtime):
     audited=[]
     def model(s,d):
@@ -78,7 +84,8 @@ def test_failed_batch_preserves_successful_work_and_resume_is_selective(runtime)
     def resumed(s,d):called.append((s,d));return fake_model(s,d)
     run(runtime,model=resumed)
     assert runtime['job']['status']=='completed' and runtime['job']['payload']['batches']['0']==original
-    assert len(called)==4
+    # only the failed group (review, verify) and the compatibility pass over the changed proposals
+    assert len(called)==3
 def test_cancelled_worker_does_not_publish_late_model_result(runtime):
     def model(s,d):runtime['job'].update(status='cancelled',worker_token='');return fake_model(s,d)
     run(runtime,model=model)
@@ -147,3 +154,63 @@ def test_frozen_sales_scene_reaches_all_review_steps(runtime, monkeypatch):
     covered = {c['rule_id'].split(':')[-1] for c in runtime['job']['payload']['coverage']}
     assert expected <= covered
     assert calls and all(d['profile']['scenario']['id'] == 'sales' for d in calls)
+
+
+def test_review_groups_run_concurrently(runtime):
+    import threading
+    barrier=threading.Barrier(3)
+    def model(system,data):
+        if system==v2.REVIEW:
+            barrier.wait(timeout=5)
+        return fake_model(system,data)
+    run(runtime,model=model)
+    assert runtime['job']['status']=='completed'
+
+
+def test_failed_compatibility_pass_flags_but_keeps_supported_revisions(runtime):
+    def model(system,data):
+        if system==v2.CROSS_CHECK:raise runtime['GatewayError']('ydata_invalid_json','合成错误')
+        return fake_model(system,data)
+    run(runtime,model=model)
+    p=runtime['job']['payload']
+    assert runtime['job']['status']=='partial' and 'cross_check' in p['batch_errors'] and p['retryable']
+    assert p['findings'] and all(f['revision_allowed'] and f['cross_edit_status']=='unchecked' for f in p['findings'])
+
+
+def test_truncated_output_is_retried_once_with_a_briefer_prompt(runtime):
+    prompts=[]
+    def model(system,data):
+        prompts.append(system)
+        if system==v2.REVIEW and data['rules'][0]['id']=='capacity':raise runtime['GatewayError']('ydata_truncated','截断')
+        return fake_model(system,data)
+    run(runtime,model=model)
+    assert runtime['job']['status']=='completed'
+    assert any(x.endswith(v2.BRIEFER) for x in prompts)
+
+
+@pytest.mark.parametrize('mode',['standard','multi_agent'])
+def test_large_document_best_case_keeps_revisions_within_context_budget(runtime,mode):
+    """Regression: a ~10k-character, 340-paragraph document used to overflow the final step and block every revision."""
+    blocks=[{'id':f'p{i}','text':f'{i}.1\u3000乙方应当按照附表约定按期交付第{i}项服务成果，并在甲方书面确认后开具发票；逾期交付的，每日按应付金额的千分之三支付违约金。','page':None,
+             'anchor':i,'redaction_spans':[]} for i in range(1,341)]
+    runtime['contract']['payload']['redacted_blocks']=blocks
+    runtime['job']['payload']['profile']['review_mode']=mode
+    long_law='\n'.join(f'第{n}条 '+'合成测试条文，仅用于衡量上下文体量，不是真实法律规定。'*20 for n in range(1,40))
+    def search(*args):return {'status':'retrieved','sources':[{**LAW,'id':'law-big','text':long_law[:15000]}],'provider':'synthetic','warnings':[]}
+    sizes=[]
+    def model(system,data):
+        sizes.append(len(system)+len(json.dumps(data,ensure_ascii=False)))
+        if system==v2.INTAKE or system.startswith(v2.VERIFY):return fake_model(system,data)
+        rules=data['rules'];kind=data.get('specialist',{}).get('allowed_kind','commercial')
+        chosen=[blocks[(len(sizes)*7+k*13)%len(blocks)] for k in range(8)]
+        return {'coverage':[{'rule_id':r['id'],'status':'reviewed','note':'合成检查。'} for r in rules],
+                'findings':[{'rule_id':rules[k%len(rules)]['id'],'block_id':b['id'],'original_quote':b['text'][:40].replace('\u3000',' '),'kind':kind,
+                             'title':'交付与违约金约定需收紧','severity':'high','impact':'我方难以按期取得成果。','reason':'交付节点与验收衔接不清。'*6,'missing_facts':[],
+                             'citations':[],'policy_ids':[],'law_refs':[{'law':'中华人民共和国民法典','article':'第五百八十五条','point':'违约金调整'}] if kind=='legal' else [],
+                             'suggested_text':b['text'].replace('千分之三','千分之五')} for k,b in enumerate(chosen)]}
+    v2.run_review('r1',model=model,retrieve=search,authorize=lambda *a:None)
+    p=runtime['job']['payload']
+    assert not any('预算' in e for e in p.get('batch_errors',{}).values()), p.get('batch_errors')
+    assert max(sizes) < v2.MAX_INPUT_CHARACTERS
+    assert sum(f['revision_allowed'] for f in p['findings']) >= 8
+    assert all('\u3000' in f['original_quote'] for f in p['findings'] if f.get('block_id'))

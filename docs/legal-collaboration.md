@@ -1,5 +1,7 @@
 # Consumer Legal workspace and bounded multi-agent collaboration
 
+> Superseded in part by [legal-iteration-3.md](legal-iteration-3.md): both review modes now share one parallel pipeline, the arbiter only checks cross-edit compatibility on compact inputs, a failed whole-contract pass flags proposals instead of blocking them, and legal research is planned by the model.
+
 Scope: preserve the original homepage, `/agent`, `/research`, customer Max entitlements, fixed server-side YData gateway, external-law retrieval and original DOCX tracked-change exporter. This includes the prior local v2 candidate plus the explicitly requested collaboration.
 
 ## Application agent roles

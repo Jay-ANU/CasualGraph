@@ -17,9 +17,10 @@ export function FollowUp({ review, blocks, answers, question, busy, consent, onQ
       <p className="lv-qa-q">{a.question}</p>
       <div className="lv-qa-a">
         <p>{a.answer || (a.status === 'failed' ? '回答失败，请重试。' : '处理中，请稍后刷新。')}</p>
-        {((a.block_refs?.length || 0) > 0 || (a.citations?.length || 0) > 0) && <div className="lv-qa-refs">
+        {((a.block_refs?.length || 0) > 0 || (a.citations?.length || 0) > 0 || (a.law_refs?.length || 0) > 0) && <div className="lv-qa-refs">
           {a.block_refs?.map((ref, i) => <button key={i} className="lv-reference" onClick={() => onLocate(ref.block_id)}><RichText text={clauseLabel(blocks.find(b => b.id === ref.block_id)) || `第 ${ref.block_id} 段`} /></button>)}
           {a.citations?.map((ref, i) => { const source = review.sources.find(x => x.id === ref.source_id); return source ? <a key={i} className="lv-reference" href={source.url} target="_blank" rel="noreferrer noopener">{source.title}</a> : null; })}
+          {a.law_refs?.map((ref, i) => <span key={`law-${i}`} className="lv-reference" title={ref.point}>{ref.law}{ref.article ? ` ${ref.article}` : ''}（模型引用，待核对）</span>)}
         </div>}
         {a.uncertain && <small className="lv-qa-uncertain">依据不足，建议人工核实。</small>}
       </div>

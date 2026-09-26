@@ -287,3 +287,40 @@ def test_changed_transaction_brief_invalidates_exact_export_approval(runtime):
     with pytest.raises(HTTPException) as error:
         release.assert_exportable(r, store.contract(cid))
     assert error.value.status_code == 409
+
+
+def set_finding(runtime, **update):
+    with store.transaction() as conn:
+        row = conn.execute('SELECT payload FROM legal_reviews WHERE id=?', (runtime[0],)).fetchone()
+        payload = store.decode(row['payload'])
+        payload['findings'][0].update(update)
+        conn.execute('UPDATE legal_reviews SET payload=? WHERE id=?', (store.encode(payload), runtime[0]))
+
+
+def test_unconfirmed_finding_can_become_a_human_revision_but_not_a_one_click_adoption(runtime):
+    rid, cid, f = runtime
+    set_finding(runtime, revision_allowed=False, verification_status='uncertain')
+    with pytest.raises(HTTPException):
+        store.decide(rid, 'u1', 'f1', 'accepted', f['suggested_text'], 0)
+    with pytest.raises(HTTPException):
+        store.decide(rid, 'u1', 'f1', 'draft', f['suggested_text'], 0)
+    store.decide(rid, 'u1', 'f1', 'draft', f['suggested_text'], 0, manual_edit_confirmed=True)
+    assert store.review(rid)['payload']['decisions']['f1']['manual'] is True
+    checked = release.check(rid, 'u1', 'human-draft', lambda: None, model=supported)
+    assert checked['status'] == 'verified'
+    release.approve(rid, 'u1', checked['fingerprint'], True)
+    assert release.assert_exportable(store.review(rid), store.contract(cid))['final_hash'] == checked['final_hash']
+
+
+def test_rejected_finding_cannot_seed_a_revision(runtime):
+    set_finding(runtime, revision_allowed=False, verification_status='rejected')
+    with pytest.raises(HTTPException):
+        store.decide(runtime[0], 'u1', 'f1', 'draft', '甲方应在验收后30日内支付全部合同价款。', 0, manual_edit_confirmed=True)
+
+
+def test_legal_revision_needs_confirmed_basis_even_as_human_draft(runtime):
+    set_finding(runtime, kind='legal', evidence_status='model_cited')
+    with pytest.raises(HTTPException):
+        store.decide(runtime[0], 'u1', 'f1', 'draft', runtime[2]['suggested_text'], 0, manual_edit_confirmed=True)
+    decision = store.decide(runtime[0], 'u1', 'f1', 'accepted', runtime[2]['suggested_text'], 0, legal_basis_confirmed=True)
+    assert decision['legal_basis_confirmed'] is True and decision['manual'] is False

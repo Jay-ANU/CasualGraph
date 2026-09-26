@@ -227,15 +227,19 @@ def decide(rid: str, user_id: str, finding_id: str, decision: str, text: str, ex
             contract_payload = decode(cp['payload'])
             if payload.get('engine_version') == 2:
                 from legal.review_quality import edit_warnings
-                if finding.get('revision_allowed') is not True or finding.get('verification_status') != 'supported' or finding.get('missing_facts'):
-                    fail(409, '此建议未完成复核或缺少关键事实，不能直接纳入修订。')
+                if finding.get('verification_status') == 'rejected':
+                    fail(409, '已被复核否定的意见不能作为修订依据。')
+                # One-click adoption needs the critic's support. A human revision (draft) may start from
+                # any finding that was not rejected; the exact selected combination is verified before export.
+                if decision == 'accepted' and (finding.get('revision_allowed') is not True
+                                               or finding.get('verification_status') != 'supported' or finding.get('missing_facts')):
+                    fail(409, '此建议未完成复核或缺少关键事实，不能直接采纳；可编辑后保存为人工修订。')
                 if finding['kind'] == 'legal' and legal_basis_confirmed is not True:
                     fail(409, '请先核对法条版本及适用条件，再确认纳入修订。')
-                if text != finding.get('suggested_text'):
-                    if decision != 'draft':
-                        fail(409, '手工改稿必须先保存为待复核草稿，不能沿用原建议的复核结果。')
-                    if manual_edit_confirmed is not True:
-                        fail(409, '请确认将手工改稿保存为未经复核的草稿。')
+                if decision == 'accepted' and text != finding.get('suggested_text'):
+                    fail(409, '手工改稿必须先保存为待复核草稿，不能沿用原建议的复核结果。')
+                if decision == 'draft' and manual_edit_confirmed is not True:
+                    fail(409, '请确认将手工改稿保存为未经复核的草稿。')
                 from legal.review_questions import redact_note
                 if redact_note(text, contract_payload) != text:
                     fail(422, '手工改稿含新增身份信息，请先建立新的脱敏合同版本。')
@@ -247,7 +251,7 @@ def decide(rid: str, user_id: str, finding_id: str, decision: str, text: str, ex
                 fail(422, '修改包含未知脱敏代称或非法控制字符，请修正。')
             if not finding.get('block_id') or not text.strip():
                 fail(400, '缺失条款或空修改建议不能自动回写，请人工编辑合同。')
-            if finding['kind'] == 'legal' and finding['evidence_status'] != 'source_matched':
+            if payload.get('engine_version') != 2 and finding['kind'] == 'legal' and finding['evidence_status'] != 'source_matched':
                 fail(409, '法律依据尚未核验，该建议不能直接接受回写。')
             if any(k != finding_id and d['decision'] in ('accepted', 'draft') and d['block_id'] == finding['block_id'] for k, d in decisions.items()):
                 fail(409, '该段落已有另一条接受的修改，请先撤销或合并修改。')
@@ -255,7 +259,7 @@ def decide(rid: str, user_id: str, finding_id: str, decision: str, text: str, ex
         payload.pop('draft_check', None)
         payload.pop('draft_approval', None)
         decisions[finding_id] = {'decision': decision, 'text': text, 'block_id': finding.get('block_id'),
-                                 'user_id': user_id, 'version': expected_version + 1,
+                                 'user_id': user_id, 'version': expected_version + 1, 'manual': decision == 'draft',
                                  'legal_basis_confirmed': legal_basis_confirmed is True,
                                  'manual_edit_confirmed': manual_edit_confirmed is True}
         conn.execute('UPDATE legal_reviews SET payload=?,updated_at=? WHERE id=?', (encode(payload), time.time(), rid))

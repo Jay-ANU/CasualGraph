@@ -20,7 +20,7 @@ type Props = {
 
 const MODES: { value: SetupValues['reviewMode']; title: string; note: string }[] = [
   { value: 'multi_agent', title: '深度审查', note: '法律、商业与公司规范分项审查，交叉复核' },
-  { value: 'standard', title: '标准审查', note: '单轮全文审查，耗时较短' },
+  { value: 'standard', title: '标准审查', note: '分组并行审查，耗时较短' },
 ];
 
 export function SetupForm(p: Props) {

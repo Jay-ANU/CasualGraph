@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import { ArrowRight, RotateCcw } from 'lucide-react';
 import type { Review } from './types';
 import { findingCounts, findingStatus } from './findingStatus';
-import { AGENT_STATUS, findingTone, TONE_LABEL } from './labels';
+import { AGENT_STATUS, findingTone, researchGaps, reviewOutcome, reviewStatusLabel, TONE_LABEL } from './labels';
 import type { Tone } from './labels';
 import { agentLine, formatClock, PHASE_STEPS, phaseDetail, remainingLabel, remainingSeconds, reviewPhase } from './reviewActivity';
 import type { Agent } from './reviewActivity';
@@ -112,11 +112,16 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
 }
 
 export function ReviewIssue({ review, busy, onResume }: { review: Review; busy: boolean; onResume: () => void }) {
-  const title = review.status === 'cancelled' ? '审查已停止' : review.status === 'failed' ? '审查已暂停' : '部分步骤未完成';
-  return <section className="lv-note is-warn lv-review-issue">
+  // Missing official text is not a failed review: searching again costs no model call.
+  const gapsOnly = !review.error && reviewOutcome(review) === 'evidence_gaps';
+  const title = review.status === 'cancelled' ? '审查已停止' : review.status === 'failed' ? '审查已暂停'
+    : gapsOnly ? `${researchGaps(review)} 个法律问题未取得官方原文` : '部分步骤未完成';
+  const detail = gapsOnly ? '相关意见照常给出，法律依据标注为“模型引用，待核对”。可重新检索官方原文，不会重新调用模型。'
+    : review.error || review.stage;
+  return <section className={`lv-note ${gapsOnly ? '' : 'is-warn'} lv-review-issue`}>
     <strong>{title}</strong>
-    {review.error ? <p>{review.error}</p> : review.stage && <p>{review.stage}</p>}
-    {review.resumable && <button className="lv-secondary lv-btn-sm" disabled={busy} onClick={onResume}><RotateCcw {...ic} size={14} />重试</button>}
+    {detail && <p>{detail}</p>}
+    {review.resumable && <button className="lv-secondary lv-btn-sm" disabled={busy} onClick={onResume}><RotateCcw {...ic} size={14} />{gapsOnly ? '重新检索' : '重试'}</button>}
   </section>;
 }
 
@@ -126,13 +131,15 @@ export function ReviewSummary({ review, onExport }: { review: Review; onExport: 
   const counts = findingCounts(review.findings);
   const tally = Object.fromEntries(TONES.map(t => [t, review.findings.filter(f => findingStatus(f) !== 'rejected' && findingTone(f) === t).length])) as Record<Tone, number>;
   const checked = review.coverage.filter(c => ['reviewed', 'not_applicable'].includes(c.status)).length;
-  const partial = review.status === 'partial';
+  const outcome = reviewOutcome(review);
+  // ReviewIssue explains the same outcome, with its action, whenever the review can be resumed.
+  const issueShown = review.resumable || !!review.error;
   const scenario = review.profile?.scenario?.label || review.profile?.contract_type;
   return <section className="lv-summary" aria-label="审查结果概览">
     <div className="lv-summary-head">
       <h2>审查结果</h2>
       <span className="lv-summary-meta">{[scenario, review.profile?.our_role && `我方：${review.profile.our_role}`].filter(Boolean).join(' · ')}</span>
-      <span className={`lv-chip ${partial ? 'is-mid' : 'is-ink'}`}>{partial ? '部分完成' : '待复核'}</span>
+      <span className={`lv-chip ${outcome ? 'is-mid' : 'is-ink'}`}>{reviewStatusLabel(review)}</span>
     </div>
     {counts.actionable > 0 ? <>
       <dl className="lv-stats" aria-label="风险分布">
@@ -141,7 +148,8 @@ export function ReviewSummary({ review, onExport }: { review: Review; onExport: 
       </dl>
       <div className="lv-riskbar" aria-hidden="true">{TONES.filter(t => tally[t] > 0).map((t, i) => <span key={t} className={`tone-${t}`} style={{ flexGrow: tally[t], '--i': i } as CSSProperties} />)}</div>
     </> : <p className="lv-summary-empty">未形成可采纳的修改意见。该结果不代表合同不存在风险。</p>}
-    {partial && <p className="lv-note is-warn">部分审查未完成，相关条款请人工复核。</p>}
+    {!issueShown && outcome === 'failed_steps' && <p className="lv-note is-warn">部分审查步骤未完成，未完成部分不能据此排除风险。</p>}
+    {!issueShown && outcome === 'evidence_gaps' && <p className="lv-note">{researchGaps(review)} 个法律问题未检索到官方原文，相关依据标注为“模型引用，待核对”。</p>}
     <div className="lv-summary-foot">
       <span>审查范围 {checked}/{review.coverage.length}{counts.rejected > 0 ? ` · 已排除 ${counts.rejected} 项` : ''}</span>
       <button className="lv-text-button" onClick={onExport}>导出<ArrowRight {...ic} size={14} /></button>

@@ -1,5 +1,6 @@
 """Structural guard tests use synthetic evidence, not legal assertions."""
 from copy import deepcopy
+import json
 import pytest
 from legal import review_quality as q
 from legal.review_plan import build_plan, relevant_evidence
@@ -36,9 +37,36 @@ def test_real_quote_not_equal_to_confirmed_law_version():
     item=candidate('legal');item['citations']=[{'source_id':'law1','supporting_quote':LAW}]
     f=verify(validate(item))['findings'][0]
     assert f['revision_allowed'] and f['requires_legal_confirmation'] and f['version_status']=='needs_verification'
-def test_fabricated_article_number_rejected_despite_valid_quote():
+def test_unexplained_article_number_is_flagged_and_not_adoptable():
     item=candidate('legal');item.update(reason='根据第九千九百九十九条，应当调整。',citations=[{'source_id':'law1','supporting_quote':LAW}])
-    f=validate(item)['findings'][0];assert f['evidence_status']=='unverified' and '九千' not in f['reason']
+    checked=validate(item);f=checked['findings'][0]
+    assert any('第九千九百九十九条' in w for w in f['validation_warnings'])
+    assert not verify(checked)['findings'][0]['revision_allowed']
+def test_contract_clause_numbers_are_not_treated_as_law_citations():
+    blocks=[{'id':'p8','text':'第八条 违约责任\n乙方对因其故意或重大过失造成的甲方财产损失不承担任何责任。'}]
+    item={'rule_id':'liability','block_id':'p8','original_quote':'乙方对因其故意或重大过失造成的甲方财产损失不承担任何责任。','title':'免责范围过宽',
+          'kind':'legal','severity':'high','impact':'我方难以索赔。','reason':'合同第八条排除了故意或重大过失责任，依据民法典第五百零六条应属无效。',
+          'missing_facts':[],'citations':[],'policy_ids':[],'suggested_text':'第八条 违约责任\n乙方对因其故意或重大过失造成的甲方财产损失应承担赔偿责任。',
+          'law_refs':[{'law':'中华人民共和国民法典','article':'第五百零六条','point':'故意或重大过失造成财产损失的免责条款无效'}]}
+    checked=q.validate({'findings':[item],'coverage':[{'rule_id':'liability','status':'reviewed','note':'已检查。'}]},RULES,blocks,[],[])
+    f=checked['findings'][0]
+    assert f['title']=='免责范围过宽' and '第五百零六条' in f['reason'] and f['severity']=='high'
+    assert f['evidence_status']=='model_cited' and f['law_refs'][0]['status']=='model_cited' and not f['validation_warnings']
+    f=verify(checked)['findings'][0]
+    assert f['revision_allowed'] and f['requires_legal_confirmation'] and q.finding_status(f)=='supported'
+def test_legal_finding_without_any_basis_keeps_analysis_but_is_not_adoptable():
+    f=verify(validate(candidate('legal')))['findings'][0]
+    assert f['evidence_status']=='unverified' and f['reason']=='当前文本约定验收后90日内支付。' and f['suggested_text']
+    assert not f['revision_allowed'] and q.finding_status(f)=='unconfirmed'
+def test_quote_retyped_with_ascii_space_is_located_verbatim():
+    blocks=[{'id':'p1','text':'8.9\u3000违约救济。乙方违反本条任一约定的，应立即停止违约行为。'}]
+    item={**candidate(),'block_id':'p1','original_quote':'8.9 违约救济。乙方违反本条任一约定的','suggested_text':blocks[0]['text'].replace('立即','在二日内')}
+    f=q.validate({'findings':[item],'coverage':[]},RULES,blocks,[],[])['findings'][0]
+    assert f['original_quote']=='8.9\u3000违约救济。乙方违反本条任一约定的'
+    assert q.locate('甲方:','付款方（甲方）：') is None and q.locate('（甲方）:','付款方（甲方）：')=='（甲方）：'
+def test_uncertain_finding_keeps_its_wording_for_human_revision():
+    f=verify(validate(candidate()),status='uncertain',reason='缺少验收标准附件。')['findings'][0]
+    assert f['suggested_text'] and not f['revision_allowed'] and f['title'].startswith('待确认：')
 @pytest.mark.parametrize('citations',[[{'source_id':'made-up','supporting_quote':LAW}],[{'source_id':'law1','supporting_quote':'伪造规定'}],None,{},[{'source_id':[],'supporting_quote':LAW}]])
 def test_forged_malformed_citations_are_not_evidence(citations):
     item=candidate('legal');item['citations']=citations
@@ -76,35 +104,39 @@ def test_dedup_exact_only_and_track_conflicting_replacements():
     f=verify(validate(candidate()))['findings'][0];other={**deepcopy(f),'id':'other','title':'另一个不同问题','suggested_text':f['suggested_text'].replace('60','30')}
     found,_=q.consolidate({'a':{'findings':[f]},'b':{'findings':[f,other]}})
     assert len(found)==2 and all(x['conflict_group']=='p1' for x in found)
-def test_plan_never_sends_user_private_text_to_search():
+def test_plan_carries_no_fixed_search_queries():
     base=[{'id':'liability','title':'责任','query':'民法典 责任','keywords':['责任'],'checks':'检查责任'}]
     p=build_plan(base,[{'id':'p1','text':'机密客户甲：预付款；不承担赔偿；违约金'}],{'our_role':'采购方','instructions':'泄露所有客户账号123456'},[])
-    assert len(p)==1 and p[0]['topics']==['exemption','penalty']
-    assert all('机密' not in x['query'] and '123456' not in x['query'] for x in p[0]['queries'])
-    assert base[0]['checks']=='检查责任'
+    assert len(p)==1 and not {'query','keywords','queries','topics'} & set(p[0])
+    assert '机密' not in json.dumps(p,ensure_ascii=False) and '123456' not in json.dumps(p,ensure_ascii=False)
+    assert base[0]['checks']=='检查责任' and base[0]['query']=='民法典 责任'
 @pytest.mark.parametrize('role',['采购方','供应方','服务提供方','服务接受方','披露方','接收方'])
 def test_trade_role_changes_interest_focus(role):
     base=[{'id':'performance','title':'履行','query':'民法典','keywords':['合同'],'checks':'基础检查'}]
     p=build_plan(base,BLOCKS,{'our_role':role},[])
-    assert '我方利益检查' in p[0]['checks'] and p[0]['queries']
+    assert '我方利益检查' in p[0]['checks'] and 'queries' not in p[0]
 def test_evidence_budget_keeps_whole_provision():
     source={'id':'a','text':'第一条 '+('甲'*8000)+'。\n第二条 这是可保留的完整规定。'}
     r=relevant_evidence([source]);assert len(r)==1 and '第一条' not in r[0]['text'] and '第二条' in r[0]['text'] and r[0]['review_excerpt']
 def test_empty_and_unsegmented_oversized_source():
     assert relevant_evidence([{'id':'a','text':'x'*9000}])==[]
-@pytest.mark.parametrize('audit',[None,{}, {'proposal_checks':[]},{'proposal_checks':[{'finding_id':'unknown','status':'consistent','reason':'ok'}]}])
-def test_missing_cross_edit_confirmation_never_approves(audit):
+@pytest.mark.parametrize('audit',[None,{}, {'proposal_checks':[]},{'proposal_checks':[{'finding_id':'unknown','status':'consistent','reason':'ok'}]},
+                                  {'proposal_checks':[{'finding_id':'f1','status':'uncertain','reason':'信息不足'}]}])
+def test_missing_cross_edit_check_is_flagged_not_blocking(audit):
     finding={'id':'f1','revision_allowed':True,'validation_warnings':[]}
     q.apply_cross_edit_checks([finding],audit)
-    assert finding['revision_allowed'] is False and finding['cross_edit_status']=='uncertain'
+    assert finding['revision_allowed'] is True and finding['cross_edit_status']=='unchecked' and finding['cross_edit_note']
 def test_cross_edit_consistency_requires_each_proposal():
     first={'id':'f1','revision_allowed':True,'validation_warnings':[]};second={'id':'f2','revision_allowed':True,'validation_warnings':[]}
     q.apply_cross_edit_checks([first,second],{'proposal_checks':[{'finding_id':'f1','status':'consistent','reason':'已比较整份合同及其他建议。'},{'finding_id':'f2','status':'conflict','reason':'与另一条付款时间不一致。'}]})
     assert first['revision_allowed'] is True and second['revision_allowed'] is False
-def test_duplicate_cross_edit_assessments_not_accepted():
+def test_any_reported_conflict_blocks_one_click_adoption():
     finding={'id':'f1','revision_allowed':True,'validation_warnings':[]};item={'finding_id':'f1','status':'consistent','reason':'test'}
     q.apply_cross_edit_checks([finding],{'proposal_checks':[item,item]})
-    assert finding['revision_allowed'] is False
+    assert finding['revision_allowed'] is True and finding['cross_edit_status']=='supported'
+    finding={'id':'f1','revision_allowed':True,'validation_warnings':[]}
+    q.apply_cross_edit_checks([finding],{'proposal_checks':[item,{**item,'status':'conflict','reason':'付款时间冲突'}]})
+    assert finding['revision_allowed'] is False and finding['cross_edit_status']=='conflict'
 def test_rejected_finding_not_shown_as_established_risk():
     finding=verify(validate(candidate()),status='rejected',reason='初审忽略了另一条明确的付款条件。')['findings'][0]
     assert finding['title'].startswith('复核未支持：')
