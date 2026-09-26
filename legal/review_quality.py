@@ -310,6 +310,9 @@ def consolidate(batches: dict) -> tuple[list[dict], list[dict]]:
 def finding_status(f: dict) -> str:
     if f.get('verification_status') == 'rejected':
         return 'rejected'
+    # Ultra-fast findings were never sent to a critic: counted by severity, labelled unverified.
+    if f.get('verification_status') == 'skipped' and f.get('evidence_status') != 'unverified' and not f.get('missing_facts'):
+        return 'quick'
     # Legal findings keep their evidence label (official text attached, model-cited or none);
     # the reviewer still confirms the legal basis before any legal edit is adopted.
     if f.get('verification_status') != 'supported' or f.get('evidence_status') == 'unverified' or f.get('missing_facts'):
@@ -318,16 +321,19 @@ def finding_status(f: dict) -> str:
 
 
 def summary(findings: list[dict], coverage: list[dict]) -> dict:
-    supported = [f for f in findings if finding_status(f) == 'supported']
+    supported = [f for f in findings if finding_status(f) in ('supported', 'quick')]
     return {'high': sum(f['severity'] == 'high' for f in supported),
             'medium': sum(f['severity'] == 'medium' for f in supported),
             'low': sum(f['severity'] == 'low' for f in supported),
             'unconfirmed': sum(finding_status(f) == 'unconfirmed' for f in findings),
             'rejected_candidates': sum(finding_status(f) == 'rejected' for f in findings),
+            'unverified': sum(finding_status(f) == 'quick' for f in findings),
             'needs_confirmation': sum(finding_status(f) != 'rejected' and (not f.get('revision_allowed') or f['kind'] == 'legal') for f in findings),
             'checked_rules': sum(c['status'] in ('reviewed', 'not_applicable') and c.get('verification_status') == 'supported' for c in coverage),
             'total_rules': len(coverage),
-            'notice': '风险数只包含经复核支持的意见；待核实和已否定项单列。规则覆盖不等于合同风险覆盖。'}
+            'notice': ('极速模式的风险数为模型直接给出的结果，未经独立复核；已否定项单列。规则覆盖不等于合同风险覆盖。'
+                       if any(finding_status(f) == 'quick' for f in findings) else
+                       '风险数只包含经复核支持的意见；待核实和已否定项单列。规则覆盖不等于合同风险覆盖。')}
 
 
 def apply_cross_edit_checks(findings: list[dict], raw: Any) -> None:

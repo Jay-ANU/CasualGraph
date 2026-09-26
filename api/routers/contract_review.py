@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from api.deps import get_current_user
 from services.db import get_db
 from legal.access import require_legal_max, access_status
-from legal import ydata, data_boundary, draft_release, scenarios
+from legal import ydata, data_boundary, draft_release, scenarios, skill_registry
 from legal.review_plan import build_plan
 from legal.transaction_brief import TransactionContext, build_brief
 from legal.law_evidence import evidence_health
@@ -57,6 +57,8 @@ class ReviewRequest(BaseModel):
     fresh_review: bool = False
     instructions: str = Field(default="", max_length=1500)
     review_mode: Literal["standard", "multi_agent"] = "multi_agent"
+    # Replaces review_mode: ultra_fast, fast, standard or deep. Absent: derived from review_mode.
+    review_tier: Literal["ultra_fast", "fast", "standard", "deep"] | None = None
 
 
     @field_validator('contract_type')
@@ -67,6 +69,10 @@ class ReviewRequest(BaseModel):
     @model_validator(mode='after')
     def valid_pair(self):
         self.our_role = scenarios.validate_role(self.contract_type, self.our_role)
+        if self.review_tier is None:
+            self.review_tier = 'deep' if self.review_mode == 'multi_agent' else 'standard'
+        # Kept for reviews and clients that predate tiers.
+        self.review_mode = 'multi_agent' if self.review_tier == 'deep' else 'standard'
         return self
 
 
@@ -127,7 +133,7 @@ def _view(c: dict):
 
 
 def _review_view(r: dict):
-    from legal.review_v2 import all_sources
+    from legal.review_v2 import all_sources, review_tier
     p = r['payload']
     sources = all_sources(p)
     now = time.time()
@@ -142,6 +148,7 @@ def _review_view(r: dict):
             'draft_check': p.get('draft_check'), 'draft_approval': p.get('draft_approval'), 'research': p.get('research'),
             'collaboration': p.get('collaboration'), 'metrics': p.get('metrics', {}),
             'summary': p.get('summary', {}), 'progress': p.get('progress'), 'batch_errors': p.get('batch_errors', {}),
+            'review_tier': review_tier(p.get('profile', {})), 'skills': skill_registry.public(p.get('skills')),
             'retrieval': [{'rule_id': k, 'status': s['status'], 'provider': s.get('provider', 'external'), 'warnings': s.get('warnings', []), 'issue': s.get('issue')}
                           for k, s in p.get('searches', {}).items()],
             'notice': '法律意见为辅助审查；模型复核和原文匹配不代表法条版本及适用已由法务确认。未发现意见不代表无风险。'}
@@ -167,6 +174,11 @@ def scenario_catalog():
     return scenarios.catalog()
 
 
+@router.get('/skills')
+def skill_catalog():
+    return skill_registry.catalog()
+
+
 @router.get('/models')
 def models():
     try:
@@ -186,7 +198,8 @@ def capabilities(user: dict = Depends(get_current_user)):
     return {'product': 'contract-review', 'model_configured': ydata.configured(), 'model_gateway': 'ydata', 'encryption_configured': encrypted,
             'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': 1, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION,
             'scenario_catalog': scenarios.catalog(), 'upload_disclosure': data_boundary.disclosure(), 'law_search': external_law.provider_status(), 'contract_types': [scene['label'] for scene in scenarios.catalog()['scenarios']],
-            'limits': {'max_upload_mb': 10, 'max_characters': documents.MAX_TEXT, 'max_blocks': documents.MAX_BLOCKS}}
+            'limits': {'max_upload_mb': 10, 'max_characters': documents.MAX_TEXT, 'max_blocks': documents.MAX_BLOCKS},
+            'review_tiers': list(skill_registry.TIERS), 'skills_version': skill_registry.VERSION}
 
 
 @router.get('/workspace')
@@ -292,6 +305,7 @@ def start_review(cid: str, request: ReviewRequest, user: dict = Depends(get_curr
     brief = build_brief(profile, c['payload']['redacted_blocks'], c['payload'].get('warnings', []))
     snapshot = {'transaction_brief': brief, 'audit_foundation_version': 1, 'engine_version': 2, 'contract_revision': c['revision'], 'profile': profile, 'policies': policies, 'stage': '等待执行', 'findings': [], 'coverage': []}
     snapshot['plan'] = build_plan(engine.RULES, c['payload']['redacted_blocks'], profile, policies, scenario=scene)
+    snapshot['skills'] = skill_registry.select(profile, c['payload']['redacted_blocks'], profile['review_tier'])
     fingerprint = hashlib.sha256(json.dumps({'contract': cid, **snapshot, 'nonce': uuid.uuid4().hex if request.fresh_review else ''},
                                                sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     rid, created = store.create_review(c, str(user['id']), fingerprint, snapshot)

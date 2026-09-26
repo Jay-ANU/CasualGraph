@@ -33,8 +33,9 @@ export function ReviewDetails({ review, onLocate }: { review: Review; onLocate: 
       </div>
     </details>
     {health && <details className="lv-disclosure" open={health.status === 'gaps' || undefined} aria-label="法律检索状态">
-      <summary>法律检索<span className="lv-summary-count">{health.topics_with_sources}/{health.queried_topics}</span></summary>
+      <summary>法律检索<span className="lv-summary-count">{review.research?.status === 'skipped' ? '本档位不检索' : `${health.topics_with_sources}/${health.queried_topics}`}</span></summary>
       <div className="lv-disclosure-body">
+        {review.research?.status === 'skipped' && <p className="lv-hint">极速与快速审查不检索法规；法律意见引用的法条标注为“模型引用，待核对”。</p>}
         {health.status === 'gaps' && <p className="lv-note is-warn">{health.failed_or_empty_topics} 项检索未获取到来源，相关风险无法排除。</p>}
         {(review.research?.issues?.length || 0) > 0 && <ul className="lv-plain-list" aria-label="检索规划">{review.research!.issues.map(issue => <li key={issue.key}>
           {issue.issue}{issue.laws.length > 0 && `（${issue.laws.map(law => law.name + (law.articles.length ? ' ' + law.articles.join('、') : '')).join('；')}）`}
@@ -56,6 +57,16 @@ export function ReviewDetails({ review, onLocate }: { review: Review; onLocate: 
         </dl>
         {brief.gaps.map(gap => <p className="lv-note is-warn" key={gap.code}>{gap.message}</p>)}
         {brief.material_references.map(ref => <button className="lv-clause-link" key={ref.block_id} onClick={() => onLocate(ref.block_id)}><RichText text={ref.quote} /></button>)}
+      </div>
+    </details>}
+    {(review.skills?.length || 0) > 0 && <details className="lv-disclosure" aria-label="审查技能">
+      <summary>审查技能<span className="lv-summary-count">{review.skills!.length} 项</span></summary>
+      <div className="lv-disclosure-body">
+        <ul className="lv-plain-list">{review.skills!.map(skill => <li key={skill.id}>
+          <strong>{skill.name}</strong>（v{skill.version}）：{skill.reason}
+          {skill.source?.origin === 'adapted' && skill.source.repo && <span className="lv-hint">；改编自 {skill.source.repo.replace('https://github.com/', '')}（{skill.source.license}）</span>}
+        </li>)}</ul>
+        <p className="lv-hint">审查技能是经维护的审查方法与检查清单，用来提示检查要点，不是法律依据。</p>
       </div>
     </details>}
     {scenario && <details className="lv-disclosure" aria-label="本轮场景清单">
