@@ -5,6 +5,7 @@ the search provider returned, which candidates passed the official-source checks
 what was fetched. Success here shows a page was obtained, not that the law applies.
 """
 import json
+import re
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -28,6 +29,45 @@ def candidates(query: str) -> list[dict]:
     return [{'url': url, 'admitted': law.official_url(law.upgrade_scheme(url))} for url, _ in rows[:8]]
 
 
+def search_variants() -> list[dict]:
+    """Which public search requests return official pages at all. Diagnostic only."""
+    import httpx
+    from urllib.parse import urlparse
+    browser = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+               'Accept-Language': 'zh-CN,zh;q=0.9'}
+    zh = {'setlang': 'zh-Hans', 'mkt': 'zh-CN', 'cc': 'CN'}
+    report = []
+    for query in ('民法典 第五百八十五条 违约金', '反不正当竞争法 商业秘密'):
+        variants = [
+            ('bing-current', 'https://www.bing.com/search', {'q': law.public_search_query(query), 'format': 'rss'}, {}),
+            ('bing-zh', 'https://www.bing.com/search', {'q': law.public_search_query(query), 'format': 'rss', **zh}, {}),
+            ('bing-zh-site-gov', 'https://www.bing.com/search', {'q': query + ' site:gov.cn', 'format': 'rss', **zh}, {}),
+            ('bing-zh-browser', 'https://www.bing.com/search', {'q': query + ' site:gov.cn', 'format': 'rss', **zh}, browser),
+            ('cn-bing-zh', 'https://cn.bing.com/search', {'q': query + ' site:gov.cn', 'format': 'rss', **zh}, browser),
+            ('bing-no-scope', 'https://www.bing.com/search', {'q': query, 'format': 'rss', **zh}, browser),
+        ]
+        for name, url, params, headers in variants:
+            try:
+                with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
+                    response = client.get(url, params=params)
+                links = re.findall(r'<link>([^<]+)</link>', response.text)[1:9]
+                hosts = [urlparse(x).hostname for x in links]
+                report.append({'query': query, 'variant': name, 'status': response.status_code, 'hosts': hosts,
+                               'official': sum(law.official_url(law.upgrade_scheme(x)) for x in links)})
+            except Exception as exc:
+                report.append({'query': query, 'variant': name, 'error': type(exc).__name__})
+    for title in ('反不正当竞争法', '民法典'):
+        try:
+            with httpx.Client(timeout=15, follow_redirects=True, headers=browser) as client:
+                response = client.get('https://flk.npc.gov.cn/api/', params={'type': '', 'searchType': 'title;vague', 'sortTr': 'f_bbrq_s;desc',
+                                      'gbrqStart': '', 'gbrqEnd': '', 'sxrqStart': '', 'sxrqEnd': '', 'sort': 'true', 'page': 1, 'size': 5, 'title': title})
+            report.append({'query': title, 'variant': 'flk-npc-api', 'status': response.status_code,
+                           'content_type': response.headers.get('content-type'), 'head': response.text[:600]})
+        except Exception as exc:
+            report.append({'query': title, 'variant': 'flk-npc-api', 'error': type(exc).__name__})
+    return report
+
+
 summary = {'provider': law.provider_status(), 'queries': []}
 for query, keywords in QUERIES:
     result = law.retrieve_law(query, keywords)
@@ -36,6 +76,7 @@ for query, keywords in QUERIES:
         'candidates': candidates(query), 'warnings': result['warnings'],
         'sources': [{k: s.get(k) for k in ('url', 'title', 'source_kind', 'discovery')} | {'excerpt_chars': len(s['text'])}
                     for s in result['sources']]})
+summary['search_variants'] = search_variants()
 Path('legal-retrieval-probe.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2))
 print(json.dumps(summary, ensure_ascii=False, indent=2))
 found = sum(bool(q['sources']) for q in summary['queries'])

@@ -37,7 +37,7 @@ export function FindingCard({ finding: f, review: r, block, busy, index, initial
   const policies = f.policy_ids.map(id => r.policies.find(x => x.id === id)).filter(Boolean);
   const laws = f.law_refs || [];
   const basis = legal && f.evidence_status === 'unverified' ? '未提供可核对的法律依据。' : '';
-  const showRevision = revisable && (f.suggested_text || editing);
+  const showRevision = revisable && (!!f.suggested_text || editing || decision?.decision === 'draft');
   return <article id={`legal-finding-${f.id}`} tabIndex={-1} data-block-id={f.block_id || undefined} style={{ '--i': Math.min(index, 8) } as CSSProperties}
     className={`lv-finding tone-${tone} ${accepted ? 'is-accepted' : ''} ${decision?.decision === 'rejected' ? 'is-kept' : ''}`}>
     <div className="lv-finding-meta">
@@ -87,7 +87,7 @@ export function FindingCard({ finding: f, review: r, block, busy, index, initial
       {f.validation_warnings?.map((w, i) => <p key={i} className="lv-note is-warn">{w}</p>)}
       {f.conflict_group && <p className="lv-note is-warn">该段落存在多条修改建议，仅可采纳其一。</p>}
       {f.cross_edit_status === 'unchecked' && f.revision_allowed && <p className="lv-note">{f.cross_edit_note || '尚未完成与其他修改的交叉核对；导出前仍会核验实际选择的修改组合。'}</p>}
-      {revisable && !f.suggested_text && !editing && <button className="lv-text-button" onClick={() => { setText(original); setEditing(true); }}>编辑本段</button>}
+      {revisable && !showRevision && <button className="lv-text-button" onClick={() => { setText(decision?.text || original); setEditing(true); }}>编辑本段</button>}
       {showRevision && (legal || !state.adoptable) ? <div className="lv-confirms">
         {legal && <label className="lv-check"><input type="checkbox" checked={legalBasis} onChange={e => setLegalBasis(e.target.checked)} /><span>已核对引用法规的版本及适用性</span></label>}
         {!state.adoptable && <label className="lv-check"><input type="checkbox" checked={manual} onChange={e => setManual(e.target.checked)} /><span>保存为人工修订（导出前核验）</span></label>}
