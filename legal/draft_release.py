@@ -66,9 +66,13 @@ def snapshot(r: dict, c: dict) -> dict:
         f = findings.get(fid)
         if not f or f.get('block_id') not in blocks or f['block_id'] in occupied:
             raise HTTPException(409, '修改定位缺失或同段存在冲突，请重新选择。')
-        if f.get('revision_allowed') is not True or f.get('verification_status') != 'supported' or f.get('missing_facts'):
+        # A human revision carries the reviewer's responsibility and is checked below with the
+        # whole combination; an adopted suggestion must still carry the critic's support.
+        human = decision.get('manual') is True
+        if f.get('verification_status') == 'rejected' or (not human and (
+                f.get('revision_allowed') is not True or f.get('verification_status') != 'supported' or f.get('missing_facts'))):
             raise HTTPException(409, '候选意见尚未通过审查，不能通过组合检查绕过。')
-        if f['kind'] == 'legal' and (not decision.get('legal_basis_confirmed') or f.get('evidence_status') != 'source_matched'):
+        if f['kind'] == 'legal' and not decision.get('legal_basis_confirmed'):
             raise HTTPException(409, '法律修改仍需核对依据版本与适用条件。')
         replacement = decision.get('text', '')
         if edit_warnings(blocks[f['block_id']], replacement):
@@ -76,8 +80,8 @@ def snapshot(r: dict, c: dict) -> dict:
         occupied.add(f['block_id'])
         selected.append({'finding_id': fid, 'block_id': f['block_id'], 'text': replacement,
                          'text_hash': digest(replacement), 'version': decision.get('version', 0),
-                         'manual': replacement != f.get('suggested_text'), 'kind': f['kind'],
-                         'reason': f['reason'], 'citations': f.get('citations', [])})
+                         'manual': human or replacement != f.get('suggested_text'), 'kind': f['kind'],
+                         'reason': f['reason'], 'citations': f.get('citations', []), 'law_refs': f.get('law_refs', [])})
     if not selected:
         raise HTTPException(409, '请先选择至少一项修改。审查报告无需修订批准即可导出。')
     changes = {item['block_id']: item['text'] for item in selected}

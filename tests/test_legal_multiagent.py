@@ -53,8 +53,9 @@ def test_full_team_has_separate_coverage_and_one_model(runtime):
     p=runtime['job']['payload']
     assert runtime['job']['status']=='completed',p.get('error')
     assert len(p['coverage'])==13 and len({c['rule_id'] for c in p['coverage']})==13
-    assert len(calls)==11 and all(d['profile']['model']['id']=='glm-5.2' for d in calls)
-    assert p['metrics']['model_calls']==11
+    # planner + 4 specialist tasks and the arbiter's scan, each reviewed then verified, + one compatibility pass
+    assert len(calls)==12 and all(d['profile']['model']['id']=='glm-5.2' for d in calls)
+    assert p['metrics']['model_calls']==12
     assert p['collaboration']['agents'][2]['status']=='not_applicable'
     assert all(f['agent_id']=='commercial' and f['revision_allowed'] for f in p['findings'])
 
@@ -85,9 +86,16 @@ def test_policy_agent_only_receives_its_snapshot(runtime):
 def test_no_raw_contract_in_public_search(runtime):
     seen=[]
     def search(q,k):seen.append(q);return retrieve(q,k)
-    run(runtime,search=search)
-    assert seen and all('甲方应在验收后90日' not in q for q in seen)
-    assert len(seen)==6
+    def model(s,d):
+        if s==v2.INTAKE:
+            return {'facts':[],'issues':[
+                {'rule_ids':['liability'],'issue':'违约金','laws':[{'name':'中华人民共和国民法典','articles':['第五百八十五条']}],
+                 'queries':['甲方应在验收后90日内支付全部价款 违约','民法典 违约金 调整']},
+                {'rule_ids':['capacity'],'issue':'主体','laws':[],'queries':['【脱敏1】 主体资格']}]}
+        return fake(s,d)
+    run(runtime,model,search=search)
+    assert seen==['民法典 违约金 调整']
+    assert runtime['job']['payload']['research']['rejected_queries']==2
 
 def test_agent_role_drift_is_rejected():
     result=enforce_specialist_scope({'findings':[{'kind':'legal','rule_id':'commercial:capacity'}],
@@ -102,10 +110,11 @@ def test_missing_critic_never_authorizes_revisions(runtime):
     assert runtime['job']['status']=='partial'
     assert not any(f['revision_allowed'] for f in runtime['job']['payload']['findings'])
 
-def test_missing_arbitration_never_authorizes_revisions(runtime):
+def test_missing_arbitration_flags_but_keeps_critic_supported_revisions(runtime):
     run(runtime,lambda s,d:{} if s==team.ARBITRATE else fake(s,d))
-    assert runtime['job']['status']=='partial'
-    assert not any(f['revision_allowed'] for f in runtime['job']['payload']['findings'])
+    findings=runtime['job']['payload']['findings']
+    assert runtime['job']['status']=='partial' and findings
+    assert all(f['revision_allowed'] and f['cross_edit_status']=='unchecked' for f in findings)
 
 def test_conflicting_replacements_not_overruled_by_model():
     findings=[{'block_id':'p1','suggested_text':s,'verification_status':'supported','revision_allowed':True} for s in ('版本甲','版本乙')]
@@ -212,18 +221,14 @@ def test_progress_moves_while_agents_work(runtime):
     run(runtime)
     snaps=[s['payload'] for s in runtime['snapshots']]
     phases=[s['progress']['phase'] for s in snaps if s.get('progress')]
-    order=list(dict.fromkeys(phases))
-    assert order==['intake','retrieval','collaboration','arbitration','complete']
-    retrieval=[s['progress'] for s in snaps if s.get('progress',{}).get('phase')=='retrieval']
-    assert retrieval[0]['completed']==0 and all(r['total']==retrieval[0]['total']>0 for r in retrieval)
+    assert list(dict.fromkeys(phases))==['intake','collaboration','arbitration','complete']
     counts=[s['progress']['completed'] for s in snaps if s.get('progress',{}).get('phase')=='collaboration']
-    assert counts==sorted(counts) and counts[0]==0 and counts[-1]==4
-    assert any('已完成 4/4 项' in s['stage'] for s in snaps if s['progress']['phase']=='collaboration')
+    assert counts==sorted(counts) and counts[0]==0 and counts[-1]==5
+    assert any('分项审查已完成 5/5 项' in s['stage'] for s in snaps if s['progress']['phase']=='collaboration')
     notes={(a['id'],a['note']) for s in snaps for a in s.get('collaboration',{}).get('agents',[]) if a['status']=='running' and a['note']}
-    assert ('legal','第 1/2 项：'+runtime['job']['payload']['agent_tasks'][0]['rules'][0]['title'].split(' / ')[-1]+'、'
-            +runtime['job']['payload']['agent_tasks'][0]['rules'][1]['title'].split(' / ')[-1]+'、'
-            +runtime['job']['payload']['agent_tasks'][0]['rules'][2]['title'].split(' / ')[-1]) in notes
-    assert any(i=='critic' and n.startswith('复核') for i,n in notes) and any(i=='arbiter' and n.startswith('汇总') for i,n in notes)
+    first=runtime['job']['payload']['agent_tasks'][0]
+    assert ('legal','第 1/2 项：'+'、'.join(r['title'].split(' / ')[-1] for r in first['rules'])) in notes
+    assert any(i=='critic' and n.startswith('复核') for i,n in notes) and any(i=='arbiter' and n.startswith('核对') for i,n in notes)
     final=runtime['job']['payload']
-    assert runtime['job']['status']=='completed' and final['progress']=={'phase':'complete','completed':5,'total':5}
+    assert runtime['job']['status']=='completed' and final['progress']=={'phase':'complete','completed':6,'total':6}
     assert all(a['note']=='' for a in final['collaboration']['agents'] if a['id']!='policy')

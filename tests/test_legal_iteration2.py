@@ -65,9 +65,13 @@ def test_no_attachment_statement_is_not_itself_a_reference():
     assert not b['material_references'] and not b['blocked_edit_blocks']
 
 
-def test_search_scope_contains_court_and_npc_not_only_gov():
+def test_search_scope_covers_courts_npc_and_exchanges_not_only_www_gov():
     query = law.public_search_query('合成公开主题')
-    assert 'site:www.court.gov.cn' in query and 'site:www.npc.gov.cn' in query and ' OR ' in query
+    assert 'site:gov.cn' in query and 'site:sse.com.cn' in query and 'site:szse.cn' in query and ' OR ' in query
+    for host in ('www.court.gov.cn', 'www.npc.gov.cn', 'www.csrc.gov.cn', 'www.sse.com.cn'):
+        assert law.official_url(f'https://{host}/x')
+    assert law.upgrade_scheme('http://www.npc.gov.cn/a?b=1') == 'https://www.npc.gov.cn/a?b=1'
+    assert law.upgrade_scheme('http://evil.test/a') == 'http://evil.test/a'
 
 
 BODY = '<html><head><title>合成规定</title></head><body><h1>合成规定</h1><p>自2025年1月2日起施行。</p><p>第一条 违约金测试条文，不是真实法律。'+ '这是完整的合成条文。'*15 + '</p><p>第二条 其他合成内容，只有软件测试用途。</p></body></html>'
@@ -133,7 +137,9 @@ def test_search_title_cannot_promote_non_normative_page(heading, kind):
     item = {'rule_id':'r','block_id':'p1','original_quote':'甲方应按约付款。','title':'合成法律意见','impact':'合成影响','reason':'合成理由','kind':'legal',
             'missing_facts':[], 'citations':[{'source_id':'s1','supporting_quote':'第一条 违约金测试条文，不是真实法律。'}], 'suggested_text':'甲方应依约按时付款。'}
     checked = quality.validate({'findings':[item]}, [{'id':'r','title':'合成规则'}], [{'id':'p1','text':'甲方应按约付款。'}], [source], [])
-    assert checked['findings'][0]['evidence_status'] == 'unverified' and not checked['findings'][0]['suggested_text']
+    assert checked['findings'][0]['evidence_status'] == 'unverified' and not checked['findings'][0]['citations']
+    quality.apply_verification(checked, {'checks':[{'finding_id':checked['findings'][0]['id'],'status':'supported','replacement_supported':True,'reason':'合成'}]})
+    assert not checked['findings'][0]['revision_allowed']
 
 
 def test_effective_date_candidates_never_autoverify_version():
@@ -144,10 +150,12 @@ def test_effective_date_candidates_never_autoverify_version():
     assert meta['version_status'] != 'verified'
 
 
-def test_unverified_legal_version_is_not_confirmed_high_risk():
-    base={'severity':'high','kind':'legal','verification_status':'supported','evidence_status':'source_matched','missing_facts':[],'revision_allowed':True}
-    assert quality.summary([base], [])['high'] == 0
-    assert quality.summary([base], [])['unconfirmed'] == 1
+def test_supported_legal_risk_is_counted_and_basis_state_stays_separate():
+    base={'severity':'high','kind':'legal','verification_status':'supported','evidence_status':'source_matched','missing_facts':[],'revision_allowed':True,'version_status':'needs_verification'}
+    assert quality.summary([base], [])['high'] == 1
+    assert quality.summary([{**base,'evidence_status':'model_cited'}], [])['high'] == 1
+    assert quality.summary([{**base,'evidence_status':'unverified'}], [])['unconfirmed'] == 1
+    assert quality.summary([base], [])['needs_confirmation'] == 1
 
 
 def test_excerpts_never_truncate_sole_oversized_provision():

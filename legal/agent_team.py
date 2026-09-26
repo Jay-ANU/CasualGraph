@@ -11,7 +11,7 @@ class Specialist:
     instructions: str
 
 SPECIALISTS = (
-    Specialist('legal', '法律风险审查', 'legal', '只判断法律效力、法定义务与可执行性。法律依据只能来自本轮外部原文，版本及适用条件不足时待确认。商业不利不是违法。'),
+    Specialist('legal', '法律风险审查', 'legal', '只判断法律效力、法定义务与可执行性。依据写入law_refs（法律全称、条号、要点），不确定条号时只写法律名称，不要编造；适用条件或时效不足时列missing_facts。商业不利不是违法。'),
     Specialist('commercial', '公司利益审查', 'commercial', '从我方交易角色检查付款、交付、责任和退出成本。解释风险如何落到我方，提出可协商的条件；不作法律效力结论，不虚构公司底线。'),
     Specialist('policy', '公司规范审查', 'company_policy', '仅检查本轮固定版本公司规范的偏离、例外和审批要求。每项意见引用真实policy_id；公司规范不是法律，未提供的底线不得补造。'),
 )

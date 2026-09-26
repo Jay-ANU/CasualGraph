@@ -118,7 +118,8 @@ def family_of(model: str) -> str | None:
 
 
 def _client() -> httpx.Client:
-    return httpx.Client(timeout=httpx.Timeout(150, connect=10, pool=10, write=30),
+    # Long reviews are not streamed; allow the gateway time to finish a full structured answer.
+    return httpx.Client(timeout=httpx.Timeout(300, connect=10, pool=10, write=30),
                         follow_redirects=False, trust_env=False)
 
 
@@ -272,11 +273,37 @@ def select_model(model_id: str, *, client: httpx.Client | None = None) -> dict:
     return {'provider': 'ydata', **match, 'catalog_source': catalog['catalog_source']}
 
 
+def _output_tokens() -> int:
+    """8192 by default; operators may raise it for model families that support longer answers."""
+    try:
+        return max(1024, min(65536, int(os.getenv('LEGAL_YDATA_MAX_TOKENS', '8192'))))
+    except ValueError:
+        return 8192
+
+
 def _token_budget(model: str) -> dict:
     name = model.rsplit('/', 1)[-1].lower()
     if re.match(r'^(?:gpt-(?:[5-9]|[1-9]\d)|o\d)', name):
-        return {'max_completion_tokens': 8192}
-    return {'max_tokens': 8192}
+        return {'max_completion_tokens': _output_tokens()}
+    return {'max_tokens': _output_tokens()}
+
+
+def _json_object(content: str) -> dict:
+    """The JSON object in a reply, tolerating a code fence, a <think> block or a short preamble."""
+    text = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+    fenced = re.fullmatch(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        value = json.loads(text)
+    except ValueError:
+        start, end = text.find('{'), text.rfind('}')
+        if start < 0 or end <= start:
+            raise
+        value = json.loads(text[start:end + 1])
+    if not isinstance(value, dict):
+        raise ValueError('not an object')
+    return value
 
 
 def chat_json(system: str, payload: dict, selection: dict, *, client: httpx.Client | None = None) -> dict:
@@ -297,18 +324,17 @@ def chat_json(system: str, payload: dict, selection: dict, *, client: httpx.Clie
         response = _request(client, 'POST', '/chat/completions', key, json=request)
     try:
         choice = response['choices'][0]
-        if choice.get('finish_reason') != 'stop':
+        finish = choice.get('finish_reason')
+    except (KeyError, IndexError, TypeError, AttributeError):
+        raise GatewayError('ydata_invalid_json', '模型未返回完整的结构化审查结果；任务已保留，可重试，不会发布截断结论。', 502) from None
+    if finish == 'length':
+        raise GatewayError('ydata_truncated', '模型输出超过长度上限被截断；未发布不完整结论，可缩小范围后重试。', 502)
+    try:
+        if finish not in ('stop', 'end_turn'):
             raise ValueError('incomplete response')
         content = choice['message']['content']
         if not isinstance(content, str):
             raise ValueError('no text response')
-        text = content.strip()
-        fenced = re.fullmatch(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL | re.IGNORECASE)
-        if fenced:
-            text = fenced.group(1).strip()
-        value = json.loads(text)
-        if not isinstance(value, dict):
-            raise ValueError('not an object')
-        return value
+        return _json_object(content.strip())
     except (KeyError, IndexError, TypeError, ValueError):
         raise GatewayError('ydata_invalid_json', '模型未返回完整的结构化审查结果；任务已保留，可重试，不会发布截断结论。', 502) from None

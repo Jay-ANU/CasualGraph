@@ -139,10 +139,10 @@ def _review_view(r: dict):
             'findings': p.get('findings', []), 'coverage': p.get('coverage', []), 'sources': all_sources(p),
             'decisions': p.get('decisions', {}), 'profile': p.get('profile', {}), 'policies': p.get('policies', []),
             'engine_version': p.get('engine_version', 1), 'intake': p.get('intake', {'facts': []}),
-            'draft_check': p.get('draft_check'), 'draft_approval': p.get('draft_approval'),
+            'draft_check': p.get('draft_check'), 'draft_approval': p.get('draft_approval'), 'research': p.get('research'),
             'collaboration': p.get('collaboration'), 'metrics': p.get('metrics', {}),
             'summary': p.get('summary', {}), 'progress': p.get('progress'), 'batch_errors': p.get('batch_errors', {}),
-            'retrieval': [{'rule_id': k, 'status': s['status'], 'provider': s['provider'], 'warnings': s.get('warnings', [])}
+            'retrieval': [{'rule_id': k, 'status': s['status'], 'provider': s.get('provider', 'external'), 'warnings': s.get('warnings', []), 'issue': s.get('issue')}
                           for k, s in p.get('searches', {}).items()],
             'notice': '法律意见为辅助审查；模型复核和原文匹配不代表法条版本及适用已由法务确认。未发现意见不代表无风险。'}
 

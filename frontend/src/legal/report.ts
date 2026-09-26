@@ -27,6 +27,7 @@ export function ReviewReport(review: Review): string {
     out.push('', `### ${index + 1}. ${escaped(f.title)}`, `类别：${KIND_LABEL[f.kind] || f.kind}；依据状态：${EVIDENCE[findingStatus(f)]}；风险等级：${findingStatus(f) === 'supported' ? SEVERITY[f.severity] || f.severity : '不作为已成立风险计级'}；原文段落：${f.block_id || '待确定插入位置'}`, '', '原文：', escaped(f.original_quote), '', '影响：', escaped(f.impact), '', '分析：', escaped(f.reason));
     if (f.agent_title) out.push('', `审查维度：${escaped(f.agent_title)}`);
     if (f.missing_facts.length) out.push('', '待补充信息：', ...f.missing_facts.map(escaped));
+    for (const ref of f.law_refs || []) out.push('', `法条：${escaped(ref.law)}${ref.article ? ' ' + escaped(ref.article) : ''}（${ref.status === 'source_matched' ? '已对照官方原文' : '模型引用，待核对'}）${ref.point ? '：' + escaped(ref.point) : ''}`);
     if (f.verification_note) out.push('', '复核说明：', escaped(f.verification_note));
     for (const c of f.citations) { const s = review.sources.find(source => source.id === c.source_id); if (s) out.push('', `依据：${escaped(s.title)}`, escaped(c.supporting_quote), s.url, `来源类型（规则初筛）：${sourceKindLabel(s)}；检索时间：${s.retrieved_at}；版本和适用性待人工核验。`); }
     for (const id of f.policy_ids) { const p = review.policies.find(item => item.id === id); if (p) out.push('', `公司规范：${escaped(p.title)} v${p.version}`, escaped(p.text)); }

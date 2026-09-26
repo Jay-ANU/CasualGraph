@@ -6,6 +6,8 @@ import ipaddress
 import os
 import re
 import socket
+import threading
+import time
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from urllib.parse import urlparse
@@ -17,12 +19,35 @@ import httpx
 # Explicit source origins, never a substring match against an arbitrary URL.
 OFFICIAL_HOSTS = frozenset({'www.gov.cn', 'www.npc.gov.cn', 'flk.npc.gov.cn', 'www.court.gov.cn',
                           'www.spp.gov.cn', 'www.moj.gov.cn', 'www.samr.gov.cn', 'www.cac.gov.cn',
-                          'www.mofcom.gov.cn', 'www.pbc.gov.cn', 'www.chinatax.gov.cn'})
+                          'www.mofcom.gov.cn', 'www.pbc.gov.cn', 'www.chinatax.gov.cn',
+                          # Regulators a contract commonly touches: securities, state assets, FX,
+                          # health data, telecoms, labour, IP and financial supervision.
+                          'www.csrc.gov.cn', 'www.sse.com.cn', 'www.szse.cn', 'www.bse.cn',
+                          'www.sasac.gov.cn', 'www.safe.gov.cn', 'www.nhc.gov.cn', 'www.miit.gov.cn',
+                          'www.mohrss.gov.cn', 'www.cnipa.gov.cn', 'www.ncac.gov.cn', 'www.nfra.gov.cn'})
+# Search scope: every allowlisted *.gov.cn host plus the exchanges. Admission still checks the exact host.
+SEARCH_SITES = ('gov.cn', 'sse.com.cn', 'szse.cn', 'bse.cn')
 MAX_RESPONSE = 2 * 1024 * 1024
+CANDIDATES_PER_QUERY = 5
+_CACHE_SECONDS = 3600
+_CACHE_ENTRIES = 12
+_PAGES: dict[str, tuple[float, str, str, str]] = {}
+_PAGES_LOCK = threading.Lock()
 
 
 class LawRetrievalError(RuntimeError):
     pass
+
+
+def upgrade_scheme(url: str) -> str:
+    """Search engines often index government pages as http; fetch the same page over https."""
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return url
+    if p.scheme == 'http' and p.hostname in OFFICIAL_HOSTS and p.port in (None, 80) and not p.username and not p.password:
+        return 'https://' + p.hostname + (p.path or '/') + (('?' + p.query) if p.query else '')
+    return url
 
 
 def official_url(url: str) -> bool:
@@ -108,10 +133,24 @@ def article_units(text: str) -> list[str]:
     return [text[a:b] for a, b in zip(starts, starts[1:] + [len(text)])]
 
 
+def _heading_value(unit: str) -> int | None:
+    from legal.review_quality import article_value
+    match = ARTICLE_START.match(unit)
+    return article_value(match.group().strip()) if match else None
+
+
 def excerpt(text: str, keywords: list[str], limit: int = 16000) -> str:
-    """Keep complete provisions. An oversized sole provision is not evidence."""
+    """Keep complete provisions. An oversized sole provision is not evidence.
+
+    A keyword such as 第五百八十五条 names a provision: that provision's own unit ranks first,
+    ahead of units that merely mention the same words.
+    """
+    from legal.review_quality import article_value
     chunks = article_units(text)
-    ranked = sorted(enumerate(chunks), key=lambda x: sum(x[1].count(k) for k in keywords), reverse=True)
+    wanted = {n for n in (article_value(k) for k in keywords if ARTICLE_START.match(k)) if n is not None}
+    def score(chunk: str) -> int:
+        return (1000 if wanted and _heading_value(chunk) in wanted else 0) + sum(chunk.count(k) for k in keywords)
+    ranked = sorted(enumerate(chunks), key=lambda x: score(x[1]), reverse=True)
     chosen, size = [], 0
     for index, chunk in ranked:
         cost = len(chunk) + (len('\n[…]\n') if chosen else 0)
@@ -121,19 +160,54 @@ def excerpt(text: str, keywords: list[str], limit: int = 16000) -> str:
     return '\n[…]\n'.join(c for _, c in sorted(chosen))
 
 
+def article_unit(text: str, number: int) -> str:
+    """The complete provision whose heading is article `number`, or '' when absent or oversized."""
+    for unit in article_units(text or ''):
+        if _heading_value(unit) == number and len(unit) <= 8000:
+            return unit.strip()
+    return ''
+
+
+def cached_page(url: str) -> tuple[str, str, str] | None:
+    """(final url, raw html, body text) of an official page fetched in the last hour, if any."""
+    with _PAGES_LOCK:
+        entry = _PAGES.get(url)
+        if entry and entry[0] > time.monotonic():
+            return entry[1], entry[2], entry[3]
+    return None
+
+
+def cached_body(url: str) -> str:
+    page = cached_page(url)
+    return page[2] if page else ''
+
+
+def _remember(urls: tuple[str, ...], resolved: str, raw: str, body: str) -> None:
+    with _PAGES_LOCK:
+        for url in dict.fromkeys(urls):
+            _PAGES[url] = (time.monotonic() + _CACHE_SECONDS, resolved, raw, body)
+        while len(_PAGES) > _CACHE_ENTRIES:
+            _PAGES.pop(min(_PAGES, key=lambda k: _PAGES[k][0]))
+
+
+def clear_page_cache() -> None:
+    with _PAGES_LOCK:
+        _PAGES.clear()
+
+
 # Addresses only, not cached statutes or a claim that these are the latest law.
 # They are refetched through the same allowlist/content limits as discovered URLs.
+# Used only when search finds nothing, and only for a statute the query itself names.
 DIRECT_ORIGINS = (
     (('民法典',), 'https://www.court.gov.cn/zixun/xiangqing/233181.html', '中华人民共和国民法典'),
-    (('合同编通则', '违约金', '合同'), 'https://www.court.gov.cn/fabu/xiangqing/419382.html', '合同编通则司法解释'),
-    (('个人信息',), 'https://www.cac.gov.cn/2021-08/20/c_1631050028355286.htm', '中华人民共和国个人信息保护法'),
+    (('合同编通则', '通则解释', '通则司法解释'), 'https://www.court.gov.cn/fabu/xiangqing/419382.html', '合同编通则司法解释'),
+    (('个人信息保护法',), 'https://www.cac.gov.cn/2021-08/20/c_1631050028355286.htm', '中华人民共和国个人信息保护法'),
 )
 
 
 def public_search_query(query: str) -> str:
-    # Use the exact same domain scope for discovery and source admission.
-    scope = ' OR '.join('site:' + host for host in sorted(OFFICIAL_HOSTS))
-    return query + ' (' + scope + ')'
+    # One site: per registrable domain; the admission allowlist still checks exact hosts.
+    return query + ' (' + ' OR '.join('site:' + site for site in SEARCH_SITES) + ')'
 
 
 def provider_status() -> dict:
@@ -146,34 +220,68 @@ def provider_status() -> dict:
             'notice': '公开网页检索不是完整法规库；原文、版本及适用性仍需复核。检索失败不会视为无风险。'}
 
 
-def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None = None) -> dict:
-    """Use only server-defined public topics. Never send contract contents here."""
+def _client() -> httpx.Client:
+    return httpx.Client(timeout=httpx.Timeout(12, connect=5), follow_redirects=False, trust_env=False,
+                        headers={'User-Agent': 'CausalGraph-Legal/1.2 (+legal-evidence-retrieval)'})
+
+
+def discover(client: httpx.Client, query: str, provider: str) -> list[tuple[str, str]]:
+    """Candidate (url, title) pairs from the configured search provider; raises on failure."""
+    if provider == 'tavily':
+        import json
+        raw = _read(client, 'POST', 'https://api.tavily.com/search', headers={'Authorization': 'Bearer ' + os.environ['TAVILY_API_KEY']}, json={
+            'query': query, 'search_depth': 'basic', 'max_results': 5, 'include_answer': False,
+            'include_domains': sorted(OFFICIAL_HOSTS)})
+        value = json.loads(raw)
+        if not isinstance(value, dict) or not isinstance(value.get('results'), list):
+            raise ValueError('invalid_search_response')
+        return [(x.get('url', ''), x.get('title', '')) for x in value['results'] if isinstance(x, dict)]
+    raw = _read(client, 'GET', 'https://www.bing.com/search', params={'q': public_search_query(query), 'format': 'rss'})
+    if '<!DOCTYPE' in raw.upper() or '<!ENTITY' in raw.upper():
+        raise LawRetrievalError('invalid_search_response')
+    tree = ElementTree.fromstring(raw)
+    return [(x.findtext('link', ''), x.findtext('title', '')) for x in tree.findall('.//item')]
+
+
+def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None = None, cache: bool | None = None) -> dict:
+    """Search public official sources for a generic legal topic. Never send contract contents here.
+
+    Pages fetched in the last hour are reused (the same statute is often needed by several
+    issues and reviews); an injected client bypasses the cache unless asked otherwise.
+    """
     status = provider_status()
     if not status['configured']:
         return {**status, 'sources': [], 'status': 'unavailable', 'warnings': ['检索服务未配置。']}
     own = client is None
-    client = client or httpx.Client(timeout=httpx.Timeout(12, connect=5), follow_redirects=False, trust_env=False,
-                                   headers={'User-Agent': 'CausalGraph-Legal/1.1 (+legal-evidence-retrieval)'})
+    cache = own if cache is None else cache
+    client = client or _client()
     sources, warnings, candidates, seen = [], [], [], set()
     discovery_failed = False
     failures = (httpx.HTTPError, OSError, ValueError, ElementTree.ParseError, LawRetrievalError)
 
     def fetch_candidates(rows: list, method: str) -> None:
-        for url, title in rows[:8]:
+        for url, title in rows[:CANDIDATES_PER_QUERY]:
+            url = upgrade_scheme(url) if isinstance(url, str) else url
             if not isinstance(url, str) or not official_url(url) or url in seen:
                 continue
             seen.add(url)
             trace = {}
             try:
-                raw = _read(client, 'GET', url, official=True, trace=trace)
-                body = html_text(raw)
+                page = cached_page(url) if cache else None
+                if page:
+                    resolved, raw, body = page
+                else:
+                    raw = _read(client, 'GET', url, official=True, trace=trace)
+                    body = html_text(raw)
+                    resolved = trace.get('url', url)
+                    if cache:
+                        _remember((url, resolved), resolved, raw, body)
                 if len(body) < 100:
                     continue
                 quote = excerpt(body, keywords)
                 if not quote:
                     warnings.append('有来源没有预算内完整的相关条文，未截断条文作为依据。')
                     continue
-                resolved = trace.get('url', url)
                 metadata = screen_page(raw, body, title if isinstance(title, str) else '')
                 sources.append({'id': 'law_' + hashlib.sha256((resolved + '\n' + quote).encode()).hexdigest()[:16],
                                 **metadata, 'url': resolved, 'requested_url': url, 'text': quote,
@@ -187,21 +295,7 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
                 break
     try:
         try:
-            if status['provider'] == 'tavily':
-                import json
-                raw = _read(client, 'POST', 'https://api.tavily.com/search', headers={'Authorization': 'Bearer ' + os.environ['TAVILY_API_KEY']}, json={
-                    'query': query, 'search_depth': 'basic', 'max_results': 5, 'include_answer': False,
-                    'include_domains': sorted(OFFICIAL_HOSTS)})
-                value = json.loads(raw)
-                if not isinstance(value, dict) or not isinstance(value.get('results'), list):
-                    raise ValueError('invalid_search_response')
-                candidates = [(x.get('url', ''), x.get('title', '')) for x in value['results'] if isinstance(x, dict)]
-            else:
-                raw = _read(client, 'GET', 'https://www.bing.com/search', params={'q': public_search_query(query), 'format': 'rss'})
-                if '<!DOCTYPE' in raw.upper() or '<!ENTITY' in raw.upper():
-                    raise LawRetrievalError('invalid_search_response')
-                tree = ElementTree.fromstring(raw)
-                candidates = [(x.findtext('link', ''), x.findtext('title', '')) for x in tree.findall('.//item')]
+            candidates = discover(client, query, status['provider'])
         except failures:
             discovery_failed = True
             warnings.append('公开搜索未完成，不能将搜索失败解释为没有法律风险。')
@@ -214,7 +308,8 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
         return {**status, 'sources': sources,
                 'status': 'retrieved' if sources else ('unavailable' if discovery_failed else 'no_verified_source'),
                 'warnings': list(dict.fromkeys(warnings)),
-                'discovery_status': 'unavailable' if discovery_failed else 'completed'}
+                'discovery_status': 'unavailable' if discovery_failed else 'completed',
+                'candidates_found': len(candidates)}
     finally:
         if own:
             client.close()

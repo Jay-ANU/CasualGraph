@@ -1,20 +1,12 @@
-"""Public-topic retrieval plans; contracts and user instructions never become search queries."""
+"""Frozen review plans: which checks run, from whose side. Search is planned by the model.
+
+Plans carry no search queries. Legal research is planned per contract by the model
+(legal.research); contracts and user instructions never become fixed search templates.
+"""
 from __future__ import annotations
 from copy import deepcopy
 from legal.external_law import article_units
 
-# Search topics, not a bundled legal database or conclusions of law.
-TOPICS = {
-    'prepayment': {'rule': 'performance', 'terms': ('预付款', '提前支付', '签约后支付', '全额支付'), 'query': '民法典 买卖合同 交付期限 预付款 履行 抗辩权', 'keywords': ['交付', '期限', '履行']},
-    'acceptance': {'rule': 'performance', 'terms': ('验收', '检验', '视为合格', '异议期'), 'query': '民法典 买卖合同 检验期限 验收 异议', 'keywords': ['检验', '期限', '通知']},
-    'exemption': {'rule': 'liability', 'terms': ('免责', '不承担', '责任上限', '赔偿总额'), 'query': '民法典 第五百零六条 免责条款 故意 重大过失 财产损失', 'keywords': ['第五百零六条', '免责', '故意']},
-    'penalty': {'rule': 'liability', 'terms': ('违约金', '赔偿金'), 'query': '合同编通则司法解释 第六十五条 违约金 损失 百分之三十', 'keywords': ['第六十五条', '违约金', '损失']},
-    'renewal': {'rule': 'termination', 'terms': ('自动续', '续约', '续期'), 'query': '民法典 自动续约 合同解除 通知 期限', 'keywords': ['解除', '通知', '期限']},
-    'personal_data': {'rule': 'ip_data', 'terms': ('个人信息', '用户数据', '委托处理', '数据出境'), 'query': '个人信息保护法 委托处理 合同 第二十一条 提供 境外', 'keywords': ['委托', '个人信息', '境外']},
-    'copyright': {'rule': 'ip_data', 'terms': ('知识产权', '著作权', '源代码', '委托作品'), 'query': '著作权法 委托作品 合同 著作权 归属', 'keywords': ['委托', '合同', '著作权']},
-    'arbitration': {'rule': 'disputes', 'terms': ('仲裁',), 'query': '仲裁法 最新 修订 施行 仲裁协议 仲裁机构', 'keywords': ['仲裁协议', '施行', '仲裁机构']},
-    'standard_terms': {'rule': 'capacity', 'terms': ('格式条款', '最终解释权', '单方变更'), 'query': '民法典 格式条款 提示说明 解释 第四百九十六条', 'keywords': ['格式条款', '提示', '说明']},
-}
 ROLE_FOCUS = {
     '采购方': '我方付款换取交付，重点检查预付保障、明确交期、验收权、缺陷救济和供应方责任；不要套用收款方目标。',
     '供应方': '我方交付换取收款，重点检查付款起算、验收拖延、回款条件、需求变更和不对称责任。',
@@ -23,34 +15,34 @@ ROLE_FOCUS = {
     '披露方': '重点检查保密信息范围、获准接触者、用途限制、返还销毁和泄露救济；同时考虑合理例外。',
     '接收方': '重点检查可识别信息范围、合理例外、合法披露、期限及不受控第三方带来的责任。',
 }
+_SEARCH_FIELDS = ('query', 'keywords', 'queries', 'topics')
+
+
+def _review_only(rule: dict) -> dict:
+    for key in _SEARCH_FIELDS:
+        rule.pop(key, None)
+    return rule
+
 
 def build_plan(base_rules: list[dict], blocks: list[dict], profile: dict, policies: list[dict], *, scenario: dict | None = None) -> list[dict]:
-    full_text = '\n'.join(b['text'] for b in blocks)
     rules = deepcopy(base_rules)
     for rule in rules:
         if scenario:
             rule.update(deepcopy(scenario.get('overrides', {}).get(rule['id'], {})))
             if rule['id'] == 'termination':
                 rule['checks'] = '核对期限、终止事由、通知、补救和终止后存续义务；退款、退货只在该场景实际涉及时适用。'
-        matches = [(key, value) for key, value in TOPICS.items() if value['rule'] == rule['id'] and any(t in full_text for t in value['terms'])
-                   and (not scenario or key not in ('prepayment', 'acceptance') or scenario['id'] in ('purchase', 'sales', 'distribution'))]
-        rule['topics'] = [key for key, _ in matches]
-        rule['queries'] = [{'query': t['query'], 'keywords': t['keywords']} for _, t in matches]
-        rule['queries'].append({'query': rule['query'], 'keywords': rule['keywords']})
-        rule['queries'] = rule['queries'][:3]
         focus = (next((r['focus'] for r in scenario['roles'] if r['value'] == profile.get('our_role')), '立场不明时不要猜测。')
                  if scenario else ROLE_FOCUS.get(profile.get('our_role'), '立场不明时不要猜测。'))
         rule['checks'] += '\n我方利益检查：' + focus
+        _review_only(rule)
     if scenario:
         for source in scenario['rules']:
             specific = deepcopy(source)
             specific['checks'] += '\n我方利益检查：' + profile['scenario']['role_focus']
-            specific['topics'] = [scenario['id']]
-            specific['queries'] = [{'query': specific['query'], 'keywords': specific['keywords']}]
-            rules.append(specific)
+            rules.append(_review_only(specific))
     for policy in policies:
         rules.append({'id': 'policy_' + policy['id'], 'title': policy['title'],
-                      'checks': policy['text'], 'topics': [], 'queries': [], 'policy_id': policy['id']})
+                      'checks': policy['text'], 'policy_id': policy['id']})
     return rules
 
 def relevant_evidence(sources: list[dict], limit: int = 24000) -> list[dict]:

@@ -1,5 +1,6 @@
 """Scenario routing and isolation tests. Synthetic data, not legal accuracy scores."""
 from copy import deepcopy
+import json
 import pytest
 from legal import scenarios
 from legal.review_plan import build_plan
@@ -66,12 +67,11 @@ def test_real_plan_has_independently_verifiable_special_rules(label):
     assert len(plan) == 9 and len({r['id'] for r in plan}) == 9
     assert {r['id'] for r in scene['rules']} <= {r['id'] for r in plan}
     assert all(profile['scenario']['role_focus'] in rule['checks'] for rule in plan)
-    assert all('机密客户名称' not in q['query'] for r in plan for q in r['queries'])
-    assert all(len(r['queries']) <= 3 for r in plan)
+    assert all(not {'query','keywords','queries','topics'} & set(r) for r in plan)
+    assert '机密客户名称' not in json.dumps(plan, ensure_ascii=False)
     if scene['id'] == 'nda':
         perf = next(r for r in plan if r['id']=='performance')
         assert '不是有偿供货' in perf['checks']
-        assert all('买卖' not in q['query'] for q in perf['queries'])
 
 
 def test_legacy_plan_is_not_silently_reinterpreted():
