@@ -425,13 +425,18 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
             p['batch_errors'] = errors
             p['findings'], p['coverage'] = findings, coverage
             p['summary'] = quality.summary(findings, coverage)
-            gaps = any(s.get('status') != 'retrieved' for s in p['searches'].values())
-            incomplete = (bool(errors) or gaps
-                or any(c['status'] in ('not_reviewed', 'needs_information') for c in coverage)
-                or any(b.get('rejected_findings', 0) for b in p['batches'].values())
-                or any(f['verification_status'] != 'supported' or f['evidence_status'] == 'unverified' or f['missing_facts']
-                       or f.get('cross_edit_status') in ('unchecked', 'conflict', 'uncertain') for f in findings))
-            p['retryable'] = bool(errors) or gaps
+            # Partial is never a clean pass. The stage says which kind: failed steps (retry), legal
+            # issues without official text (searching again costs no model call) or items that need
+            # a person's confirmation, the usual result of a review rather than a failure.
+            gaps = sum(s.get('status') != 'retrieved' for s in p['searches'].values())
+            unreviewed = any(c['status'] == 'not_reviewed' for c in coverage)
+            unsettled = [f for f in findings if f['verification_status'] != 'supported' or f['evidence_status'] == 'unverified'
+                         or f['missing_facts'] or f.get('cross_edit_status') in ('unchecked', 'conflict', 'uncertain')]
+            confirm = sum(f['verification_status'] != 'rejected' for f in unsettled)
+            incomplete = (bool(errors) or unreviewed or bool(gaps) or bool(unsettled)
+                or any(c['status'] == 'needs_information' for c in coverage)
+                or any(b.get('rejected_findings', 0) for b in p['batches'].values()))
+            p['retryable'] = bool(errors) or bool(gaps)
             if team:
                 for spec in ('legal', 'commercial', 'policy'):
                     own = [t for t in tasks if t['agent_id'] == spec]
@@ -441,7 +446,16 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 agent('arbiter', status='completed' if 'consistency' in p['batches'] and 'cross_check' not in errors else 'partial',
                       note='', completed=int('consistency' in p['batches']))
             label = '协作检查' if team else '本轮检查'
-            p['stage'] = f'{label}完成，请逐项确认' if not incomplete else f'{label}部分完成，请查看待确认事项和覆盖缺口'
+            if errors:
+                p['stage'] = f'{label}部分完成：{len(errors)} 个步骤未完成，可重试；已完成的意见可先处理'
+            elif unreviewed:
+                p['stage'] = f'{label}部分完成：部分规则未完成审查，请查看覆盖缺口'
+            elif gaps:
+                p['stage'] = f'{label}完成，请逐项确认；{gaps} 个法律问题未取得官方原文，可重新检索'
+            elif confirm:
+                p['stage'] = f'{label}完成，其中 {confirm} 项意见需人工确认'
+            else:
+                p['stage'] = f'{label}完成，请逐项确认'
             p['progress'] = {'phase': 'complete', 'completed': sum(t['id'] in p['batches'] for t in tasks) + int(cross is not None), 'total': total}
             p.setdefault('metrics', {})['last_attempt_seconds'] = round(time.monotonic() - started, 2)
             p.pop('error', None)

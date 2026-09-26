@@ -8,7 +8,7 @@ import { findingCounts, findingStatus } from './findingStatus';
 import { pendingDecisions, uploadIssue, visibleFindings } from './deskLogic';
 import { emptyTransactionInputs, transactionAmount } from './transactionInput';
 import { changeScenario, currentScenario, scenarioRoleValid } from './scenarioInput';
-import { CONTRACT_STATUS, REVIEW_STATUS, STEPS, fileTitle } from './labels';
+import { CONTRACT_STATUS, STEPS, fileTitle, reviewStatusLabel } from './labels';
 import { ReviewReport } from './report';
 import { ConfirmDialog, CountUp, DrawnCheck } from './ui';
 import { ic } from './icon';
@@ -458,7 +458,7 @@ export default class LegalDesk extends React.Component<Props, State> {
           {c && s.tab === 'review' ? <div className="lv-title">
             <h1>{fileTitle(c.name)}</h1>
             <span className="lv-title-meta">{c.format.toUpperCase()} · {c.blocks.length} 段</span>
-            <span className={`lv-chip ${statusTone}`}>{(r ? REVIEW_STATUS[r.status] : CONTRACT_STATUS[c.status]) || statusKey}</span>
+            <span className={`lv-chip ${statusTone}`}>{(r ? reviewStatusLabel(r) : CONTRACT_STATUS[c.status]) || statusKey}</span>
           </div> : <div className="lv-title"><span className="lv-title-plain">{s.tab === 'policies' ? '公司规范' : '合同审查'}</span></div>}
           <div className="lv-top-actions">
             {c && s.tab === 'review' && <button className="lv-quiet lv-doc-toggle" aria-pressed={s.showDocument} onClick={() => this.setState({ showDocument: !s.showDocument })}><PanelRight {...ic} />{s.showDocument ? '收起正文' : '查看正文'}</button>}

@@ -1,9 +1,10 @@
 import type { Review } from './types';
 import { findingStatus } from './findingStatus';
 import { sourceKindLabel } from './sourceLabels';
-import { COVERAGE_STATUS, KIND_LABEL } from './labels';
+import { COVERAGE_STATUS, KIND_LABEL, reviewOutcome } from './labels';
 
 const STATUS: Record<string, string> = { completed: '已完成', partial: '部分完成', running: '进行中', queued: '排队中', failed: '已暂停', cancelled: '已停止' };
+const OUTCOME: Record<string, string> = { failed_steps: '部分完成（有步骤未完成）', evidence_gaps: '已完成（部分法律问题未取得官方原文）', to_confirm: '已完成（部分意见待确认）' };
 const EVIDENCE: Record<string, string> = { supported: '已有依据', unconfirmed: '待核实', rejected: '复核已排除' };
 const SEVERITY: Record<string, string> = { high: '高风险', medium: '中风险', low: '提示' };
 const DECISION: Record<string, string> = { pending: '待处理', accepted: '已纳入修订', draft: '手工修改（待复核）', rejected: '保留原文' };
@@ -11,7 +12,7 @@ const DECISION: Record<string, string> = { pending: '待处理', accepted: '已�
 /** Markdown report built from the export payload; content is escaped, not rendered. */
 const escaped = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export function ReviewReport(review: Review): string {
-  const out = ['# 合同审查报告', '', `审查编号：${review.id}`, `审查状态：${STATUS[review.status] || review.status}`, `模型：${review.profile?.model?.id || '历史记录未提供'}`, `我方角色：${review.profile?.our_role || '未记录'}`, `审查方式：${review.profile?.review_mode === 'multi_agent' ? '深度审查（多维度独立检查、交叉复核）' : '标准审查'}`, '', review.notice];
+  const out = ['# 合同审查报告', '', `审查编号：${review.id}`, `审查状态：${OUTCOME[reviewOutcome(review) || ''] || STATUS[review.status] || review.status}`, `模型：${review.profile?.model?.id || '历史记录未提供'}`, `我方角色：${review.profile?.our_role || '未记录'}`, `审查方式：${review.profile?.review_mode === 'multi_agent' ? '深度审查（多维度独立检查、交叉复核）' : '标准审查'}`, '', review.notice];
   if (review.profile?.scenario) {
     const scenario = review.profile.scenario;
     out.push('', '## 审查场景', `${escaped(scenario.label)} · 目录版本 ${scenario.catalog_version}`, escaped(scenario.role_focus || ''), ...scenario.checks.map(c => `专项检查：${escaped(c.title)}`), `核对材料：${scenario.materials.map(escaped).join('；')}`, escaped(scenario.limits));

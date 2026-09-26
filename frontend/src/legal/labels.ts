@@ -1,4 +1,4 @@
-import type { Finding } from './types';
+import type { Finding, Review } from './types';
 import { findingStatus } from './findingStatus';
 
 /** Contract-level status shown in “我的合同”. */
@@ -11,6 +11,29 @@ export const CONTRACT_STATUS: Record<string, string> = {
 export const REVIEW_STATUS: Record<string, string> = {
   queued: '排队中', running: '审查中', completed: '待复核', partial: '部分完成', failed: '已暂停', cancelled: '已停止',
 };
+
+/**
+ * Why a finished review is not a clean pass. Only failed steps mean the review is incomplete;
+ * missing official text can be searched again, and items to confirm are a normal result.
+ */
+export type ReviewOutcome = 'failed_steps' | 'evidence_gaps' | 'to_confirm';
+
+export function reviewOutcome(r: Pick<Review, 'status' | 'batch_errors' | 'retrieval' | 'coverage'>): ReviewOutcome | null {
+  if (r.status !== 'partial') return null;
+  if (Object.keys(r.batch_errors || {}).length > 0 || (r.coverage || []).some(c => c.status === 'not_reviewed')) return 'failed_steps';
+  if ((r.retrieval || []).some(x => x.status !== 'retrieved')) return 'evidence_gaps';
+  return 'to_confirm';
+}
+
+export const OUTCOME_LABEL: Record<ReviewOutcome, string> = { failed_steps: '部分完成', evidence_gaps: '依据待核对', to_confirm: '待确认' };
+
+export function reviewStatusLabel(r: Pick<Review, 'status' | 'batch_errors' | 'retrieval' | 'coverage'>): string {
+  const outcome = reviewOutcome(r);
+  return outcome ? OUTCOME_LABEL[outcome] : REVIEW_STATUS[r.status] || r.status;
+}
+
+/** Legal issues the research plan searched for without obtaining official text. */
+export const researchGaps = (r: Pick<Review, 'retrieval'>) => (r.retrieval || []).filter(x => x.status !== 'retrieved').length;
 
 export const KIND_LABEL: Record<string, string> = { legal: '法律风险', commercial: '商业利益', company_policy: '公司规范' };
 export const KIND_FILTERS: [string, string][] = [['all', '全部'], ['legal', '法律风险'], ['commercial', '商业利益'], ['company_policy', '公司规范']];
