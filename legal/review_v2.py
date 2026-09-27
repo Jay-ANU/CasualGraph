@@ -48,6 +48,7 @@ TRANSIENT = frozenset({'ydata_unavailable', 'ydata_request_failed', 'ydata_inval
 TRANSIENT_RETRIES = 1
 TRANSIENT_PAUSE = 2.0
 STEP_TITLES = {'research': '法律检索规划', 'cross_check': '修改兼容性核对'}
+SEARCH_NAMES = {'tavily': 'Tavily', 'bing_rss': 'Bing'}
 log = logging.getLogger(__name__)
 
 
@@ -350,7 +351,8 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 with lock:
                     p['intake'] = quality.validate_facts(raw, redacted)
                     p['research'] = {'status': 'planned', **planned}
-                    publish('已规划法律检索：' + (f"{len(planned['issues'])} 个问题" if planned['issues'] else '无需检索'))
+                    publish('已规划法律检索：' + (f"{len(planned['issues'])} 个问题，正在通过 {SEARCH_NAMES.get(external_law.provider_status()['provider'], '公开搜索')} 检索"
+                                              if planned['issues'] else '模型判断无需检索'))
             with lock:
                 issues = [i for i in p['research'].get('issues', []) if p['searches'].get(i['key'], {}).get('status') != 'retrieved']
             if issues and not stopped.is_set():

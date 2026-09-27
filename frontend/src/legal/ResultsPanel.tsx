@@ -19,7 +19,7 @@ export type RailTab = 'notes' | 'qa' | 'basis';
 
 type Props = {
   review: Review; blocks: Block[]; open: Numbered[]; excluded: Finding[]; clauseOf: (blockId: string | null) => string;
-  selected: string | null; tone: ToneFilter; tab: RailTab; busy: boolean; followup: boolean;
+  selected: string | null; tone: ToneFilter; tab: RailTab; busy: boolean; followup: boolean; searchProvider?: string;
   answers: Answer[]; question: string; questionBusy: boolean; questionConsent: boolean;
   onTab: (tab: RailTab) => void; onTone: (tone: ToneFilter) => void; onSelect: (id: string) => void; onLocate: (blockId: string) => void;
   onDecision: (f: Finding, value: string, text: string, legalBasis: boolean, manual: boolean) => void;
@@ -140,7 +140,7 @@ export function ResultsPanel(p: Props) {
       {p.tab === 'notes' && <Notes {...p} done={done} />}
       {p.tab === 'qa' && <FollowUp review={p.review} blocks={p.blocks} answers={p.answers} question={p.question} busy={p.questionBusy} consent={p.questionConsent}
         onQuestion={p.onQuestion} onConsent={p.onQuestionConsent} onAsk={p.onAsk} onLocate={p.onLocate} />}
-      {p.tab === 'basis' && <div className="lv-rail-body"><ReviewDetails review={p.review} onLocate={p.onLocate} /></div>}
+      {p.tab === 'basis' && <div className="lv-rail-body"><ReviewDetails review={p.review} searchProvider={p.searchProvider} onLocate={p.onLocate} /></div>}
     </div>
   </section>;
 }
