@@ -25,6 +25,9 @@ def fake_model(system,data):
                     'suggested_text':data['contract_blocks'][0]['text'].replace('90','60')}]}
 def run(rt,model=fake_model,retrieve=search,authorize=lambda *a:None):
     return v2.run_review('r1',model=model,retrieve=retrieve,authorize=authorize)
+@pytest.fixture(autouse=True)
+def no_retry_pause(monkeypatch):
+    monkeypatch.setattr(v2,'TRANSIENT_PAUSE',0)
 @pytest.fixture
 def runtime(monkeypatch):
     block={'id':'p1','text':'甲方应在验收后90日内支付全部价款。','page':None}
@@ -48,8 +51,8 @@ def test_full_versioned_pipeline_and_snapshots(runtime):
     def model(s,d):calls.append((s,d));return fake_model(s,d)
     run(runtime,model=model)
     p=runtime['job']['payload'];assert runtime['job']['status']=='completed'
-    # planner + three groups x (review, verify) + one compatibility pass over the proposals
-    assert len(calls)==8 and len(p['coverage'])==7 and len(p['batches'])==3
+    # planner + four groups (three rule pairs, the whole contract) x (review, verify) + one compatibility pass
+    assert len(calls)==10 and len(p['coverage'])==7 and len(p['batches'])==4
     assert all(d['profile']['model']['id']=='glm-5.2' for _,d in calls)
     assert len(p['intake']['facts'])==1 and all(f['revision_allowed'] for f in p['findings'])
     assert p['research']['issues'][0]['queries']==['民法典 违约金 调整'] and p['searches']['issue_1']['status']=='retrieved'
@@ -62,7 +65,7 @@ def test_zero_findings_still_requires_independent_coverage_review(runtime):
         if s.startswith(v2.VERIFY):audited.append(d)
         return raw
     run(runtime,model=model)
-    assert len(audited)==3 and runtime['job']['status']=='completed'
+    assert len(audited)==4 and runtime['job']['status']=='completed'
 def test_missing_verifier_output_is_not_a_pass(runtime):
     run(runtime,model=lambda s,d:{} if s.startswith(v2.VERIFY) else fake_model(s,d))
     assert runtime['job']['status']=='partial' and not any(f['revision_allowed'] for f in runtime['job']['payload']['findings'])
@@ -75,11 +78,16 @@ def test_search_failure_partial_then_recover_affected_work(runtime):
     assert runtime['job']['status']=='completed' and runtime['job']['payload']['intake']==intake
     assert v2.INTAKE not in seen
 def test_failed_batch_preserves_successful_work_and_resume_is_selective(runtime):
+    tries=[]
     def model(s,d):
-        if s==v2.REVIEW and d['rules'][0]['id']=='termination':raise runtime['GatewayError']('ydata_invalid_json','模拟失败')
+        if s==v2.REVIEW and any(r['id']=='termination' for r in d['rules']):
+            tries.append(1);raise runtime['GatewayError']('ydata_invalid_json','模拟失败')
         return fake_model(s,d)
     run(runtime,model=model)
-    p=runtime['job']['payload'];assert runtime['job']['status']=='partial' and '0' in p['batches'] and '3' in p['batch_errors']
+    p=runtime['job']['payload'];assert runtime['job']['status']=='partial' and '0' in p['batches'] and '2' in p['batch_errors']
+    # asked once more before the step is given up, then named with its reason
+    assert len(tries)==2
+    assert p['step_errors']==[{'id':'2','title':'分项审查：违约、赔偿与免责；期限、续约与退出','code':'ydata_invalid_json','message':'模拟失败'}]
     original=deepcopy(p['batches']['0']);called=[]
     def resumed(s,d):called.append((s,d));return fake_model(s,d)
     run(runtime,model=resumed)
@@ -158,7 +166,7 @@ def test_frozen_sales_scene_reaches_all_review_steps(runtime, monkeypatch):
 
 def test_review_groups_run_concurrently(runtime):
     import threading
-    barrier=threading.Barrier(3)
+    barrier=threading.Barrier(4)
     def model(system,data):
         if system==v2.REVIEW:
             barrier.wait(timeout=5)
@@ -174,7 +182,62 @@ def test_failed_compatibility_pass_flags_but_keeps_supported_revisions(runtime):
     run(runtime,model=model)
     p=runtime['job']['payload']
     assert runtime['job']['status']=='partial' and 'cross_check' in p['batch_errors'] and p['retryable']
+    assert [(e['id'],e['title'],e['code']) for e in p['step_errors']]==[('cross_check','修改兼容性核对','ydata_invalid_json')]
     assert p['findings'] and all(f['revision_allowed'] and f['cross_edit_status']=='unchecked' for f in p['findings'])
+
+
+def test_a_dropped_connection_is_retried_once_and_the_review_completes(runtime):
+    failed=[]
+    def model(s,d):
+        if s==v2.REVIEW and d['rules'][0]['id']=='capacity' and not failed:
+            failed.append(1);raise runtime['GatewayError']('ydata_unavailable','连接中断')
+        return fake_model(s,d)
+    run(runtime,model=model)
+    p=runtime['job']['payload']
+    assert runtime['job']['status']=='completed' and failed==[1] and not p['batch_errors'] and not p['step_errors']
+
+
+def test_a_request_the_gateway_refuses_is_not_repeated(runtime):
+    refused=[]
+    def model(s,d):
+        if s==v2.CROSS_CHECK:
+            refused.append(1);raise runtime['GatewayError']('ydata_request_failed','YData 请求失败（HTTP 400）',502,upstream_status=400)
+        return fake_model(s,d)
+    run(runtime,model=model)
+    assert refused==[1] and 'cross_check' in runtime['job']['payload']['batch_errors']
+
+
+def test_a_step_that_fails_again_is_named_with_its_reason(runtime):
+    def model(s,d):
+        if s==v2.INTAKE:raise runtime['GatewayError']('ydata_request_failed','YData 请求失败（HTTP 504）')
+        return fake_model(s,d)
+    run(runtime,model=model)
+    p=runtime['job']['payload']
+    assert runtime['job']['status']=='partial' and p['stage'].startswith('本轮检查部分完成：1 个步骤未完成')
+    assert p['step_errors']==[{'id':'research','title':'法律检索规划','code':'ydata_request_failed','message':'YData 请求失败（HTTP 504）'}]
+    assert p['findings'] and len(p['batches'])==4
+
+
+def test_batches_from_an_earlier_grouping_are_not_merged_into_a_resumed_review(runtime,monkeypatch):
+    monkeypatch.setattr(v2,'GROUP_SIZE',3)
+    run(runtime)
+    assert set(runtime['job']['payload']['batches'])=={'0','3','consistency'}
+    monkeypatch.setattr(v2,'GROUP_SIZE',2)
+    runtime['job']['status']='partial';runtime['job']['payload']['batch_errors']={'3':'此步骤尚未完成。'}
+    run(runtime)
+    p=runtime['job']['payload']
+    assert runtime['job']['status']=='completed' and set(p['batches'])=={'0','2','4','consistency'}
+    # the old group of three reported on its first rule; no group reports on termination now
+    assert not any(f['rule_id']=='termination' for f in p['findings'])
+
+
+def test_call_budget_grows_with_the_number_of_groups(runtime):
+    runtime['job']['payload']['policies']=[{'id':f'p{i}','title':f'合成规范{i}','text':'合成公司规范：付款期限不超过60日。'} for i in range(24)]
+    calls=[]
+    def model(s,d):calls.append(s);return fake_model(s,d)
+    run(runtime,model=model)
+    assert runtime['job']['status']=='completed',runtime['job']['payload'].get('batch_errors')
+    assert len(calls)>v2.MAX_CALLS_PER_ATTEMPT
 
 
 def test_truncated_output_is_retried_once_with_a_briefer_prompt(runtime):
