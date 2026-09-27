@@ -1,7 +1,7 @@
 import { ExternalLink } from 'lucide-react';
 import type { Review, Source } from './types';
 import { sourceKindLabel } from './sourceLabels';
-import { COVERAGE_STATUS, failedSteps, noSearchReason, SEARCH_NAME, SEARCH_STATE } from './labels';
+import { COVERAGE_STATUS, failedSteps } from './labels';
 import { RichText } from './ui';
 import { ic } from './icon';
 
@@ -15,21 +15,12 @@ export function SourceDetails({ source }: { source: Source }) {
 const COVERAGE_TONE: Record<string, string> = { reviewed: 'is-ok', not_applicable: '', needs_information: 'is-mid', not_reviewed: 'is-high' };
 
 /** How the result was reached: scope, legal research, the transaction as stated, scenario and skills. */
-export function ReviewDetails({ review, searchProvider, onLocate }: {
-  review: Review;
-  /** The search service configured now, which may differ from the one this review used. */
-  searchProvider?: string;
-  onLocate: (id: string) => void;
-}) {
+export function ReviewDetails({ review, onLocate }: { review: Review; onLocate: (id: string) => void }) {
   const brief = review.transaction_brief;
   const health = review.evidence_health;
   const scenario = review.profile?.scenario;
   const checked = review.coverage.filter(c => ['reviewed', 'not_applicable'].includes(c.status)).length;
-  const skipped = review.research?.status === 'skipped' && review.research.reason === 'tier';
-  const searches = review.retrieval || [];
-  const used = searches.find(x => SEARCH_NAME[x.provider])?.provider;
-  const provider = SEARCH_NAME[used || searchProvider || ''];
-  const unsearched = noSearchReason(review);
+  const skipped = review.research?.status === 'skipped';
   return <div className="lv-basis-panel">
     <section className="lv-basis-group" aria-label="审查范围">
       <div className="lv-rail-label"><span>审查范围</span><span className="lv-mono">{checked}/{review.coverage.length}</span></div>
@@ -41,21 +32,12 @@ export function ReviewDetails({ review, searchProvider, onLocate }: {
       {failedSteps(review).map(step => <p key={step.id} className="lv-note is-warn"><strong>未完成 · {step.title}</strong>{step.message}</p>)}
     </section>
     {health && <section className="lv-basis-group" aria-label="法律检索状态">
-      <div className="lv-rail-label"><span>法律检索</span>
-        <span className="lv-mono">{skipped ? '本档位不检索' : [provider, `${health.topics_with_sources}/${health.queried_topics}`].filter(Boolean).join(' · ')}</span></div>
-      {unsearched && <p className={unsearched.warn ? 'lv-note is-warn' : 'lv-hint'}>{unsearched.text}</p>}
-      {used && searchProvider && used !== searchProvider && SEARCH_NAME[searchProvider] && <p className="lv-hint">
-        本次检索使用 {SEARCH_NAME[used]}；当前已配置 {SEARCH_NAME[searchProvider]}，新建审查或重新检索时生效。</p>}
+      <div className="lv-rail-label"><span>法律检索</span><span className="lv-mono">{skipped ? '本档位不检索' : `${health.topics_with_sources}/${health.queried_topics}`}</span></div>
+      {skipped && <p className="lv-hint">本档位不检索法规；意见引用的法条标注为“模型引用，待核对”。</p>}
       {health.status === 'gaps' && <p className="lv-note is-warn">{health.failed_or_empty_topics} 项检索未获取到来源，相关风险无法排除。</p>}
-      {(review.research?.issues?.length || 0) > 0 && <ul className="lv-plain-rows" aria-label="检索规划">{review.research!.issues.map(issue => {
-        const found = searches.find(x => x.rule_id === issue.key);
-        const state = found ? SEARCH_STATE[found.status] ?? { label: found.status, tone: 'is-mid' } : { label: '未检索', tone: '' };
-        return <li key={issue.key}>
-          <span className="lv-row-main">{issue.issue}{issue.laws.length > 0 && `（${issue.laws.map(law => law.name + (law.articles.length ? ' ' + law.articles.join('、') : '')).join('；')}）`}</span>
-          <span className={`lv-row-state ${state.tone}`}>{state.label}</span>
-          {found && found.status !== 'retrieved' && found.warnings[0] && <p className="lv-row-note">{found.warnings[0]}</p>}
-        </li>;
-      })}</ul>}
+      {(review.research?.issues?.length || 0) > 0 && <ul className="lv-plain-list" aria-label="检索规划">{review.research!.issues.map(issue => <li key={issue.key}>
+        {issue.issue}{issue.laws.length > 0 && `（${issue.laws.map(law => law.name + (law.articles.length ? ' ' + law.articles.join('、') : '')).join('；')}）`}
+      </li>)}</ul>}
       {review.sources.map(source => <details className="lv-citation" key={source.id}>
         <summary>{source.title}</summary><SourceDetails source={source} />
         <a href={source.url} target="_blank" rel="noreferrer noopener">查看来源<ExternalLink {...ic} size={13} /></a>

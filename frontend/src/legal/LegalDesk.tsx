@@ -389,7 +389,7 @@ export default class LegalDesk extends React.Component<Props, State> {
       onBack={r && !isActive(r) ? () => this.setState({ view: 'work' }) : undefined} />;
     else if (stage === 'running' && r) rail = <ReviewProgress review={r} canCancel={(s.caps?.review_engine_version || 0) >= 2} busy={s.busy} onCancel={() => this.reviewAction('cancel')} />;
     else if (stage === 'results' && r) rail = <ResultsPanel review={r} blocks={c.blocks} open={open} excluded={excluded} clauseOf={id => placeLabel(outline, id)}
-      selected={selected} tone={s.tone} tab={s.railTab} busy={s.busy} followup={Boolean(s.caps?.followup_questions)} searchProvider={s.caps?.law_search?.provider}
+      selected={selected} tone={s.tone} tab={s.railTab} busy={s.busy} followup={Boolean(s.caps?.followup_questions)}
       answers={s.answers} question={s.question} questionBusy={s.questionBusy} questionConsent={s.questionConsent}
       onTab={railTab => this.setState({ railTab })} onTone={tone => this.setState({ tone })} onSelect={this.select} onLocate={this.locate}
       onDecision={(f, value, text, legalBasis, manual) => void this.run(() => this.decide(f, value, text, legalBasis, manual))}
