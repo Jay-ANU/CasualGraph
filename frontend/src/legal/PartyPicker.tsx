@@ -26,8 +26,9 @@ export function PartyPicker({ blocks, blockId, quote, disabled, onChange }: {
       {candidates.map((c, i) => {
         const on = c.blockId === blockId && c.quote === quote;
         const contextId = c.context ? `${uid}-context-${i}` : undefined;
-        return <button type="button" key={`${c.blockId}:${c.quote}`} aria-label={c.quote} aria-describedby={contextId} aria-pressed={on} className={on ? 'selected' : ''} onClick={() => onChange(c.blockId, c.quote)}>
-          <span className="lv-party-radio" aria-hidden="true">{on && <Check {...ic} size={11} strokeWidth={3} />}</span>
+        return <button type="button" key={`${c.blockId}:${c.quote}`} aria-label={c.quote} aria-describedby={contextId} aria-pressed={on}
+          className={on ? 'selected' : ''} onClick={() => onChange(c.blockId, c.quote)}>
+          <span className="lv-party-radio" aria-hidden="true">{on && <Check {...ic} size={10} strokeWidth={3.2} />}</span>
           <span className="lv-party-quote"><RichText text={c.quote} /></span>
           {c.context && <span id={contextId} className="lv-party-context"><RichText text={c.context} /></span>}
         </button>;

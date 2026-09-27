@@ -52,6 +52,8 @@ export type PartyCandidate = { blockId: string; quote: string; context?: string 
 /** Lines such as “甲方（采购方）：【脱敏1】” or “出租人：……”. */
 const PARTY_LINE = /^\s*(?:[甲乙丙丁戊]方|[^\s：:（(，。；]{1,6}[方人])\s*(?:[（(][^）)\n]{1,12}[）)])?\s*[：:]\s*\S/;
 const NOT_A_PARTY = /^(?:\s*)(?:法定代表人|联系人|代理人|委托代理人|负责人|经办人|授权代表人|签约代表人|收件人|开户人)/;
+/** Signature blocks such as “甲方（盖章）：” name a place to sign, not the party. */
+const SIGNATURE_LINE = /[（(]\s*(?:盖章|签字|签章|签名|公章)(?:\s*[/或、]\s*(?:盖章|签字|签章|签名))?\s*[）)]/;
 
 /**
  * Verbatim fragments the user can pick as “our party”. The list only quotes the
@@ -69,7 +71,7 @@ export function partyCandidates(blocks: Block[], limit = 8): PartyCandidate[] {
   for (const block of blocks) {
     for (const line of block.text.split('\n')) {
       if (out.length >= limit) return out;
-      if (line.trim().length <= 60 && PARTY_LINE.test(line) && !NOT_A_PARTY.test(line)) add(block, line);
+      if (line.trim().length <= 60 && PARTY_LINE.test(line) && !NOT_A_PARTY.test(line) && !SIGNATURE_LINE.test(line)) add(block, line);
     }
   }
   // Redacted names that are not already inside a party line, from the opening paragraphs.

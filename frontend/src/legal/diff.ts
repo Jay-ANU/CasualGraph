@@ -32,3 +32,27 @@ export function diffText(before: string, after: string): DiffPart[] {
   push('same', suffix ? a.slice(a.length - suffix).join('') : '');
   return parts;
 }
+
+/**
+ * The same diff for reading: an unchanged run of one or two characters between
+ * two edits is folded into them, so a reworded phrase shows as one deletion and
+ * one insertion instead of a scatter of single characters.
+ */
+export function phraseDiff(before: string, after: string): DiffPart[] {
+  const parts = diffText(before, after);
+  const out: DiffPart[] = [];
+  let del = '', ins = '';
+  const flush = () => {
+    if (del) out.push({ kind: 'del', text: del });
+    if (ins) out.push({ kind: 'ins', text: ins });
+    del = ''; ins = '';
+  };
+  parts.forEach((part, i) => {
+    if (part.kind === 'del') del += part.text;
+    else if (part.kind === 'ins') ins += part.text;
+    else if ((del || ins) && Array.from(part.text).length <= 2 && parts[i + 1] && parts[i + 1].kind !== 'same') { del += part.text; ins += part.text; }
+    else { flush(); out.push(part); }
+  });
+  flush();
+  return out;
+}

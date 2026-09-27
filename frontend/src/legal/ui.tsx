@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { RefreshCw, X } from 'lucide-react';
+import { Check, RefreshCw, X } from 'lucide-react';
 import type { Catalog } from './types';
 import { splitRedactions } from './text';
+import { phraseDiff } from './diff';
 import { ic } from './icon';
 
 export function Spinner() {
@@ -17,6 +18,14 @@ export function Spinner() {
 export function RichText({ text }: { text: string }) {
   return <>{splitRedactions(text).map((part, i) => part.kind === 'text' ? part.text
     : <span className="lv-redacted" key={i}><span className="lv-sr">【</span>{part.text.slice(1, -1)}<span className="lv-sr">】</span></span>)}</>;
+}
+
+/** A paragraph's revision as tracked changes: struck deletions, underlined insertions. */
+export function Redline({ before, after }: { before: string; after: string }) {
+  return <>{phraseDiff(before, after).map((part, i) => part.kind === 'del'
+    ? <del key={i} className="lv-del"><span className="lv-sr">删除：</span><RichText text={part.text} /></del>
+    : part.kind === 'ins' ? <ins key={i} className="lv-ins"><span className="lv-sr">新增：</span><RichText text={part.text} /></ins>
+    : <RichText key={i} text={part.text} />)}</>;
 }
 
 /** A check mark that draws itself in when it first appears. */
@@ -34,12 +43,15 @@ export function CountUp({ value }: { value: number }) {
   return <><span className="lv-countup" style={{ '--lv-n': value } as CSSProperties} aria-hidden="true" /><span className="lv-sr">{value}</span></>;
 }
 
-/** A label/control row; controls carry their own accessible names. */
-export function FormRow({ label, note, children }: { label: string; note?: string; children: ReactNode }) {
-  return <div className="lv-row">
-    <div className="lv-row-label">{label}{note && <span className="lv-optional">{note}</span>}</div>
-    <div className="lv-row-control">{children}</div>
-  </div>;
+/** A short confirmation at the bottom of the screen that clears itself. */
+export function Toast({ text, done, onDone }: { text: string; done?: boolean; onDone: () => void }) {
+  const finish = useRef(onDone);
+  useEffect(() => { finish.current = onDone; });
+  useEffect(() => {
+    const timer = setTimeout(() => finish.current(), 2600);
+    return () => clearTimeout(timer);
+  }, [text]);
+  return <div className="lv-toast" role="status">{done && <Check {...ic} size={15} />}{text}</div>;
 }
 
 /** Native modal supplies focus containment, Escape and return-focus behavior. */

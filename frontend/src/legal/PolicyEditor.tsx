@@ -16,20 +16,22 @@ export function PolicyEditor({ catalog, policies, busy, onSave, onArchive }: {
   const scene = currentScenario(catalog, draft.contract_type);
   const validScope = usableCatalog(catalog) && (draft.contract_type === '全部' || !!scene) && draft.our_roles.every(r => scene?.roles.some(x => x.value === r));
   return <main id="legal-main" tabIndex={-1} className="lv-policy-page">
-    <div className="lv-policy-inner lv-enter">
+    <div className="lv-policy-inner">
       <h1>公司规范</h1>
-      <p className="lv-lede">审查时将逐条对照公司内部要求。</p>
+      <p className="lv-page-meta">审查时逐条对照<span className="lv-sep" aria-hidden="true">·</span><span className="lv-mono">{policies.length}</span> 条启用<span className="lv-sep" aria-hidden="true">·</span>仅组织管理员可编辑</p>
       <div className="lv-policy-layout">
-        <section className="lv-policy-list" aria-labelledby="legal-policy-list-title">
-          <div className="lv-section-head"><h2 id="legal-policy-list-title">已启用</h2><span>{policies.length}</span></div>
+        <section className="lv-policy-list" aria-label="已启用规范">
           {!policies.length && <div className="lv-policy-empty"><PolicySheet /><p>暂无公司规范</p></div>}
           {policies.map(p => <article key={p.id}>
-            <div className="lv-policy-title"><h3>{p.title}</h3><small>v{p.version}</small></div>
-            <span className="lv-policy-type">{p.contract_type === '全部' ? '全部合同' : p.contract_type} · {p.our_roles?.length ? p.our_roles.join(' / ') : '全部身份'}</span>
-            <p>{p.text}</p>
-            <div className="lv-inline-actions">
+            <span className="lv-mono lv-policy-version">v{p.version}</span>
+            <div className="lv-policy-main">
+              <h3>{p.title}</h3>
+              <p className="lv-policy-text">{p.text}</p>
+              <span className="lv-policy-type">{p.contract_type === '全部' ? '全部合同' : p.contract_type} · {p.our_roles?.length ? p.our_roles.join(' / ') : '全部身份'}</span>
+            </div>
+            <div className="lv-policy-actions">
               <button className="lv-secondary lv-btn-sm" disabled={busy} onClick={() => { setEditing(p); setDraft({ title: p.title, text: p.text, contract_type: p.contract_type, our_roles: p.our_roles || [] }); }}>编辑</button>
-              <button className="lv-text-button" disabled={busy} onClick={() => onArchive(p)}>归档</button>
+              <button className="lv-quiet lv-btn-sm" disabled={busy} onClick={() => onArchive(p)}>归档</button>
             </div>
           </article>)}
         </section>
@@ -43,18 +45,20 @@ export function PolicyEditor({ catalog, policies, busy, onSave, onArchive }: {
             </select></label>
           {scene && <fieldset className="lv-field lv-fieldset" disabled={busy}>
             <legend className="lv-field-label">适用身份<span className="lv-optional">不选则全部适用</span></legend>
-            <div className="lv-check-row">{scene.roles.map(role => <label key={role.value} className="lv-check">
+            <div className="lv-check-pills">{scene.roles.map(role => <label key={role.value} className={draft.our_roles.includes(role.value) ? 'selected' : ''}>
               <input type="checkbox" checked={draft.our_roles.includes(role.value)} onChange={e => setDraft({ ...draft, our_roles: e.target.checked ? [...draft.our_roles, role.value] : draft.our_roles.filter(r => r !== role.value) })} />
-              <span>{role.value}</span></label>)}</div>
+              {role.value}</label>)}</div>
           </fieldset>}
           {!validScope && <p className="lv-note is-warn" role="alert">适用范围与合同类型目录不匹配，请重新选择。</p>}
           <label className="lv-field"><span className="lv-field-label">规范内容</span>
-            <textarea className="lv-textarea" required minLength={5} maxLength={2500} rows={6} value={draft.text} onChange={e => setDraft({ ...draft, text: e.target.value })}
+            <textarea className="lv-textarea" required minLength={5} maxLength={2500} rows={5} value={draft.text} onChange={e => setDraft({ ...draft, text: e.target.value })}
               placeholder="如：预付款超过合同总价 30% 时，须经业务负责人审批。" /></label>
-          <p className="lv-hint">仅组织管理员可编辑。</p>
-          <div className="lv-inline-actions">
-            <button className="lv-primary" disabled={busy || !validScope}>保存规范</button>
-            {editing && <button type="button" className="lv-secondary" onClick={() => { setEditing(null); setDraft(EMPTY); }}>取消编辑</button>}
+          <div className="lv-policy-submit">
+            <span className="lv-hint">保存后用于新的审查</span>
+            <span className="lv-inline-actions">
+              {editing && <button type="button" className="lv-quiet lv-btn-sm" onClick={() => { setEditing(null); setDraft(EMPTY); }}>取消编辑</button>}
+              <button className="lv-primary lv-btn-sm" disabled={busy || !validScope}>保存规范</button>
+            </span>
           </div>
         </form>
       </div>

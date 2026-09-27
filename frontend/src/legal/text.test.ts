@@ -46,6 +46,10 @@ describe('partyCandidates', () => {
     expect(partyCandidates([block('p1', '【脱敏1】应在签约后支付全部价款。')])).toEqual([{ blockId: 'p1', quote: '【脱敏1】', context: '【脱敏1】应在签约后支付全部价款。' }]);
     expect(partyCandidates([block('p2', '甲方：【脱敏1】')])[0].context).toBeUndefined();
   });
+  it('does not offer signature lines as the party', () => {
+    const blocks = [block('p1', '甲方（采购方）：【脱敏1】'), block('p9', '甲方（盖章）：            乙方（签字或盖章）：')];
+    expect(partyCandidates(blocks).map(c => c.quote)).toEqual(['甲方（采购方）：【脱敏1】']);
+  });
   it('returns quotes that are always contained in their paragraph', () => {
     const blocks = [block('a', '出租人：【脱敏1】\n承租人：张三'), block('b', '甲方（盖章）：【脱敏1】')];
     for (const c of partyCandidates(blocks)) expect(blocks.find(b => b.id === c.blockId)?.text.includes(c.quote)).toBe(true);
