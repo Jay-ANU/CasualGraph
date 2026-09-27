@@ -23,6 +23,10 @@ def fake(system,data):
                         'missing_facts':[],'citations':[],'policy_ids':[],'suggested_text':data['contract_blocks'][0]['text'].replace('90','60')}]
     return raw
 
+@pytest.fixture(autouse=True)
+def no_retry_pause(monkeypatch):
+    monkeypatch.setattr(v2,'TRANSIENT_PAUSE',0)
+
 def run(runtime,model=fake,search=retrieve,authorize=lambda *a:None):
     runtime['job']['payload']['profile']['review_mode']='multi_agent'
     v2.run_review('r1',model=model,retrieve=search,authorize=authorize)
@@ -128,6 +132,7 @@ def test_failure_retains_independent_results_and_selective_resume(runtime):
     run(runtime,model)
     assert runtime['job']['status']=='partial'
     p=runtime['job']['payload'];old=deepcopy(p['batches']['commercial:0']);calls=[]
+    assert p['step_errors'] and all(e['code']=='ydata_invalid_json' and e['id'].startswith('legal:') and '：' in e['title'] for e in p['step_errors'])
     def resumed(s,d):calls.append(d['agent_context']['id']);return fake(s,d)
     run(runtime,resumed)
     assert runtime['job']['status']=='completed'

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import threading
@@ -26,12 +27,23 @@ _LOCK = threading.Lock()
 _CACHE: dict[str, Any] = {}
 _ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$')
 _PLACEHOLDER_KEYS = {'...', 'your-api-key', 'replace-me', 'bearer ...'}
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+# A streamed reply carries every token in its own event, many times the size of the text itself.
+MAX_STREAM_BYTES = 48 * 1024 * 1024
+MAX_REPLY_CHARACTERS = 1024 * 1024
+STREAM_SECONDS = 900
+UNAVAILABLE = 'YData 连接超时或响应无效；没有自动切换其他模型。'
+INCOMPLETE = '模型未返回完整的结构化审查结果；任务已保留，可重试，不会发布截断结论。'
+log = logging.getLogger(__name__)
 
 
 class GatewayError(RuntimeError):
-    def __init__(self, code: str, message: str, status_code: int = 503, retry_after: float | None = None):
+    def __init__(self, code: str, message: str, status_code: int = 503, retry_after: float | None = None,
+                 upstream_status: int | None = None):
         super().__init__(message)
         self.code, self.message, self.status_code, self.retry_after = code, message, status_code, retry_after
+        # The gateway's own HTTP status: for logs, and to tell a refused stream from a failed call.
+        self.upstream_status = upstream_status
 
 
 def _retry_after(value: str | None) -> float | None:
@@ -127,39 +139,51 @@ def family_of(model: str) -> str | None:
 
 
 def _client() -> httpx.Client:
-    # Long reviews are not streamed; allow the gateway time to finish a full structured answer.
+    # The read timeout is the longest silence allowed: between two chunks of a streamed reply, or
+    # for the whole answer when a gateway does not stream.
     return httpx.Client(timeout=httpx.Timeout(300, connect=10, pool=10, write=30),
                         follow_redirects=False, trust_env=False)
 
 
+def _headers(key: str, accept: str) -> dict:
+    return {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'Accept': accept}
+
+
+def _status_error(response: httpx.Response) -> GatewayError:
+    status = response.status_code
+    if status in (401, 403):
+        return GatewayError('ydata_unauthorized', 'YData 拒绝访问，请管理员检查密钥及模型授权。', upstream_status=status)
+    if status == 429:
+        return GatewayError('ydata_rate_limited', 'YData 请求限额已达到，请稍后重试。', 429,
+                            retry_after=_retry_after(response.headers.get('retry-after')), upstream_status=status)
+    return GatewayError('ydata_request_failed', f'YData 请求失败（HTTP {status}），请检查网关及所选模型的聊天接口支持。', 502,
+                        upstream_status=status)
+
+
+def _read_json(response: httpx.Response) -> dict:
+    parts, size = [], 0
+    for part in response.iter_bytes():
+        size += len(part)
+        if size > MAX_RESPONSE_BYTES:
+            raise GatewayError('ydata_response_too_large', 'YData 响应超出限制。', 502)
+        parts.append(part)
+    data = json.loads(b''.join(parts))
+    if not isinstance(data, dict):
+        raise ValueError('not an object')
+    return data
+
+
 def _request(client: httpx.Client, method: str, path: str, key: str, **kwargs) -> dict:
     try:
-        with client.stream(method, BASE_URL + path,
-                           headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json',
-                                    'Accept': 'application/json'}, **kwargs) as response:
+        with client.stream(method, BASE_URL + path, headers=_headers(key, 'application/json'), **kwargs) as response:
             if not response.is_success:
-                status = response.status_code
-                if status in (401, 403):
-                    raise GatewayError('ydata_unauthorized', 'YData 拒绝访问，请管理员检查密钥及模型授权。')
-                if status == 429:
-                    raise GatewayError('ydata_rate_limited', 'YData 请求限额已达到，请稍后重试。', 429,
-                                       retry_after=_retry_after(response.headers.get('retry-after')))
-                raise GatewayError('ydata_request_failed', 'YData 请求失败，请检查网关及所选模型的聊天接口支持。', 502)
-            parts, size = [], 0
-            for part in response.iter_bytes():
-                size += len(part)
-                if size > 2 * 1024 * 1024:
-                    raise GatewayError('ydata_response_too_large', 'YData 响应超出限制。', 502)
-                parts.append(part)
-        data = json.loads(b''.join(parts))
-        if not isinstance(data, dict):
-            raise ValueError('not an object')
-        return data
+                raise _status_error(response)
+            return _read_json(response)
     except GatewayError:
         raise
     except (httpx.HTTPError, ValueError, UnicodeError):
         # Never expose upstream response bodies, authorization headers or contract prompts.
-        raise GatewayError('ydata_unavailable', 'YData 连接超时或响应无效；没有自动切换其他模型。', 502) from None
+        raise GatewayError('ydata_unavailable', UNAVAILABLE, 502) from None
 
 
 def clear_cache() -> None:
@@ -316,35 +340,131 @@ def _json_object(content: str) -> dict:
     return value
 
 
+def _streaming() -> bool:
+    """Chat replies are streamed unless LEGAL_YDATA_STREAM=0, for a gateway that cannot stream."""
+    return os.getenv('LEGAL_YDATA_STREAM', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+
+
+def _events(response: httpx.Response, deadline: float):
+    """The data line of each server-sent event; OpenAI-style streams put one JSON chunk on each."""
+    buffer, size = b'', 0
+    for part in response.iter_bytes():
+        size += len(part)
+        if size > MAX_STREAM_BYTES:
+            raise GatewayError('ydata_response_too_large', 'YData 响应超出限制。', 502)
+        if time.monotonic() > deadline:
+            raise GatewayError('ydata_unavailable', UNAVAILABLE, 502)
+        *lines, buffer = (buffer + part).split(b'\n')
+        for line in lines:
+            if line.startswith(b'data:'):
+                yield line[5:].strip().decode('utf-8')
+    if buffer.startswith(b'data:'):
+        yield buffer[5:].strip().decode('utf-8')
+
+
+def _reply(data: dict) -> tuple[str, str | None, int]:
+    """Text, finish reason and reasoning length of an ordinary (not streamed) completion."""
+    try:
+        choice = data['choices'][0]
+        finish = choice.get('finish_reason')
+        message = choice.get('message') or {}
+    except (KeyError, IndexError, TypeError, AttributeError):
+        raise GatewayError('ydata_invalid_json', INCOMPLETE, 502) from None
+    if not isinstance(message, dict):
+        return '', finish, 0
+    content = message.get('content')
+    thinking = sum(len(message[k]) for k in ('reasoning_content', 'reasoning') if isinstance(message.get(k), str))
+    return content if isinstance(content, str) else '', finish, thinking
+
+
+def _stream_reply(client: httpx.Client, key: str, request: dict) -> tuple[str, str | None, int]:
+    """A completion read while it is written. Bytes keep arriving as the model works, so a long
+    structured answer is not cut off by an idle timeout on the way; it is used only once complete."""
+    deadline = time.monotonic() + STREAM_SECONDS
+    try:
+        with client.stream('POST', BASE_URL + '/chat/completions', headers=_headers(key, 'text/event-stream'),
+                            json={**request, 'stream': True}) as response:
+            if not response.is_success:
+                raise _status_error(response)
+            if 'text/event-stream' not in response.headers.get('content-type', '').lower():
+                # A gateway that ignores the stream flag answers with an ordinary completion.
+                return _reply(_read_json(response))
+            text, length, thinking, finish, done = [], 0, 0, None, False
+            for data in _events(response, deadline):
+                if data == '[DONE]':
+                    done = True
+                    break
+                if not data:
+                    continue
+                chunk = json.loads(data)
+                if not isinstance(chunk, dict):
+                    raise ValueError('not an object')
+                if chunk.get('error'):
+                    raise GatewayError('ydata_request_failed', 'YData 在模型输出过程中报错；未发布不完整结论，可重试。', 502)
+                for choice in chunk.get('choices') or []:
+                    if not isinstance(choice, dict) or (choice.get('index') or 0) != 0:
+                        continue
+                    delta = choice.get('delta') or choice.get('message') or {}
+                    if isinstance(delta, dict):
+                        piece = delta.get('content')
+                        if isinstance(piece, str):
+                            text.append(piece)
+                            length += len(piece)
+                        # Reasoning is streamed beside the answer by some models; it is never part of it.
+                        thinking += sum(len(delta[k]) for k in ('reasoning_content', 'reasoning') if isinstance(delta.get(k), str))
+                    finish = choice.get('finish_reason') or finish
+                if length > MAX_REPLY_CHARACTERS:
+                    raise GatewayError('ydata_response_too_large', 'YData 响应超出限制。', 502)
+    except GatewayError:
+        raise
+    except (httpx.HTTPError, ValueError, UnicodeError):
+        raise GatewayError('ydata_unavailable', UNAVAILABLE, 502) from None
+    if finish is None and not done:
+        raise GatewayError('ydata_unavailable', 'YData 连接在模型输出完成前中断；未发布不完整结论，可重试。', 502)
+    return ''.join(text), finish or 'stop', thinking
+
+
+def _complete(client: httpx.Client, key: str, request: dict) -> tuple[str, str | None, int]:
+    if _streaming():
+        try:
+            return _stream_reply(client, key, request)
+        except GatewayError as exc:
+            # A route that refuses a streamed request may still answer an ordinary one.
+            if exc.code != 'ydata_request_failed' or not 400 <= (exc.upstream_status or 0) < 500:
+                raise
+    return _reply(_request(client, 'POST', '/chat/completions', key, json={**request, 'stream': False}))
+
+
 def chat_json(system: str, payload: dict, selection: dict, *, client: httpx.Client | None = None) -> dict:
     if not isinstance(selection, dict) or selection.get('provider') != 'ydata':
         raise GatewayError('legacy_review_restart_required', '旧任务未记录 YData 模型及授权，请选择模型并新建审查。', 409)
     model = select_model(selection.get('id', ''), client=client)
-    request = {'model': model['id'], 'stream': False,
+    request = {'model': model['id'],
                'messages': [{'role': 'system', 'content': system},
                             {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}],
                **_token_budget(model['id'])}
     key = _key_for_family(model['family'])
     # JSON is required by the prompt and checked locally. Do not impose an unsupported
     # response_format/temperature/thinking option on every gateway model family.
-    if client is None:
-        with _client() as owned:
-            response = _request(owned, 'POST', '/chat/completions', key, json=request)
-    else:
-        response = _request(client, 'POST', '/chat/completions', key, json=request)
+    started = time.monotonic()
     try:
-        choice = response['choices'][0]
-        finish = choice.get('finish_reason')
-    except (KeyError, IndexError, TypeError, AttributeError):
-        raise GatewayError('ydata_invalid_json', '模型未返回完整的结构化审查结果；任务已保留，可重试，不会发布截断结论。', 502) from None
-    if finish == 'length':
-        raise GatewayError('ydata_truncated', '模型输出超过长度上限被截断；未发布不完整结论，可缩小范围后重试。', 502)
-    try:
-        if finish not in ('stop', 'end_turn'):
-            raise ValueError('incomplete response')
-        content = choice['message']['content']
-        if not isinstance(content, str):
-            raise ValueError('no text response')
-        return _json_object(content.strip())
-    except (KeyError, IndexError, TypeError, ValueError):
-        raise GatewayError('ydata_invalid_json', '模型未返回完整的结构化审查结果；任务已保留，可重试，不会发布截断结论。', 502) from None
+        if client is None:
+            with _client() as owned:
+                content, finish, thinking = _complete(owned, key, request)
+        else:
+            content, finish, thinking = _complete(client, key, request)
+        if finish in ('length', 'max_tokens'):
+            if thinking > len(content):
+                raise GatewayError('ydata_truncated', '模型推理占用了大部分输出上限，结构化结果被截断；未发布不完整结论，可重试或换用其他模型。', 502)
+            raise GatewayError('ydata_truncated', '模型输出超过长度上限被截断；未发布不完整结论，可缩小范围后重试。', 502)
+        try:
+            if finish not in ('stop', 'end_turn'):
+                raise ValueError('incomplete response')
+            return _json_object(content.strip())
+        except (KeyError, IndexError, TypeError, ValueError):
+            raise GatewayError('ydata_invalid_json', INCOMPLETE, 502) from None
+    except GatewayError as exc:
+        # Codes, sizes and timing only: never the prompt, the reply or a key.
+        log.warning('ydata chat failed: model=%s code=%s upstream=%s seconds=%.1f', model['id'], exc.code,
+                    exc.upstream_status, time.monotonic() - started)
+        raise

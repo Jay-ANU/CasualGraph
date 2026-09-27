@@ -148,6 +148,7 @@ def _review_view(r: dict):
             'draft_check': p.get('draft_check'), 'draft_approval': p.get('draft_approval'), 'research': p.get('research'),
             'collaboration': p.get('collaboration'), 'metrics': p.get('metrics', {}),
             'summary': p.get('summary', {}), 'progress': p.get('progress'), 'batch_errors': p.get('batch_errors', {}),
+            'step_errors': p.get('step_errors', []),
             'review_tier': review_tier(p.get('profile', {})), 'skills': skill_registry.public(p.get('skills')),
             'retrieval': [{'rule_id': k, 'status': s['status'], 'provider': s.get('provider', 'external'), 'warnings': s.get('warnings', []), 'issue': s.get('issue')}
                           for k, s in p.get('searches', {}).items()],

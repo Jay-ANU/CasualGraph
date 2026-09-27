@@ -133,9 +133,114 @@ def test_families_use_exact_selected_model_and_gateway(mid):
         result = ydata.chat_json('Return JSON', {'contract_blocks':[{'text':'【脱敏1】'}]}, {'id':mid,'provider':'ydata'}, client=client)
     assert result == {'findings':[]}
     assert len(sent) == 1 and sent[0]['model'] == mid
-    assert sent[0]['stream'] is False
+    assert sent[0]['stream'] is True
     assert 'response_format' not in sent[0] and 'temperature' not in sent[0]
     assert 'synthetic-test-gateway-key' not in json.dumps(sent)
+
+
+class Pieces(httpx.SyncByteStream):
+    """A body delivered a few bytes at a time, splitting lines and characters across chunks."""
+    def __init__(self, body: bytes, size: int = 7):
+        self.body, self.size = body, size
+
+    def __iter__(self):
+        for i in range(0, len(self.body), self.size):
+            yield self.body[i:i + self.size]
+
+
+def sse(*chunks, done=True) -> bytes:
+    events = ''.join(f'data: {json.dumps(c, ensure_ascii=False)}\n\n' for c in chunks)
+    return (events + ('data: [DONE]\n\n' if done else '')).encode()
+
+
+def streamed(*chunks, done=True):
+    return httpx.Response(200, headers={'content-type': 'text/event-stream; charset=utf-8'}, stream=Pieces(sse(*chunks, done=done)))
+
+
+def gateway(answer):
+    """The catalog on GET; each chat request is answered by answer(body, request)."""
+    sent = []
+    def respond(request):
+        if request.method == 'GET':
+            return httpx.Response(200, json=catalog_response())
+        body = json.loads(request.content)
+        sent.append(body)
+        return answer(body, request)
+    return respond, sent
+
+
+def chat(respond):
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        return ydata.chat_json('JSON', {}, {'provider': 'ydata', 'id': 'glm-5.2'}, client=client)
+
+
+def text_chunk(text, finish=None):
+    return {'choices': [{'index': 0, 'delta': {'content': text}, 'finish_reason': finish}]}
+
+
+def test_streamed_reply_is_assembled_and_reasoning_is_left_out():
+    reply = '{"findings": [{"title": "付款期限过长，回款风险"}]}'
+    chunks = [{'choices': [{'index': 0, 'delta': {'role': 'assistant', 'reasoning_content': '先核对付款条款……'}}]}]
+    chunks += [text_chunk(reply[i:i + 5]) for i in range(0, len(reply), 5)]
+    chunks += [text_chunk('', 'stop'), {'choices': [], 'usage': {'completion_tokens': 20}}]
+    def answer(body, request):
+        assert body['stream'] is True and request.headers['Accept'] == 'text/event-stream'
+        return streamed(*chunks)
+    respond, sent = gateway(answer)
+    assert chat(respond) == {'findings': [{'title': '付款期限过长，回款风险'}]}
+    assert len(sent) == 1
+
+
+def test_a_stream_that_ends_cleanly_without_a_finish_reason_is_accepted():
+    respond, _ = gateway(lambda body, request: streamed(text_chunk('{"ok": true}')))
+    assert chat(respond) == {'ok': True}
+
+
+def test_a_stream_cut_off_before_the_model_finishes_is_not_published():
+    respond, _ = gateway(lambda body, request: streamed(text_chunk('{"findings": ['), done=False))
+    with pytest.raises(ydata.GatewayError) as exc:
+        chat(respond)
+    assert exc.value.code == 'ydata_unavailable'
+
+
+def test_an_error_reported_mid_stream_fails_the_call():
+    respond, _ = gateway(lambda body, request: streamed(text_chunk('{"a":'), {'error': {'message': 'secret upstream detail'}}, done=False))
+    with pytest.raises(ydata.GatewayError) as exc:
+        chat(respond)
+    assert exc.value.code == 'ydata_request_failed' and 'secret' not in exc.value.message
+
+
+@pytest.mark.parametrize('finish,thinking,phrase', [('length', '', '长度上限'), ('max_tokens', '', '长度上限'), ('length', '推' * 400, '推理')])
+def test_a_reply_stopped_at_the_output_limit_is_truncated(finish, thinking, phrase):
+    chunks = [{'choices': [{'index': 0, 'delta': {'reasoning_content': thinking}}]}] if thinking else []
+    respond, _ = gateway(lambda body, request: streamed(*chunks, text_chunk('{"findings": [{"title": "付', finish)))
+    with pytest.raises(ydata.GatewayError) as exc:
+        chat(respond)
+    assert exc.value.code == 'ydata_truncated' and phrase in exc.value.message
+
+
+def test_a_gateway_that_refuses_streaming_is_asked_again_without_it():
+    def answer(body, request):
+        if body['stream']:
+            return httpx.Response(400, json={'error': 'stream is not supported for this model'})
+        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': '{"ok": true}'}}]})
+    respond, sent = gateway(answer)
+    assert chat(respond) == {'ok': True}
+    assert [body['stream'] for body in sent] == [True, False]
+
+
+def test_a_gateway_failure_names_its_status_without_the_body():
+    respond, sent = gateway(lambda body, request: httpx.Response(504, text='upstream timeout secret-contract-text'))
+    with pytest.raises(ydata.GatewayError) as exc:
+        chat(respond)
+    assert exc.value.code == 'ydata_request_failed' and 'HTTP 504' in exc.value.message
+    assert 'secret' not in exc.value.message and len(sent) == 1
+
+
+def test_streaming_can_be_turned_off(monkeypatch):
+    monkeypatch.setenv('LEGAL_YDATA_STREAM', '0')
+    respond, sent = gateway(lambda body, request: httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': '{"ok": true}'}}]}))
+    assert chat(respond) == {'ok': True} and [body['stream'] for body in sent] == [False]
 
 
 @pytest.mark.parametrize('status', [401,403,429,500,302])

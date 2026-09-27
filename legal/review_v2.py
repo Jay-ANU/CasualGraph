@@ -22,6 +22,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from copy import deepcopy
 import hashlib
 import json
+import logging
 import os
 import random
 import threading
@@ -36,9 +37,18 @@ ENGINE_VERSION = 2
 TIERS = skill_registry.TIERS
 MAX_CALLS_PER_ATTEMPT = 32
 MAX_INPUT_CHARACTERS = 125000
+# Two rules per group keeps each structured answer short enough to finish well within the
+# output limit, and the groups still run side by side.
+GROUP_SIZE = 2
 RATE_LIMIT_PAUSE = 2.0
 RATE_LIMIT_RETRIES = 3
 RATE_LIMIT_MAX_WAIT = 30.0
+# A dropped connection, a gateway error or a malformed answer usually succeeds when asked again.
+TRANSIENT = frozenset({'ydata_unavailable', 'ydata_request_failed', 'ydata_invalid_json', 'ydata_response_too_large'})
+TRANSIENT_RETRIES = 1
+TRANSIENT_PAUSE = 2.0
+STEP_TITLES = {'research': '法律检索规划', 'cross_check': '修改兼容性核对'}
+log = logging.getLogger(__name__)
 
 
 def _concurrency() -> int:
@@ -65,7 +75,7 @@ REVIEW = '''你是中国大陆企业合同审查辅助系统，站在我方立�
 先看合同全文、定义和例外，再按rules检查；即使无问题，也要为每条规则输出coverage和具体检查范围。
 法律意见在law_refs中写明所依据的法律、行政法规或司法解释全称、条号和条文要点（依你的专业知识；不确定条号时只写法律名称和要点，不要编造条号），系统会对照官方原文核验，核验前标注为模型引用；legal_sources提供了原文时，可在citations中逐字引用。历史交易须考虑时间适用。
 suggested_text是对应段落的完整替代文本：只改必要内容，保留其他约定及脱敏代称，不改变代称的数量和顺序；缺失条款或事实不足时留空。
-每批最多10条意见，按重要性排序，不凑数，不重复previous_findings；title不超过30字，impact不超过80字，reason不超过200字。original_quote必须是对应block_id的逐字引句。
+每批最多6条意见，按重要性排序，不凑数，不重复previous_findings；title不超过30字，impact不超过80字，reason不超过200字。original_quote必须是对应block_id的逐字引句。
 结构：{"coverage":[{"rule_id":"...","status":"reviewed|not_applicable|needs_information","note":"具体检查范围、结果或缺口"}],
 "findings":[{"rule_id":"...","block_id":"p1或null","original_quote":"逐字原文或空","title":"具体问题","kind":"legal|commercial|company_policy",
 "severity":"high|medium|low","impact":"风险如何影响我方","reason":"事实、适用条件、例外和判断依据","missing_facts":[],
@@ -85,9 +95,9 @@ status=supported仅表示在当前材料范围内支持候选意见，不代表�
 CROSS_CHECK = VERIFY + '''
 本步骤不复核单条意见，只检查proposed_changes全部同时采用时是否相互兼容：重点比较定义、时间、付款条件、责任与解除；同一段的不同替代文本不能同时成立。
 checks和coverage_checks输出空数组；为每个proposed_changes输出一项proposal_checks:[{"finding_id":"...","status":"consistent|conflict|uncertain","reason":"一句话说明"}]。'''
-BRIEFER = '\n上次输出过长被截断：只保留最重要的意见（最多5条），各字段进一步精简。'
+BRIEFER = '\n上次输出过长被截断：只保留最重要的意见（最多3条），各字段进一步精简。'
 # The ultra-fast tier has no second pass, so it asks for fewer, shorter findings to answer sooner.
-QUICK = '\n极速模式：只报告每组最重要的问题（最多6条），reason 不超过120字，impact 不超过50字。'
+QUICK = '\n极速模式：只报告每组最重要的问题（最多4条），reason 不超过120字，impact 不超过50字。'
 UNVERIFIED = '极速模式未做独立复核与法规检索，请人工确认后再采用。'
 UNCHECKED = '本档位不做全文交叉核对；导出前仍会核验实际选择的修改组合。'
 
@@ -117,7 +127,7 @@ def review_tier(profile: dict) -> str:
 
 
 def review_tasks(plan: list[dict], team: bool, tier: str = 'standard') -> list[dict]:
-    """Independent review groups: three rules per group plus the whole-contract pass; the deep
+    """Independent review groups: GROUP_SIZE rules per group plus the whole-contract pass; the deep
     tier runs one group per specialist batch instead."""
     if team:
         tasks = [{**t, 'prompt': REVIEW + '\n本 Agent 的职责：' + t['instructions'] + '\n仅输出kind=' + t['kind'] + '的候选意见。'}
@@ -125,10 +135,18 @@ def review_tasks(plan: list[dict], team: bool, tier: str = 'standard') -> list[d
         return tasks + [{'id': 'consistency', 'agent_id': 'arbiter', 'title': '全文协调与冲突检查', 'kind': None,
                          'rules': [CONSISTENCY], 'prompt': REVIEW}]
     prompt = REVIEW + QUICK if tier == 'ultra_fast' else REVIEW
-    tasks = [{'id': str(i), 'agent_id': 'standard', 'title': '、'.join(r['title'] for r in plan[i:i + 3]), 'kind': None,
-              'rules': plan[i:i + 3], 'prompt': prompt} for i in range(0, len(plan), 3)]
+    tasks = [{'id': str(i), 'agent_id': 'standard', 'title': '、'.join(r['title'] for r in plan[i:i + GROUP_SIZE]), 'kind': None,
+              'rules': plan[i:i + GROUP_SIZE], 'prompt': prompt} for i in range(0, len(plan), GROUP_SIZE)]
     return tasks + [{'id': 'consistency', 'agent_id': 'standard', 'title': CONSISTENCY['title'], 'kind': None,
                      'rules': [CONSISTENCY], 'prompt': prompt}]
+
+
+def step_title(task: dict) -> str:
+    """What a failed step checked, in words a reviewer recognises."""
+    if task['id'] == 'consistency':
+        return task['title']
+    topics = '；'.join(r['title'].split(' / ', 1)[-1] for r in task['rules'])
+    return (task['title'] if task.get('kind') else '分项审查') + '：' + topics
 
 
 def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | None = None,
@@ -155,6 +173,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
     stopped = threading.Event()
     counter = {'calls': 0}
     attempt_errors: dict[str, str] = {}
+    error_codes: dict[str, str] = {}
     fatal: list[Exception] = []
     started = time.monotonic()
 
@@ -198,7 +217,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                    'agent_context': {'id': agent_id, 'collaboration_version': agents.COLLABORATION_VERSION if team else None}}
         if len(system) + len(json.dumps(request, ensure_ascii=False)) > MAX_INPUT_CHARACTERS:
             raise ydata.GatewayError('legal_context_budget', '本步骤上下文超过预算；未静默截断合同，请缩小审查范围。', 422)
-        prompt, briefer, limited, wait = system, False, 0, 0.0
+        prompt, briefer, limited, transient, wait = system, False, 0, 0, 0.0
         while True:
             if wait:
                 # Back off without holding a slot, so other calls keep running meanwhile.
@@ -237,6 +256,13 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                         backoff = getattr(exc, 'retry_after', None) or RATE_LIMIT_PAUSE * 2 ** (limited - 1)
                         wait = min(RATE_LIMIT_MAX_WAIT, backoff) + random.uniform(0, 1)
                         continue
+                    # A request the gateway refused as malformed (4xx) fails the same way when repeated.
+                    refused = 400 <= (getattr(exc, 'upstream_status', None) or 0) < 500 and exc.upstream_status not in (408, 409, 425)
+                    if transient < TRANSIENT_RETRIES and exc.code in TRANSIENT and not refused:
+                        transient += 1
+                        log.info('legal review %s: retrying %s after %s', rid, agent_id, exc.code)
+                        wait = TRANSIENT_PAUSE * random.uniform(1, 1.5)
+                        continue
                     raise
                 guarded()
                 return result
@@ -247,11 +273,15 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
         with lock:
             if isinstance(exc, ydata.GatewayError):
                 attempt_errors[key] = exc.message
+                error_codes[key] = exc.code
+                if exc.code != 'team_paused':
+                    log.warning('legal review %s: step %s failed with %s', rid, key, exc.code)
                 if exc.code in HARD_STOP:
                     fatal.append(exc)
                 if exc.code in HARD_STOP or exc.code in PAUSE:
                     stopped.set()
             else:
+                log.warning('legal review %s: step %s stopped the review with %s', rid, key, type(exc).__name__)
                 fatal.append(exc)
                 stopped.set()
 
@@ -268,11 +298,18 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 p['plan'] = build_plan(legacy.RULES, redacted, p['profile'], policies)
             plan = p['plan']
             tasks = review_tasks(plan, team, tier)
+            if not team:
+                # Room for one retry of every call; smaller groups mean more calls for the same plan.
+                budget = max(budget, 4 * len(tasks) + 4)
             skills = skill_registry.prompt_items(p.get('skills'))
             if not researching:
                 p['research'] = {'status': 'skipped', 'issues': [], 'rejected_queries': 0, 'reason': 'tier'}
             p.setdefault('batches', {})
             p.setdefault('searches', {})
+            # A review started under another grouping keeps no batch that the current tasks do not own.
+            owned = {t['id'] for t in tasks}
+            for key in [k for k in p['batches'] if k not in owned]:
+                p['batches'].pop(key)
             previous_errors = dict(p.get('batch_errors', {}))
             if team:
                 p['collaboration_version'] = agents.COLLABORATION_VERSION
@@ -495,6 +532,9 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 if t['id'] not in p['batches']:
                     errors.setdefault(t['id'], '此步骤尚未完成。')
             p['batch_errors'] = errors
+            titles = {**STEP_TITLES, **{t['id']: step_title(t) for t in tasks}}
+            p['step_errors'] = [{'id': key, 'title': titles.get(key, key), 'code': error_codes.get(key, 'not_finished'), 'message': message}
+                                for key, message in errors.items()]
             p['findings'], p['coverage'] = findings, coverage
             p['summary'] = quality.summary(findings, coverage)
             # Partial is never a clean pass. The stage says which kind: failed steps (retry), legal

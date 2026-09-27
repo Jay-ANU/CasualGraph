@@ -81,7 +81,7 @@ def no_search(*args):
 def test_ultra_fast_is_one_round_of_review_calls_without_research_or_verification(runtime):
     seen, kinds = run_tier(runtime, 'ultra_fast', retrieve=no_search)
     p = runtime['payload']
-    assert kinds == ['review'] * 3 and all(s.endswith(v2.QUICK) for s, _ in seen)
+    assert kinds == ['review'] * 4 and all(s.endswith(v2.QUICK) for s, _ in seen)
     assert runtime['status'] == 'completed' and p['stage'].startswith('极速审查完成（未做法规检索和独立复核）')
     assert p['research']['status'] == 'skipped' and not p['searches']
     assert all(f['verification_status'] == 'skipped' and not f['revision_allowed'] for f in p['findings'])
@@ -92,7 +92,7 @@ def test_ultra_fast_is_one_round_of_review_calls_without_research_or_verificatio
 def test_fast_verifies_each_group_but_skips_research_and_the_compatibility_pass(runtime):
     seen, kinds = run_tier(runtime, 'fast', retrieve=no_search)
     p = runtime['payload']
-    assert sorted(kinds) == ['review'] * 3 + ['verify'] * 3
+    assert sorted(kinds) == ['review'] * 4 + ['verify'] * 4
     assert runtime['status'] == 'completed' and p['stage'].startswith('快速审查完成（已逐项复核')
     assert all(f['revision_allowed'] and f['cross_edit_status'] == 'unchecked' and f['cross_edit_note'] == v2.UNCHECKED for f in p['findings'])
 
@@ -113,7 +113,7 @@ def test_fast_still_blocks_two_different_replacements_for_one_paragraph(runtime)
 
 def test_standard_and_deep_keep_research_verification_and_the_compatibility_pass(runtime):
     _, kinds = run_tier(runtime, 'standard')
-    assert kinds.count('intake') == 1 and kinds.count('cross') == 1 and kinds.count('verify') == 3
+    assert kinds.count('intake') == 1 and kinds.count('cross') == 1 and kinds.count('verify') == 4
     runtime.update(status='queued', payload={**runtime['payload'], 'batches': {}, 'findings': [], 'searches': {}, 'research': None,
                                              'cross_check': None, 'batch_errors': {}, 'plan': runtime['payload']['plan']})
     seen, kinds = run_tier(runtime, 'deep')
