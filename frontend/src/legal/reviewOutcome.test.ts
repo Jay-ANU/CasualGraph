@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { failedSteps, researchGaps, reviewOutcome, reviewStatusLabel } from './labels';
+import { failedSteps, noSearchReason, researchGaps, reviewOutcome, reviewStatusLabel } from './labels';
 import { ReviewReport } from './report';
 import type { Review } from './types';
 
@@ -22,6 +22,17 @@ describe('review outcome', () => {
     // Reviews saved before steps were named still say which kind of step stopped.
     expect(failedSteps(review({ batch_errors: { cross_check: '超时', research: '失败', '3': '中断' } })).map(s => s.title))
       .toEqual(['分项审查', '修改兼容性核对', '法律检索规划']);
+  });
+  it('says why no legal search ran', () => {
+    const none = { retrieval: [] };
+    expect(noSearchReason(review(none))).toBeNull();
+    expect(noSearchReason(review({ ...none, research: { status: 'skipped', issues: [], reason: 'tier' } }))).toMatchObject({ warn: false, text: expect.stringContaining('本档位不检索') });
+    expect(noSearchReason(review({ ...none, research: { status: 'skipped', issues: [] } }))?.warn).toBe(true);
+    expect(noSearchReason(review({ ...none, research: null, step_errors: [{ id: 'research', title: '法律检索规划', code: 'ydata_unavailable', message: '连接中断。' }] })))
+      .toEqual({ warn: true, text: '法律检索规划未完成，本次没有检索法规。连接中断。' });
+    expect(noSearchReason(review({ ...none, research: { status: 'done', issues: [] } }))).toMatchObject({ warn: false, text: expect.stringContaining('没有需要检索') });
+    // Once anything was searched, the per-issue rows say how it went instead.
+    expect(noSearchReason(review({ research: { status: 'skipped', issues: [], reason: 'tier' } }))).toBeNull();
   });
   it('treats missing official text as a basis to check, not a failed review', () => {
     const r = review({ retrieval: [{ rule_id: 'i1', status: 'no_verified_source', provider: 'bing_rss', warnings: [] },

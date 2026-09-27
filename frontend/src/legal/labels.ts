@@ -33,6 +33,27 @@ export function failedSteps(r: Pick<Review, 'step_errors' | 'batch_errors'>): St
   return Object.entries(r.batch_errors || {}).map(([id, message]) => ({ id, title: STEP_NAMES[id] || '分项审查', code: '', message }));
 }
 
+export const SEARCH_NAME: Record<string, string> = { tavily: 'Tavily', bing_rss: 'Bing' };
+
+/** What a planned legal search found, per issue. */
+export const SEARCH_STATE: Record<string, { label: string; tone: string }> = {
+  retrieved: { label: '已取得原文', tone: 'is-ok' }, no_verified_source: { label: '未取得官方原文', tone: 'is-mid' },
+  timeout: { label: '检索超时', tone: 'is-mid' }, unavailable: { label: '检索失败', tone: 'is-high' },
+};
+
+/** Why a review searched no legal source at all, or null when it searched; warn marks a failure rather than a choice. */
+export function noSearchReason(r: Pick<Review, 'research' | 'retrieval' | 'step_errors' | 'batch_errors'>): { text: string; warn: boolean } | null {
+  if ((r.retrieval || []).length) return null;
+  if (r.research?.status === 'skipped') {
+    return r.research.reason === 'tier' ? { text: '本档位不检索法规；意见引用的法条标注为“模型引用，待核对”。', warn: false }
+      : { text: '检索服务未配置，本次没有检索法规。', warn: true };
+  }
+  const planning = failedSteps(r).find(step => step.id === 'research');
+  if (planning) return { text: `法律检索规划未完成，本次没有检索法规。${planning.message}`, warn: true };
+  if (r.research && !r.research.issues.length) return { text: '模型判断本合同没有需要检索的法律问题，未发起检索。', warn: false };
+  return null;
+}
+
 export const OUTCOME_LABEL: Record<ReviewOutcome, string> = { failed_steps: '部分完成', evidence_gaps: '依据待核对', to_confirm: '待确认' };
 
 export function reviewStatusLabel(r: Pick<Review, 'status' | 'batch_errors' | 'retrieval' | 'coverage' | 'review_tier' | 'profile'>): string {
