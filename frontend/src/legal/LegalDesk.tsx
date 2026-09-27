@@ -1,28 +1,32 @@
 import React from 'react';
-import { AlertCircle, ArrowRight, Check, ChevronDown, FileText, Home, Menu, PanelRight, SlidersHorizontal, X } from 'lucide-react';
+import { AlertCircle, FileText, X } from 'lucide-react';
 import { apiFetch, jsonRequest, readApiError, withAuth } from '../api/client';
 import { apiBase } from '../api/config';
 import type { Answer, Api, Block, Capabilities, Catalog, Contract, ContractSummary, Decision, Finding, Matter, Policy, Review, ReviewTier, User, Workspace } from './types';
 import './LegalDesk.css';
-import { findingCounts, findingStatus } from './findingStatus';
-import { pendingDecisions, uploadIssue, visibleFindings } from './deskLogic';
+import { uploadIssue } from './deskLogic';
 import { emptyTransactionInputs, transactionAmount } from './transactionInput';
 import { changeScenario, currentScenario, scenarioRoleValid } from './scenarioInput';
-import { CONTRACT_STATUS, STEPS, TIER_LABEL, fileTitle, reviewStatusLabel, tierOf } from './labels';
+import { fileTitle, TIER_LABEL, tierOf } from './labels';
+import { partyCandidates } from './text';
 import { ReviewReport } from './report';
-import { ConfirmDialog, CountUp, DrawnCheck } from './ui';
+import type { DeskView, Stage, ToneFilter } from './workspace';
+import { clauseOutline, deskStage, filterByTone, isActive, isDone, isRevised, nextUndecided, numberFindings, pagesOf, placeLabel,
+  redactionTokens, STEP_LABELS, stepOf } from './workspace';
+import { ConfirmDialog, Toast } from './ui';
 import { ic } from './icon';
-import { Sidebar } from './Sidebar';
-import { Welcome } from './Welcome';
-import { RedactionStep } from './RedactionStep';
+import { TopBar } from './TopBar';
+import type { Step } from './TopBar';
+import { Library } from './Library';
+import { Outline } from './Outline';
+import { Paper } from './Paper';
+import { RedactionPanel } from './RedactionPanel';
 import { SetupForm } from './SetupForm';
 import type { SetupValues } from './SetupForm';
-import { ReviewIssue, ReviewProgress, ReviewSummary } from './ReviewStatus';
-import { FindingList } from './FindingList';
-import { ReviewDetails } from './ReviewDetails';
-import { FollowUp } from './FollowUp';
+import { ReviewProgress } from './ReviewStatus';
+import { ResultsPanel } from './ResultsPanel';
+import type { RailTab } from './ResultsPanel';
 import { ReleasePanel } from './ReleasePanel';
-import { DocumentPane } from './DocumentPane';
 import { PolicyEditor } from './PolicyEditor';
 import { ContractSheet } from './art';
 
@@ -31,38 +35,44 @@ type State = {
   workspace: Workspace | null; matters: Matter[]; contracts: ContractSummary[]; contract: Contract | null;
   review: Review | null; policies: Policy[]; caps: Capabilities | null; catalog: Catalog | null;
   busy: boolean; loading: boolean; error: string; modelError: string; modelsLoading: boolean;
-  tab: 'review' | 'policies'; mobileMenu: boolean; showDocument: boolean; setupOpen: boolean;
+  tab: 'review' | 'policies'; view: DeskView; pane: 'rail' | 'paper'; railTab: RailTab; tone: ToneFilter;
+  selected: string | null; located: { id: string; n: number } | null;
   ourRole: string; contractType: string; date: string; instructions: string; consent: boolean; modelId: string;
-  terms: string; preview: Block[] | null; selectedBlock: string | null; filter: string; statusFilter: string;
-  historyQuery: string; question: string; answers: Answer[]; questionBusy: boolean; questionConsent: boolean;
+  terms: string; preview: Block[] | null; libraryQuery: string; question: string; answers: Answer[]; questionBusy: boolean; questionConsent: boolean;
   ourPartyBlock: string; ourPartyQuote: string; excludedTerms: string; originalBlocks: Block[] | null;
-  notice: string; denied: boolean; reviewTier: ReviewTier;
+  notice: string; hint: string; denied: boolean; reviewTier: ReviewTier;
   performanceStage: string; attachmentsStatus: string; businessPriority: string; dealValue: string; currency: string;
-  exportFormat: 'docx' | 'txt' | null; pendingFile: File | null; confirmingRedaction: boolean; archivePolicy: Policy | null; resultQuery: string; documentQuery: string;
+  exportFormat: 'docx' | 'txt' | null; pendingFile: File | null; confirmingRedaction: boolean; archivePolicy: Policy | null;
 };
 const errorText = (e: unknown) => e instanceof Error ? e.message : '操作没有完成，请重试。';
-const wide = () => window.matchMedia('(min-width: 1100px)').matches;
 const motion = (): ScrollBehavior => window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+const RAIL_LABEL: Record<Stage, string> = { redaction: '脱敏核对', setup: '审查设置', running: '审查进度', results: '批注', export: '导出' };
+/** Everything that belongs to one open contract; reset whenever another one opens. */
+const freshContract = () => ({
+  exportFormat: null, pendingFile: null, confirmingRedaction: false, originalBlocks: null, ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '',
+  review: null, preview: null, terms: '', consent: false, answers: [], question: '', questionConsent: false,
+  view: 'work' as DeskView, pane: 'rail' as const, railTab: 'notes' as RailTab, tone: 'all' as ToneFilter, selected: null, located: null,
+});
 
 /** Own the desk's request lifecycle; test previews may inject a synthetic API. */
 export default class LegalDesk extends React.Component<Props, State> {
   state: State = { workspace: null, matters: [], contracts: [], contract: null, review: null, policies: [], caps: null, catalog: null,
-    busy: false, loading: true, error: '', modelError: '', modelsLoading: false, tab: 'review', mobileMenu: false,
-    showDocument: false, setupOpen: true, ourRole: '', contractType: '采购合同', date: '', instructions: '', consent: false, modelId: '',
-    terms: '', preview: null, selectedBlock: null, filter: 'all', statusFilter: 'all', historyQuery: '', question: '', answers: [],
+    busy: false, loading: true, error: '', modelError: '', modelsLoading: false, tab: 'review', view: 'work', pane: 'rail', railTab: 'notes', tone: 'all',
+    selected: null, located: null, ourRole: '', contractType: '采购合同', date: '', instructions: '', consent: false, modelId: '',
+    terms: '', preview: null, libraryQuery: '', question: '', answers: [],
     ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '', originalBlocks: null,
-    questionBusy: false, questionConsent: false, notice: '', denied: false, reviewTier: 'standard',
+    questionBusy: false, questionConsent: false, notice: '', hint: '', denied: false, reviewTier: 'standard',
     performanceStage: '未知', attachmentsStatus: '未知', businessPriority: '综合审查', dealValue: '', currency: 'CNY',
-    exportFormat: null, pendingFile: null, confirmingRedaction: false, archivePolicy: null, resultQuery: '', documentQuery: '' };
+    exportFormat: null, pendingFile: null, confirmingRedaction: false, archivePolicy: null };
   private live = false;
   private generation = 0;
   private operation = false;
   private polling = false;
   private modelGeneration = 0;
+  private locateCount = 0;
   private timer?: ReturnType<typeof setInterval>;
   private priorTitle = '';
   private uploadInput: HTMLInputElement | null = null;
-  private focusBeforeMenu: HTMLElement | null = null;
   private api: Api = <T,>(path: string, init?: RequestInit) => (this.props.request || apiFetch)<T>(path, init);
 
   componentDidMount() {
@@ -133,7 +143,7 @@ export default class LegalDesk extends React.Component<Props, State> {
   };
   private async poll() {
     const r = this.state.review;
-    if (!r || !['queued', 'running'].includes(r.status) || this.polling) return;
+    if (!r || !isActive(r) || this.polling) return;
     this.polling = true;
     const seq = this.generation;
     try {
@@ -142,31 +152,27 @@ export default class LegalDesk extends React.Component<Props, State> {
     } catch (e) { this.fail(e); }
     finally { this.polling = false; }
   }
+  /** Back to the library: nothing of the previous contract stays in memory. */
   private clear = () => {
     this.generation++;
-    this.setState({ exportFormat: null, pendingFile: null, confirmingRedaction: false, resultQuery: '', documentQuery: '', filter: 'all', statusFilter: 'all',
-      contractType: '采购合同', ourRole: '', originalBlocks: null, ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '', contract: null, review: null,
-      preview: null, terms: '', consent: false, selectedBlock: null, instructions: '', date: '', performanceStage: '未知', attachmentsStatus: '未知',
-      businessPriority: '综合审查', dealValue: '', currency: 'CNY', question: '', answers: [], showDocument: false, setupOpen: true,
-      tab: 'review', error: '', notice: '', mobileMenu: false, questionConsent: false }, () => {
+    this.setState({ ...freshContract(), ...emptyTransactionInputs(), contract: null, contractType: '采购合同', ourRole: '', instructions: '', date: '',
+      tab: 'review', error: '', notice: '', hint: '', libraryQuery: '' }, () => {
       document.getElementById('legal-upload-button')?.focus();
     });
     history.replaceState(null, '', '/legal');
   };
   private openContract = async (id: string) => {
     const seq = ++this.generation;
-    this.setState({ exportFormat: null, pendingFile: null, confirmingRedaction: false, resultQuery: '', documentQuery: '', filter: 'all', statusFilter: 'all',
-      ...emptyTransactionInputs(), contractType: '采购合同', date: '', ourRole: '', instructions: '', originalBlocks: null, ourPartyBlock: '', ourPartyQuote: '',
-      excludedTerms: '', review: null, preview: null, terms: '', consent: false, selectedBlock: null, answers: [], question: '', questionConsent: false });
+    this.setState({ ...freshContract(), ...emptyTransactionInputs(), contractType: '采购合同', date: '', ourRole: '', instructions: '' });
     const contract = await this.api<Contract>(`/legal/contracts/${id}`);
     if (!this.live || seq !== this.generation) return;
-    this.setState({ contract, tab: 'review', showDocument: wide(), mobileMenu: false });
+    this.setState({ contract, tab: 'review' });
     history.replaceState(null, '', `/legal?contract=${encodeURIComponent(id)}`);
     if (contract.reviews.length) {
       const review = await this.api<Review>(`/legal/reviews/${contract.reviews[0].id}`);
       if (!this.live || seq !== this.generation) return;
       const context = review.profile?.transaction_context;
-      this.setState({ review, setupOpen: false, ourRole: review.profile?.our_role || '',
+      this.setState({ review, ourRole: review.profile?.our_role || '',
         ourPartyBlock: review.profile?.our_party?.block_id || '', ourPartyQuote: review.profile?.our_party?.quote || '',
         contractType: review.profile?.contract_type || '采购合同', instructions: review.profile?.instructions || '',
         reviewTier: tierOf(review), date: review.profile?.transaction_date || '',
@@ -177,7 +183,7 @@ export default class LegalDesk extends React.Component<Props, State> {
         const data = await this.api<{ messages: Answer[] }>(`/legal/reviews/${review.id}/questions`);
         if (this.live && seq === this.generation) this.setState({ answers: data.messages });
       }
-    } else this.setState({ setupOpen: true, ourRole: '', instructions: '' });
+    }
   };
   private queueUpload = (file?: File) => {
     if (!file || this.operation || this.state.loading) return;
@@ -204,10 +210,8 @@ export default class LegalDesk extends React.Component<Props, State> {
     const contract = await this.api<Contract>('/legal/contracts', { method: 'POST', body: form });
     if (!this.live) return;
     this.generation++;
-    this.setState({ pendingFile: null, resultQuery: '', documentQuery: '', filter: 'all', statusFilter: 'all', ...emptyTransactionInputs(), date: '', ourRole: '',
-      instructions: this.state.contract ? '' : this.state.instructions, contractType, originalBlocks: null, ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '',
-      contract, review: null, preview: null, terms: '', consent: false, selectedBlock: null,
-      answers: [], question: '', showDocument: wide(), setupOpen: true, tab: 'review', questionConsent: false });
+    this.setState({ ...freshContract(), ...emptyTransactionInputs(), date: '', ourRole: '', instructions: this.state.contract ? '' : this.state.instructions,
+      contractType, contract, tab: 'review' });
     history.replaceState(null, '', `/legal?contract=${encodeURIComponent(contract.id)}`);
     await this.refreshList(workspace);
   };
@@ -220,7 +224,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     this.setState({ preview: preview.blocks });
     if (confirmed) {
       const contract = await this.api<Contract>(`/legal/contracts/${c.id}`);
-      if (this.live) this.setState({ contract, confirmingRedaction: false, originalBlocks: null, showDocument: wide(), notice: '脱敏已确认' });
+      if (this.live) this.setState({ contract, confirmingRedaction: false, originalBlocks: null, preview: null, pane: 'rail', notice: '脱敏已确认' });
       if (this.state.workspace) await this.refreshList(this.state.workspace);
     }
   };
@@ -238,37 +242,58 @@ export default class LegalDesk extends React.Component<Props, State> {
         deal_value: amount.value, currency: s.currency },
       instructions: s.instructions, fresh_review: Boolean(s.review), review_tier: s.reviewTier, review_mode: s.reviewTier === 'deep' ? 'multi_agent' : 'standard',
     }));
-    if (this.live) this.setState({ review, setupOpen: false, answers: [], question: '', questionConsent: false }, () => document.getElementById('legal-main')?.scrollTo({ top: 0, behavior: motion() }));
+    if (this.live) this.setState({ review, view: 'work', pane: 'rail', railTab: 'notes', tone: 'all', selected: null, located: null, answers: [], question: '', questionConsent: false });
   };
+  /** Numbered findings of the open review, in reading order. */
+  private numbered() {
+    const c = this.state.contract, r = this.state.review;
+    return c && r ? numberFindings(r.findings, c.blocks) : { open: [], excluded: [] };
+  }
   private decide = async (f: Finding, value: string, replacement: string, legalBasis: boolean, manual: boolean) => {
     const r = this.state.review; if (!r) return;
     const decision = await this.api<Decision>(`/legal/reviews/${r.id}/findings/${f.id}`, jsonRequest('PATCH', {
       decision: value, text: replacement, expected_version: r.decisions[f.id]?.version || 0,
       legal_basis_confirmed: legalBasis, manual_edit_confirmed: manual,
     }));
-    if (this.live && this.state.review?.id === r.id) this.setState(s => ({ review: s.review ? { ...s.review, draft_check: undefined, draft_approval: undefined, decisions: { ...s.review.decisions, [f.id]: decision } } : null }));
+    const current = this.state.review;
+    if (!this.live || !current || current.id !== r.id) return;
+    const decisions = { ...current.decisions, [f.id]: decision };
+    this.setState(s => ({ review: s.review ? { ...s.review, draft_check: undefined, draft_approval: undefined, decisions } : null }), () => {
+      // A decision moves on to the next finding still waiting, so the list can be worked top to bottom.
+      if (value === 'pending') return;
+      const ids = filterByTone(this.numbered().open, this.state.tone).map(x => x.finding.id);
+      const next = nextUndecided(ids, decisions, f.id);
+      if (next !== f.id) this.select(next);
+    });
   };
   private showOriginal = async () => {
     const c = this.state.contract; if (!c) return;
     if (this.state.originalBlocks) { this.setState({ originalBlocks: null }); return; }
     const seq = this.generation;
     const data = await this.api<{ blocks: Block[] }>(`/legal/contracts/${c.id}/original-text`);
-    if (this.live && seq === this.generation && this.state.contract?.id === c.id) this.setState({ originalBlocks: data.blocks, showDocument: true });
+    if (this.live && seq === this.generation && this.state.contract?.id === c.id) this.setState({ originalBlocks: data.blocks, pane: 'paper' });
   };
-  private locate = (id: string) => {
-    this.setState({ showDocument: true, selectedBlock: id }, () => {
-      document.getElementById(`legal-block-${id}`)?.scrollIntoView({ block: 'center', behavior: motion() });
+  /** Scroll the paper to a paragraph and the rail to a finding, without moving the page itself. */
+  private reveal(blockId: string | null | undefined, findingId?: string | null) {
+    requestAnimationFrame(() => {
+      const scroll = (box: Element | null, el: HTMLElement | null, pad: number) => {
+        if (!box || !el || !box.contains(el)) return;
+        box.scrollTo({ top: box.scrollTop + el.getBoundingClientRect().top - box.getBoundingClientRect().top - pad, behavior: motion() });
+      };
+      if (blockId) scroll(document.querySelector('.lv-paper-desk'), document.getElementById(`legal-block-${blockId}`), 96);
+      if (findingId) scroll(document.getElementById('legal-notes'), document.getElementById(`legal-finding-${findingId}`), 8);
     });
+  }
+  private select = (id: string) => {
+    const item = this.numbered().open.find(x => x.finding.id === id);
+    if (!item) return;
+    const hidden = !filterByTone(this.numbered().open, this.state.tone).some(x => x.finding.id === id);
+    const block = item.finding.block_id;
+    this.setState(s => ({ selected: id, railTab: 'notes', tone: hidden ? 'all' : s.tone, located: block ? { id: block, n: ++this.locateCount } : s.located }),
+      () => this.reveal(block, id));
   };
-  /** Clicking a paragraph with open findings jumps to the first one. */
-  private selectParagraph = (block: Block) => {
-    const finding = this.state.review?.findings.find(f => f.block_id === block.id && findingStatus(f) !== 'rejected');
-    this.setState(state => ({ selectedBlock: block.id, filter: finding ? 'all' : state.filter, statusFilter: finding ? 'all' : state.statusFilter,
-      resultQuery: finding ? '' : state.resultQuery, showDocument: finding ? wide() : state.showDocument }), () => {
-      if (!finding) return;
-      const el = document.getElementById(`legal-finding-${finding.id}`);
-      el?.scrollIntoView({ block: 'center', behavior: 'auto' }); el?.focus({ preventScroll: true });
-    });
+  private locate = (blockId: string) => {
+    this.setState({ located: { id: blockId, n: ++this.locateCount }, pane: 'paper' }, () => this.reveal(blockId));
   };
   private download = async (format: 'docx' | 'txt' | 'md', confirmed = false) => {
     const r = this.state.review, c = this.state.contract; if (!r || !c) return;
@@ -299,21 +324,6 @@ export default class LegalDesk extends React.Component<Props, State> {
     } catch (e) { this.fail(e); }
     finally { if (this.live) this.setState({ questionBusy: false }); }
   };
-  private toggleMenu = () => {
-    if (!this.state.mobileMenu) this.focusBeforeMenu = document.activeElement as HTMLElement;
-    this.setState(s => ({ mobileMenu: !s.mobileMenu }), () => {
-      requestAnimationFrame(() => { if (!this.live) return; if (this.state.mobileMenu) document.getElementById('legal-close-menu')?.focus(); else this.focusBeforeMenu?.focus(); });
-    });
-  };
-  private menuKey = (event: React.KeyboardEvent<HTMLElement>) => {
-    if (!this.state.mobileMenu) return;
-    if (event.key === 'Escape') { this.toggleMenu(); return; }
-    if (event.key !== 'Tab') return;
-    const elements = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input, select'));
-    const first = elements[0], last = elements[elements.length - 1];
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-  };
   /** Any change to what is sent withdraws the model-processing consent. */
   private changeSetup = (patch: Partial<SetupValues>) => this.setState({ ...patch, consent: false } as Pick<State, keyof SetupValues>);
   private changeType = (type: string) => {
@@ -326,175 +336,153 @@ export default class LegalDesk extends React.Component<Props, State> {
     if (this.live) this.setState({ review });
   });
 
-  private renderWorkspace(c: Contract) {
+  private steps(c: Contract, stage: Stage): Step[] {
+    const r = this.state.review, index = stepOf(stage);
+    const settled = Boolean(r && !isActive(r));
+    const go = (view: DeskView) => () => this.setState({ view, pane: 'rail' });
+    return STEP_LABELS.map((label, i) => ({
+      label, state: i < index ? 'done' : i === index ? 'current' : 'todo',
+      onClick: i === 1 && settled && stage !== 'setup' && c.redaction_version === 2 ? go('setup')
+        : i === 3 && settled && stage !== 'results' ? go('work')
+        : i === 4 && isDone(r) && stage !== 'export' ? go('export') : undefined,
+    }));
+  }
+
+  private renderWorkspace(c: Contract, stage: Stage) {
     const s = this.state, r = s.review;
-    const active = Boolean(r && ['queued', 'running'].includes(r.status));
-    const done = Boolean(r && ['completed', 'partial'].includes(r.status));
+    const blocks = s.preview || c.blocks;
+    const outline = clauseOutline(blocks);
+    const { open, excluded } = this.numbered();
+    const items = stage === 'running' || stage === 'results' ? open : stage === 'export' ? open.filter(x => isRevised(r?.decisions[x.finding.id])) : [];
+    const selected = stage === 'results' ? (open.some(x => x.finding.id === s.selected) ? s.selected : open[0]?.finding.id ?? null) : null;
+    const selectedBlock = open.find(x => x.finding.id === selected)?.finding.block_id ?? null;
     const scenarioValid = scenarioRoleValid(s.caps?.scenario_catalog, s.contractType, s.ourRole);
     const partyValid = s.ourPartyQuote.trim().length >= 2 && !!c.blocks.find(b => b.id === s.ourPartyBlock)?.text.includes(s.ourPartyQuote);
     const amountValid = transactionAmount(s.dealValue).valid;
-    const blocks = s.preview || c.blocks;
-    const query = s.documentQuery.trim().toLocaleLowerCase();
-    const visibleBlocks = blocks.filter(block => block.text.toLocaleLowerCase().includes(query));
     const startIssue = c.redaction_version !== 2 ? '当前合同需重新上传并完成脱敏确认。'
-      : !scenarioValid ? '请选择我方身份。'
-      : !partyValid ? '请选择我方主体。'
-      : !amountValid ? '交易金额格式有误。'
+      : !s.ourRole || !scenarioValid ? '请选择我方身份'
+      : !partyValid ? '请选择我方主体'
+      : !amountValid ? '交易金额格式有误'
       : s.modelsLoading ? '正在加载模型…'
-      : !s.modelId || s.caps?.model_configured === false ? '暂无可用模型，请刷新后重试。'
-      : !s.consent ? '请勾选模型分析授权。' : '';
-    const canStart = !(s.busy || active || s.modelsLoading || !s.consent || !s.modelId || !scenarioValid || !partyValid || !amountValid || c.redaction_version !== 2 || s.caps?.model_configured === false);
+      : !s.modelId || s.caps?.model_configured === false ? '暂无可用模型，请刷新后重试'
+      : !s.consent ? '请勾选模型分析授权' : '';
+    const canStart = !startIssue && !s.busy;
     const values: SetupValues = { contractType: s.contractType, ourRole: s.ourRole, ourPartyBlock: s.ourPartyBlock, ourPartyQuote: s.ourPartyQuote,
       instructions: s.instructions, performanceStage: s.performanceStage, attachmentsStatus: s.attachmentsStatus, businessPriority: s.businessPriority,
       dealValue: s.dealValue, currency: s.currency, date: s.date, reviewTier: s.reviewTier, modelId: s.modelId, consent: s.consent };
-    const setup = <SetupForm contract={c} caps={s.caps} catalog={s.catalog} values={values} hasReview={Boolean(r)} busy={s.busy} locked={active}
+    const checked = r ? r.coverage.filter(x => ['reviewed', 'not_applicable'].includes(x.status)).length : 0;
+    const format = (c.format || '').toUpperCase();
+    const meta = stage === 'redaction' ? [{ k: '文件', v: `${format} · ${c.blocks.length} 段` }, { k: '脱敏', v: `${c.replacement_count} 处` }]
+      : stage === 'setup' ? [{ k: '文件', v: `${format} · ${c.blocks.length} 段` }, { k: '脱敏', v: `已确认 ${c.replacement_count} 处` }]
+      : r ? [{ k: '类型', v: r.profile?.contract_type || s.contractType }, { k: '我方', v: r.profile?.our_role || '—' }, { k: '档位', v: TIER_LABEL[tierOf(r)] },
+        { k: '模型', v: r.profile?.model?.id || s.modelId || '—' }, { k: '范围', v: isActive(r) ? '审查中' : `${checked}/${r.coverage.length} 已审查` }] : [];
+    const legacy = c.status === 'ready' && c.redaction_version !== 2;
+    let rail: React.ReactNode = null;
+    if (stage === 'redaction') rail = <RedactionPanel tokens={redactionTokens(blocks, s.originalBlocks)} comparing={Boolean(s.originalBlocks)}
+      whereOf={id => placeLabel(outline, id)} busy={s.busy} terms={s.terms} excludedTerms={s.excludedTerms}
+      onTerms={terms => this.setState({ terms, preview: null })} onExcluded={excludedTerms => this.setState({ excludedTerms, preview: null })}
+      onPreview={() => void this.run(() => this.redact(false))} onConfirm={() => this.setState({ confirmingRedaction: true, error: '' })} />;
+    else if (stage === 'setup') rail = <SetupForm contract={c} caps={s.caps} catalog={s.catalog} values={values} hasReview={Boolean(r)} busy={s.busy}
       modelsLoading={s.modelsLoading} canStart={canStart} startIssue={startIssue}
       onType={this.changeType} onChange={this.changeSetup} onConsent={consent => this.setState({ consent })}
-      onRefreshModels={() => void this.loadModels()} onStart={() => void this.run(this.start)} />;
-    const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: motion(), block: 'start' });
-    const counts = r ? findingCounts(r.findings) : null;
-    const handled = r && counts ? counts.actionable - pendingDecisions(r) : 0;
-    const step = c.status === 'redaction_pending' ? 0 : !r ? 1 : r.draft_approval ? 3 : 2;
-    return <>
-      <div className="lv-stepbar">
-        <nav className="lv-steps" aria-label="合同审查步骤"><ol>{STEPS.map((label, index) =>
-          <li key={label} className={index === step ? 'current' : index < step ? 'complete' : ''} aria-current={index === step ? 'step' : undefined}>
-            <span className="lv-step-dot">{index < step ? <DrawnCheck size={12} /> : index + 1}</span><span className="lv-step-label">{label}</span>
-          </li>)}</ol></nav>
-        <div className="lv-view-switch" role="group" aria-label="工作区视图">
-          <button aria-pressed={!s.showDocument} onClick={() => this.setState({ showDocument: false })}>审查</button>
-          <button aria-pressed={s.showDocument} onClick={() => this.setState({ showDocument: true })}>合同正文</button>
-        </div>
+      onRefreshModels={() => void this.loadModels()} onStart={() => void this.run(this.start)}
+      onBack={r && !isActive(r) ? () => this.setState({ view: 'work' }) : undefined} />;
+    else if (stage === 'running' && r) rail = <ReviewProgress review={r} canCancel={(s.caps?.review_engine_version || 0) >= 2} busy={s.busy} onCancel={() => this.reviewAction('cancel')} />;
+    else if (stage === 'results' && r) rail = <ResultsPanel review={r} blocks={c.blocks} open={open} excluded={excluded} clauseOf={id => placeLabel(outline, id)}
+      selected={selected} tone={s.tone} tab={s.railTab} busy={s.busy} followup={Boolean(s.caps?.followup_questions)}
+      answers={s.answers} question={s.question} questionBusy={s.questionBusy} questionConsent={s.questionConsent}
+      onTab={railTab => this.setState({ railTab })} onTone={tone => this.setState({ tone })} onSelect={this.select} onLocate={this.locate}
+      onDecision={(f, value, text, legalBasis, manual) => void this.run(() => this.decide(f, value, text, legalBasis, manual))}
+      onExport={() => this.setState({ view: 'export' })} onResume={() => this.reviewAction('resume')} onHint={hint => this.setState({ hint })}
+      onQuestion={question => this.setState({ question })} onQuestionConsent={questionConsent => this.setState({ questionConsent })} onAsk={() => void this.ask()} />;
+    else if (stage === 'export' && r) rail = <ReleasePanel review={r} contract={c} open={open} busy={s.busy}
+      onCheck={() => void this.run(async () => {
+        const review = await this.api<Review>(`/legal/reviews/${r.id}/draft-check`, jsonRequest('POST', { request_id: crypto.randomUUID(), external_processing_confirmed: true }));
+        if (this.live && this.state.review?.id === review.id) this.setState({ review });
+      })}
+      onApprove={fingerprint => void this.run(async () => {
+        const review = await this.api<Review>(`/legal/reviews/${r.id}/draft-approval`, jsonRequest('POST', { fingerprint, confirmed: true }));
+        if (this.live && this.state.review?.id === review.id) this.setState({ review });
+      })}
+      onReport={() => void this.run(() => this.download('md'))}
+      onDraft={() => void this.run(() => this.download(c.format === 'docx' ? 'docx' : 'txt'))}
+      onBack={() => this.setState({ view: 'work' })} />;
+    return <main id="legal-main" tabIndex={-1} className={`lv-workspace pane-${s.pane}`} aria-label="合同审查工作区">
+      <div className="lv-pane-switch" role="group" aria-label="工作区视图">
+        <button aria-pressed={s.pane === 'rail'} onClick={() => this.setState({ pane: 'rail' })}>{RAIL_LABEL[stage]}</button>
+        <button aria-pressed={s.pane === 'paper'} onClick={() => this.setState({ pane: 'paper' }, () => this.reveal(selectedBlock))}>合同正文</button>
       </div>
-      <div className={`lv-workbench ${s.showDocument ? 'with-document' : ''}`}>
-        <main id="legal-main" tabIndex={-1} className="lv-work" aria-label="合同审查工作区">
-          <div className="lv-work-inner">
-            {c.status === 'ready' && c.redaction_version !== 2 && <p className="lv-note is-warn">该合同使用旧版脱敏，仅可查看历史报告；重新审查请重新上传。</p>}
-            {c.warnings.length > 0 && <details className="lv-disclosure lv-parse-note"><summary>解析提示（{c.warnings.length}）</summary>
-              <div className="lv-disclosure-body">{c.warnings.map((w, i) => <p key={i}>{w}</p>)}</div></details>}
-            {c.status === 'redaction_pending' ? <RedactionStep contract={c} busy={s.busy} comparing={Boolean(s.originalBlocks)} showingDocument={s.showDocument}
-              terms={s.terms} excludedTerms={s.excludedTerms} onShowDocument={() => this.setState({ showDocument: true })}
-              onCompare={() => void this.run(this.showOriginal)} onTerms={terms => this.setState({ terms, preview: null })}
-              onExcluded={excludedTerms => this.setState({ excludedTerms, preview: null })} onPreview={() => void this.run(() => this.redact(false))}
-              onConfirm={() => this.setState({ confirmingRedaction: true, error: '' })} />
-            : !r ? <section className="lv-stage lv-enter" aria-labelledby="legal-setup-title">
-              <div className="lv-stage-head"><h2 id="legal-setup-title">审查设置</h2></div>
-              {setup}
-            </section>
-            : <>
-              {active && <ReviewProgress review={r} canCancel={(s.caps?.review_engine_version || 0) >= 2} busy={s.busy} onCancel={() => this.reviewAction('cancel')} />}
-              {done && <ReviewSummary review={r} onExport={() => scrollTo('legal-release')} />}
-              {(r.error || r.resumable || ['failed', 'cancelled'].includes(r.status)) && <ReviewIssue review={r} busy={s.busy} onResume={() => this.reviewAction('resume')} />}
-              <section className="lv-settings" aria-label="审查设置">
-                <button className="lv-settings-toggle" aria-expanded={s.setupOpen} aria-controls="legal-setup-body" onClick={() => this.setState({ setupOpen: !s.setupOpen })}>
-                  <SlidersHorizontal {...ic} /><span className="lv-settings-title">审查设置</span>
-                  <span className="lv-settings-summary">{[s.contractType, s.ourRole && `我方：${s.ourRole}`, TIER_LABEL[s.reviewTier], r.profile?.model?.id || s.modelId].filter(Boolean).join(' · ')}</span>
-                  <ChevronDown {...ic} />
-                </button>
-                {s.setupOpen && <div className="lv-settings-body" id="legal-setup-body">{setup}</div>}
-              </section>
-              {(r.findings.length > 0 || done) && <FindingList review={r} findings={visibleFindings(r, s.filter, s.statusFilter, s.resultQuery)} blocks={blocks} busy={s.busy} active={active}
-                kind={s.filter} status={s.statusFilter} query={s.resultQuery}
-                onKind={filter => this.setState({ filter })} onStatus={statusFilter => this.setState({ statusFilter })} onQuery={resultQuery => this.setState({ resultQuery })}
-                onClear={() => this.setState({ resultQuery: '', filter: 'all', statusFilter: 'all' })} onLocate={this.locate}
-                onDecision={(f, value, text, legalBasis, manual) => void this.run(() => this.decide(f, value, text, legalBasis, manual))} />}
-              {!active && <ReviewDetails review={r} onLocate={this.locate} />}
-              {done && s.caps?.followup_questions && <FollowUp review={r} blocks={blocks} answers={s.answers} question={s.question} busy={s.questionBusy}
-                consent={s.questionConsent} onQuestion={question => this.setState({ question })} onConsent={questionConsent => this.setState({ questionConsent })}
-                onAsk={() => void this.ask()} onLocate={this.locate} />}
-              {done && <ReleasePanel review={r} contract={c} busy={s.busy}
-                onCheck={() => void this.run(async () => {
-                  const review = await this.api<Review>(`/legal/reviews/${r.id}/draft-check`, jsonRequest('POST', { request_id: crypto.randomUUID(), external_processing_confirmed: true }));
-                  if (this.live && this.state.review?.id === review.id) this.setState({ review });
-                })}
-                onApprove={fingerprint => void this.run(async () => {
-                  const review = await this.api<Review>(`/legal/reviews/${r.id}/draft-approval`, jsonRequest('POST', { fingerprint, confirmed: true }));
-                  if (this.live && this.state.review?.id === review.id) this.setState({ review });
-                })}
-                onReport={() => void this.run(() => this.download('md'))}
-                onDraft={() => void this.run(() => this.download(c.format === 'docx' ? 'docx' : 'txt'))} />}
-            </>}
-            <p className="lv-footnote">审查结果仅供参考，不构成法律意见。</p>
-          </div>
-          {done && counts && counts.actionable > 0 && <div className="lv-dock" role="region" aria-label="处理进度">
-            <span className="lv-dock-text">已处理 <strong><CountUp value={handled} />/{counts.actionable}</strong></span>
-            <span className="lv-dock-bar" aria-hidden="true"><i style={{ width: `${Math.round((handled / counts.actionable) * 100)}%` }} /></span>
-            <button className="lv-secondary lv-btn-sm" onClick={() => scrollTo('legal-release')}>导出<ArrowRight {...ic} size={14} /></button>
-          </div>}
-        </main>
-        {s.showDocument && <DocumentPane contract={c} review={r} blocks={blocks} visibleBlocks={visibleBlocks} query={s.documentQuery}
-          selectedBlock={s.selectedBlock} originalBlocks={s.originalBlocks} onQuery={documentQuery => this.setState({ documentQuery })}
-          onClose={() => this.setState({ showDocument: false }, () => document.getElementById('legal-main')?.focus())} onParagraph={this.selectParagraph} />}
-      </div>
-    </>;
+      <Outline entries={outline} items={items} decisions={r?.decisions || {}} running={stage === 'running'} activeBlock={selectedBlock}
+        blockCount={blocks.length} pageCount={pagesOf(blocks).length} meta={meta}
+        onEntry={(entry, first) => { if (stage === 'results' && first) this.select(first); else this.locate(entry.id); }} />
+      <Paper contract={c} blocks={blocks} stage={stage} decisions={r?.decisions || {}} items={items} selected={selected} located={s.located}
+        originals={s.originalBlocks} busy={s.busy} candidates={stage === 'setup' ? partyCandidates(c.blocks) : []}
+        party={{ blockId: s.ourPartyBlock, quote: s.ourPartyQuote }} detail={stage === 'running' && r ? r.stage : undefined}
+        onSelect={id => { this.select(id); this.setState({ pane: 'rail' }); }} onCompare={() => void this.run(this.showOriginal)}
+        onParty={(ourPartyBlock, ourPartyQuote) => this.changeSetup({ ourPartyBlock, ourPartyQuote })} />
+      <aside className="lv-rail" aria-label="审查操作">
+        {(legacy || c.warnings.length > 0) && <div className="lv-rail-notes">
+          {legacy && <p className="lv-note is-warn">该合同使用旧版脱敏，仅可查看历史报告；重新审查请重新上传。</p>}
+          {c.warnings.length > 0 && <details className="lv-disclosure"><summary>解析提示（{c.warnings.length}）</summary>
+            <div className="lv-disclosure-body">{c.warnings.map((w, i) => <p key={i}>{w}</p>)}</div></details>}
+        </div>}
+        {rail}
+      </aside>
+    </main>;
   }
 
   render() {
     const s = this.state, c = s.contract, r = s.review;
     const canUpload = Boolean(s.workspace && s.caps?.encryption_configured && !s.busy && !s.loading);
     const dialogOpen = Boolean(s.pendingFile || s.confirmingRedaction || s.archivePolicy || s.exportFormat);
-    const statusKey = r ? r.status : c?.status || '';
-    const statusTone = ({ redaction_pending: 'is-mid', running: 'is-low', queued: 'is-low', completed: 'is-ink', partial: 'is-mid', failed: 'is-high', cancelled: 'is-high' } as Record<string, string>)[statusKey] || '';
-    if (s.denied) return <div className="legal-v2"><main className="lv-denied">
-      <ContractSheet size={64} intro={false} />
+    const stage = c ? deskStage(c, r, s.view) : null;
+    if (s.denied) return <div className="legal-v2 lv-gate"><main className="lv-gate-card">
+      <ContractSheet size={56} intro={false} />
       <h1>会员权限已变更</h1><p>合同审查为 Max 会员专享，合同内容已从页面移除。</p>
-      <a className="lv-primary" href="/agent">返回研究工作台</a>
+      <div className="lv-gate-actions"><a className="lv-primary" href="/agent">返回研究工作台</a></div>
     </main></div>;
-    return <div className={`legal-v2 ${s.mobileMenu ? 'lv-menu-open' : ''}`}>
+    const matterName = s.matters.find(m => m.id === s.workspace?.matter_id)?.name;
+    return <div className="legal-v2">
       <a className="lv-skip" href="#legal-main">跳到工作区</a>
-      {s.mobileMenu && <button className="lv-backdrop" aria-label="关闭侧栏" onClick={this.toggleMenu} />}
-      <Sidebar open={s.mobileMenu} busy={s.busy} loading={s.loading} tab={s.tab} user={this.props.user} matters={s.matters} workspace={s.workspace}
-        contracts={s.contracts} currentId={c?.id} policyCount={s.policies.length} query={s.historyQuery} onQuery={historyQuery => this.setState({ historyQuery })}
-        activeReview={c && r && ['queued', 'running'].includes(r.status) ? { contractId: c.id, status: r.status } : undefined}
-        onNew={this.clear} onTab={tab => this.setState({ tab, mobileMenu: false })} onOpen={id => void this.run(() => this.openContract(id))}
+      <TopBar section={s.tab === 'policies' ? '公司规范' : c ? fileTitle(c.name) : undefined}
+        steps={c && stage && s.tab === 'review' ? this.steps(c, stage) : undefined} policyCount={s.policies.length} policiesOpen={s.tab === 'policies'}
+        onHome={this.clear} onPolicies={() => this.setState(state => ({ tab: state.tab === 'policies' ? 'review' : 'policies' }))}
+        user={this.props.user} matters={s.matters} workspace={s.workspace} busy={s.busy} onLogout={this.props.logout}
         onMatter={id => {
           const m = s.matters.find(x => x.id === id); if (!m) return;
           void this.run(async () => { this.clear(); const workspace = { matter_id: m.id, org_id: m.org_id }; this.setState({ workspace }); await this.refreshList(workspace); });
-        }}
-        onClose={this.toggleMenu} onLogout={this.props.logout} onKeyDown={this.menuKey} />
-      <div className="lv-main-shell" ref={el => { if (el) el.inert = s.mobileMenu; }}>
-        <header className="lv-topbar">
-          <button className="lv-icon lv-mobile-only" onClick={this.toggleMenu} aria-label="打开导航"><Menu {...ic} size={20} /></button>
-          {c && s.tab === 'review' ? <div className="lv-title">
-            <h1>{fileTitle(c.name)}</h1>
-            <span className="lv-title-meta">{c.format.toUpperCase()} · {c.blocks.length} 段</span>
-            <span className={`lv-chip ${statusTone}`}>{(r ? reviewStatusLabel(r) : CONTRACT_STATUS[c.status]) || statusKey}</span>
-          </div> : <div className="lv-title"><span className="lv-title-plain">{s.tab === 'policies' ? '公司规范' : '合同审查'}</span></div>}
-          <div className="lv-top-actions">
-            {c && s.tab === 'review' && <button className="lv-quiet lv-doc-toggle" aria-pressed={s.showDocument} onClick={() => this.setState({ showDocument: !s.showDocument })}><PanelRight {...ic} />{s.showDocument ? '收起正文' : '查看正文'}</button>}
-            <a href="/" className="lv-icon" aria-label="返回网站首页"><Home {...ic} size={18} /></a>
-          </div>
-        </header>
-        {s.error && !dialogOpen && <div className="lv-banner lv-error" role="alert"><AlertCircle {...ic} /><span>{s.error}</span><button className="lv-icon" aria-label="关闭错误" onClick={() => this.setState({ error: '' })}><X {...ic} /></button></div>}
-        {s.notice && <div className="lv-banner lv-notice" role="status"><Check {...ic} /><span>{s.notice}</span><button className="lv-icon" aria-label="关闭提示" onClick={() => this.setState({ notice: '' })}><X {...ic} /></button></div>}
-        {s.caps && !s.caps.encryption_configured && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>安全存储未配置，暂不可上传，请联系管理员。</span></div>}
-        {s.modelError && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>{s.modelError}</span><button className="lv-text-button" onClick={() => void this.loadModels()}>重新加载</button></div>}
-        <input ref={el => { this.uploadInput = el; }} type="file" accept=".docx,.pdf,.txt" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; this.queueUpload(file); }} />
-        {s.loading ? <main className="lv-skeleton" role="status"><span className="lv-sr">加载中…</span>
-            <span className="lv-sk lv-sk-title" /><span className="lv-sk lv-sk-line" /><span className="lv-sk lv-sk-card" /></main>
-          : !s.workspace ? <main id="legal-main" className="lv-loading"><AlertCircle {...ic} size={22} /><h1>工作空间加载失败</h1>
-            <p>请检查网络后重试。</p><button className="lv-primary" onClick={() => void this.initialize()}>重试</button></main>
-          : s.tab === 'policies' ? <PolicyEditor catalog={s.caps?.scenario_catalog} policies={s.policies} busy={s.busy}
-            onSave={(draft, existing) => void this.run(async () => {
-              if (!s.workspace) return;
-              await this.api(`/legal/policies${existing ? `/${existing.id}` : ''}?org_id=${encodeURIComponent(s.workspace.org_id)}`, jsonRequest(existing ? 'PUT' : 'POST', { ...draft, version: existing?.version }));
-              await this.refreshList(s.workspace);
-            })} onArchive={policy => this.setState({ archivePolicy: policy, error: '' })} />
-          : !c ? <Welcome disabled={!canUpload}
-            onUpload={() => this.uploadInput?.click()} onDrop={files => {
-              if (files.length !== 1) { this.setState({ error: '每次仅支持上传一份合同。' }); return; }
-              this.queueUpload(files[0]);
-            }} />
-          : this.renderWorkspace(c)}
-      </div>
+        }} />
+      {s.error && !dialogOpen && <div className="lv-banner lv-error" role="alert"><AlertCircle {...ic} /><span>{s.error}</span><button className="lv-icon" aria-label="关闭错误" onClick={() => this.setState({ error: '' })}><X {...ic} /></button></div>}
+      {s.caps && !s.caps.encryption_configured && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>安全存储未配置，暂不可上传，请联系管理员。</span></div>}
+      {s.modelError && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>{s.modelError}</span><button className="lv-text-button" onClick={() => void this.loadModels()}>重新加载</button></div>}
+      <input ref={el => { this.uploadInput = el; }} type="file" accept=".docx,.pdf,.txt" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; this.queueUpload(file); }} />
+      {s.loading ? <main className="lv-skeleton" role="status"><span className="lv-sr">加载中…</span>
+          <span className="lv-sk lv-sk-title" /><span className="lv-sk lv-sk-line" /><span className="lv-sk lv-sk-card" /><span className="lv-sk lv-sk-row" /><span className="lv-sk lv-sk-row" /></main>
+        : !s.workspace ? <main id="legal-main" className="lv-loading"><AlertCircle {...ic} size={22} /><h1>工作空间加载失败</h1>
+          <p>请检查网络后重试。</p><button className="lv-primary" onClick={() => void this.initialize()}>重试</button></main>
+        : s.tab === 'policies' ? <PolicyEditor catalog={s.caps?.scenario_catalog} policies={s.policies} busy={s.busy}
+          onSave={(draft, existing) => void this.run(async () => {
+            if (!s.workspace) return;
+            await this.api(`/legal/policies${existing ? `/${existing.id}` : ''}?org_id=${encodeURIComponent(s.workspace.org_id)}`, jsonRequest(existing ? 'PUT' : 'POST', { ...draft, version: existing?.version }));
+            await this.refreshList(s.workspace);
+            if (this.live) this.setState({ notice: '规范已保存' });
+          })} onArchive={policy => this.setState({ archivePolicy: policy, error: '' })} />
+        : !c || !stage ? <Library contracts={s.contracts} matterName={matterName} loading={s.loading} disabled={!canUpload} busy={s.busy}
+          query={s.libraryQuery} onQuery={libraryQuery => this.setState({ libraryQuery })}
+          onUpload={() => this.uploadInput?.click()} onOpen={id => void this.run(() => this.openContract(id))}
+          onDrop={files => {
+            if (files.length !== 1) { this.setState({ error: '每次仅支持上传一份合同。' }); return; }
+            this.queueUpload(files[0]);
+          }} />
+        : this.renderWorkspace(c, stage)}
       {s.pendingFile && <ConfirmDialog title="上传确认" confirmLabel="同意并上传" busyLabel="正在上传并脱敏…" busy={s.busy}
         onCancel={() => this.setState({ pendingFile: null, error: '' })} onConfirm={() => void this.run(() => this.upload(s.pendingFile || undefined))}>
         <div className="lv-upload-file"><FileText {...ic} size={18} /><span>{s.pendingFile.name}<small>{(s.pendingFile.size / 1024).toFixed(1)} KB</small></span></div>
-        <ul className="lv-dialog-points">
+        <ol className="lv-dialog-points">
           <li>原件将在服务器端解析、脱敏并加密存储</li>
           <li>上传不会调用模型，审查前需另行授权</li>
           <li>存储地域：{s.caps?.upload_disclosure?.storage_region}（运营方声明）</li>
-        </ul>
+        </ol>
         <details className="lv-disclosure-text"><summary>《原件处理说明》</summary><p>{s.caps?.upload_disclosure?.notice}</p></details>
         {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
       </ConfirmDialog>}
@@ -518,6 +506,9 @@ export default class LegalDesk extends React.Component<Props, State> {
         <p>“{s.archivePolicy.title}”归档后不再用于新审查，历史报告不受影响。</p>
         {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
       </ConfirmDialog>}
+      {s.notice && <Toast key={`n-${s.notice}`} text={s.notice} done onDone={() => this.setState({ notice: '' })} />}
+      {!s.notice && s.hint && <Toast key={`h-${s.hint}`} text={s.hint} onDone={() => this.setState({ hint: '' })} />}
     </div>;
   }
 }
+
