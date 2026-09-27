@@ -1,7 +1,7 @@
 import { RotateCcw } from 'lucide-react';
 import type { Review } from './types';
 import { findingStatus } from './findingStatus';
-import { AGENT_STATUS, failedSteps, researchGaps, reviewOutcome, tierOf, TIER_LABEL } from './labels';
+import { AGENT_STATUS, researchGaps, reviewOutcome, tierOf, TIER_LABEL } from './labels';
 import { agentLine, formatClock, phaseDetail, phaseSteps, remainingLabel, remainingSeconds, reviewPhase } from './reviewActivity';
 import type { Agent } from './reviewActivity';
 import { useLiveReview, useNow } from './useLive';
@@ -101,16 +101,11 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
 export function ReviewIssue({ review, busy, onResume }: { review: Review; busy: boolean; onResume: () => void }) {
   // Missing official text is not a failed review: searching again costs no model call.
   const gapsOnly = !review.error && reviewOutcome(review) === 'evidence_gaps';
-  const steps = review.status === 'partial' && !gapsOnly ? failedSteps(review) : [];
   const title = review.status === 'cancelled' ? '审查已停止' : review.status === 'failed' ? '审查已暂停'
-    : gapsOnly ? `${researchGaps(review)} 个法律问题未取得官方原文` : steps.length ? `${steps.length} 个步骤未完成` : '部分步骤未完成';
-  const detail = gapsOnly ? '相关依据标注为“模型引用，待核对”。重新检索不会重新调用模型。'
-    : review.error || (steps.length ? '其余意见可先处理；重试只重新运行未完成的步骤。' : review.stage);
+    : gapsOnly ? `${researchGaps(review)} 个法律问题未取得官方原文` : '部分步骤未完成';
+  const detail = gapsOnly ? '相关依据标注为“模型引用，待核对”。重新检索不会重新调用模型。' : review.error || review.stage;
   return <div className={`lv-issue${gapsOnly ? '' : ' is-warn'}`} role="status">
-    <div><strong>{title}</strong>
-      {steps.length > 0 && <ul className="lv-issue-steps" aria-label="未完成的步骤">{steps.map(step => <li key={step.id} title={step.code || undefined}>
-        <span>{step.title}</span>{step.message}</li>)}</ul>}
-      {detail && <p>{detail}</p>}</div>
+    <div><strong>{title}</strong>{detail && <p>{detail}</p>}</div>
     {review.resumable && <button className="lv-secondary lv-btn-sm" disabled={busy} onClick={onResume}>{busy ? <Spinner /> : <RotateCcw {...ic} size={14} />}{gapsOnly ? '重新检索' : '重试'}</button>}
   </div>;
 }

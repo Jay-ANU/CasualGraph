@@ -435,9 +435,6 @@
 .lv-issue { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 8px; background: var(--lv-sunken); font-size: 12.5px; line-height: 1.6; color: var(--lv-ink-2); animation: lv-rise .35s var(--lv-ease) both; }
 .lv-issue.is-warn { background: var(--lv-mid-bg); color: var(--lv-mid-text); }
 .lv-issue strong { display: block; font-weight: 600; }
-.lv-issue-steps { display: grid; gap: 8px; margin: 8px 0; }
-.lv-issue-steps li { padding-left: 10px; border-left: 2px solid var(--lv-mid-line); font-size: 12px; line-height: 1.55; }
-.lv-issue-steps span { display: block; margin-bottom: 1px; font-size: 12.5px; font-weight: 500; color: var(--lv-ink); }
 .lv-tabs { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; gap: 2px; padding: 3px; border-radius: 9px; background: var(--lv-desk); }
 .lv-tabs button { height: 28px; border-radius: 6px; font-size: 13px; text-align: center; white-space: nowrap; color: var(--lv-ink-3); transition: background-color .2s ease, color .2s ease, box-shadow .2s ease; }
 .lv-tabs button:hover { color: var(--lv-ink); }

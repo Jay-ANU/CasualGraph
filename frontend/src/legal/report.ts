@@ -1,7 +1,7 @@
 import type { Review } from './types';
 import { findingStatus } from './findingStatus';
 import { sourceKindLabel } from './sourceLabels';
-import { COVERAGE_STATUS, failedSteps, KIND_LABEL, reviewOutcome, TIER_LABEL, tierOf } from './labels';
+import { COVERAGE_STATUS, KIND_LABEL, reviewOutcome, TIER_LABEL, tierOf } from './labels';
 
 const STATUS: Record<string, string> = { completed: '已完成', partial: '部分完成', running: '进行中', queued: '排队中', failed: '已暂停', cancelled: '已停止' };
 const OUTCOME: Record<string, string> = { failed_steps: '部分完成（有步骤未完成）', evidence_gaps: '已完成（部分法律问题未取得官方原文）', to_confirm: '已完成（部分意见待确认）' };
@@ -40,7 +40,7 @@ export function ReviewReport(review: Review): string {
   }
   out.push('', `修订组合状态：${review.draft_approval ? '用户已确认精确修改组合（非签署或企业授权审批）' : '尚未最终确认'}`, '', '## 审查范围');
   for (const c of review.coverage) out.push('', `### ${escaped(c.title)} · ${COVERAGE_STATUS[c.status] || c.status}`, escaped(c.note), escaped(c.verification_note || ''));
-  for (const step of failedSteps(review)) out.push('', `未完成：${escaped(step.title)}。${escaped(step.message)}`);
+  for (const error of Object.values(review.batch_errors || {})) out.push('', `未完成：${escaped(error)}`);
   out.push('', '本报告仅供参考，不构成法律意见，亦不保证脱敏质量、法规时效或合同整体安全。Word 修订版含真实信息及删除内容，分享前请复核。', '');
   return out.join('\n');
 }

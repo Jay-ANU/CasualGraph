@@ -1,4 +1,4 @@
-import type { Finding, Profile, Review, ReviewTier, StepError } from './types';
+import type { Finding, Profile, Review, ReviewTier } from './types';
 import { findingStatus } from './findingStatus';
 
 /** Contract-level status shown in “我的合同”. */
@@ -23,14 +23,6 @@ export function reviewOutcome(r: Pick<Review, 'status' | 'batch_errors' | 'retri
   if (Object.keys(r.batch_errors || {}).length > 0 || (r.coverage || []).some(c => c.status === 'not_reviewed')) return 'failed_steps';
   if ((r.retrieval || []).some(x => x.status !== 'retrieved')) return 'evidence_gaps';
   return 'to_confirm';
-}
-
-const STEP_NAMES: Record<string, string> = { research: '法律检索规划', cross_check: '修改兼容性核对', consistency: '跨条款与遗漏复查' };
-
-/** The steps a review could not finish and why; reviews from before named steps kept only the reason. */
-export function failedSteps(r: Pick<Review, 'step_errors' | 'batch_errors'>): StepError[] {
-  if (r.step_errors?.length) return r.step_errors;
-  return Object.entries(r.batch_errors || {}).map(([id, message]) => ({ id, title: STEP_NAMES[id] || '分项审查', code: '', message }));
 }
 
 export const OUTCOME_LABEL: Record<ReviewOutcome, string> = { failed_steps: '部分完成', evidence_gaps: '依据待核对', to_confirm: '待确认' };

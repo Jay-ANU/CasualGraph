@@ -1,7 +1,7 @@
 import { ExternalLink } from 'lucide-react';
 import type { Review, Source } from './types';
 import { sourceKindLabel } from './sourceLabels';
-import { COVERAGE_STATUS, failedSteps } from './labels';
+import { COVERAGE_STATUS } from './labels';
 import { RichText } from './ui';
 import { ic } from './icon';
 
@@ -29,7 +29,7 @@ export function ReviewDetails({ review, onLocate }: { review: Review; onLocate: 
         <span className={`lv-row-state ${COVERAGE_TONE[item.status] ?? 'is-mid'}`}>{COVERAGE_STATUS[item.status] || item.status}</span>
         {item.status !== 'reviewed' && item.note && <p className="lv-row-note">{item.note}</p>}
       </li>)}</ul>
-      {failedSteps(review).map(step => <p key={step.id} className="lv-note is-warn"><strong>未完成 · {step.title}</strong>{step.message}</p>)}
+      {Object.entries(review.batch_errors || {}).map(([key, value]) => <p key={key} className="lv-note is-warn">{value}</p>)}
     </section>
     {health && <section className="lv-basis-group" aria-label="法律检索状态">
       <div className="lv-rail-label"><span>法律检索</span><span className="lv-mono">{skipped ? '本档位不检索' : `${health.topics_with_sources}/${health.queried_topics}`}</span></div>
