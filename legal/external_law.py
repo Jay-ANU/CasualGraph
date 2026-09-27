@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import logging
 import os
 import re
 import socket
@@ -16,6 +17,7 @@ from legal.law_evidence import ARTICLE_START, screen_page
 
 import httpx
 
+log = logging.getLogger(__name__)
 # Explicit source origins, never a substring match against an arbitrary URL.
 OFFICIAL_HOSTS = frozenset({'www.gov.cn', 'www.npc.gov.cn', 'flk.npc.gov.cn', 'www.court.gov.cn',
                           'www.spp.gov.cn', 'www.moj.gov.cn', 'www.samr.gov.cn', 'www.cac.gov.cn',
@@ -226,11 +228,16 @@ def public_search_query(query: str) -> str:
     return query + ' (' + ' OR '.join('site:' + site for site in SEARCH_SITES) + ')'
 
 
+def _tavily_key() -> str:
+    # Pasted secrets often carry surrounding whitespace or quotes; either makes Tavily refuse the key.
+    return os.getenv('TAVILY_API_KEY', '').strip().strip('"\'').strip()
+
+
 def provider_status() -> dict:
-    provider = os.getenv('LEGAL_SEARCH_PROVIDER', 'auto').lower()
+    provider = os.getenv('LEGAL_SEARCH_PROVIDER', 'auto').strip().lower() or 'auto'
     if provider == 'auto':
-        provider = 'tavily' if os.getenv('TAVILY_API_KEY') else 'bing_rss'
-    return {'provider': provider, 'configured': provider == 'bing_rss' or (provider == 'tavily' and bool(os.getenv('TAVILY_API_KEY'))),
+        provider = 'tavily' if _tavily_key() else 'bing_rss'
+    return {'provider': provider, 'configured': provider == 'bing_rss' or (provider == 'tavily' and bool(_tavily_key())),
             'mode': 'external_only', 'live_verified': False,
             'direct_official_fallback': os.getenv('LEGAL_DIRECT_OFFICIAL_FALLBACK', 'true').lower() == 'true',
             'notice': '公开网页检索不是完整法规库；原文、版本及适用性仍需复核。检索失败不会视为无风险。'}
@@ -245,7 +252,7 @@ def discover(client: httpx.Client, query: str, provider: str) -> list[tuple[str,
     """Candidate (url, title) pairs from the configured search provider; raises on failure."""
     if provider == 'tavily':
         import json
-        raw = _read(client, 'POST', 'https://api.tavily.com/search', headers={'Authorization': 'Bearer ' + os.environ['TAVILY_API_KEY']}, json={
+        raw = _read(client, 'POST', 'https://api.tavily.com/search', headers={'Authorization': 'Bearer ' + _tavily_key()}, json={
             'query': query, 'search_depth': 'basic', 'max_results': 5, 'include_answer': False,
             'include_domains': sorted(OFFICIAL_HOSTS)})
         value = json.loads(raw)
@@ -257,6 +264,17 @@ def discover(client: httpx.Client, query: str, provider: str) -> list[tuple[str,
         raise LawRetrievalError('invalid_search_response')
     tree = ElementTree.fromstring(raw)
     return [(x.findtext('link', ''), x.findtext('title', '')) for x in tree.findall('.//item')]
+
+
+def discovery_warning(provider: str, exc: Exception) -> str:
+    """Why the search itself failed, in words an operator can act on."""
+    status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+    if provider == 'tavily' and status in (401, 403):
+        return f'Tavily 拒绝了检索请求（HTTP {status}），请检查 TAVILY_API_KEY 是否有效；本次未取得搜索结果。'
+    if provider == 'tavily' and status in (429, 432, 433):
+        return f'Tavily 检索额度或频率已达上限（HTTP {status}）；本次未取得搜索结果。'
+    name = 'Tavily 检索' if provider == 'tavily' else '公开搜索'
+    return f'{name}未完成（{failure_reason(exc)}），不能将搜索失败解释为没有法律风险。'
 
 
 def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None = None, cache: bool | None = None) -> dict:
@@ -272,7 +290,7 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
     cache = own if cache is None else cache
     client = client or _client()
     sources, warnings, candidates, seen, rejected = [], [], [], set(), []
-    discovery_failed = False
+    discovery_failed, discovery_error = False, None
     failures = (httpx.HTTPError, OSError, ValueError, ElementTree.ParseError, LawRetrievalError)
 
     def fetch_candidates(rows: list, method: str) -> None:
@@ -318,9 +336,11 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
     try:
         try:
             candidates = discover(client, query, status['provider'])
-        except failures:
-            discovery_failed = True
-            warnings.append('公开搜索未完成，不能将搜索失败解释为没有法律风险。')
+        except failures as exc:
+            discovery_failed, discovery_error = True, failure_reason(exc)
+            warnings.append(discovery_warning(status['provider'], exc))
+            # The reason only: never the query, a key or a response body.
+            log.warning('law search failed: provider=%s reason=%s', status['provider'], discovery_error)
         if not discovery_failed and status['provider'] == 'bing_rss' and not any(
                 isinstance(url, str) and official_url(upgrade_scheme(url)) for url, _ in candidates):
             # The RSS endpoint intermittently answers with unrelated pages; retry once with the core terms.
@@ -337,7 +357,7 @@ def retrieve_law(query: str, keywords: list[str], *, client: httpx.Client | None
         return {**status, 'sources': sources,
                 'status': 'retrieved' if sources else ('unavailable' if discovery_failed else 'no_verified_source'),
                 'warnings': list(dict.fromkeys(warnings)),
-                'discovery_status': 'unavailable' if discovery_failed else 'completed',
+                'discovery_status': 'unavailable' if discovery_failed else 'completed', 'discovery_error': discovery_error,
                 'candidates_found': len(candidates), 'rejected': rejected[:8]}
     finally:
         if own:

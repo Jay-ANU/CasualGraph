@@ -150,7 +150,8 @@ def _review_view(r: dict):
             'summary': p.get('summary', {}), 'progress': p.get('progress'), 'batch_errors': p.get('batch_errors', {}),
             'step_errors': p.get('step_errors', []),
             'review_tier': review_tier(p.get('profile', {})), 'skills': skill_registry.public(p.get('skills')),
-            'retrieval': [{'rule_id': k, 'status': s['status'], 'provider': s.get('provider', 'external'), 'warnings': s.get('warnings', []), 'issue': s.get('issue')}
+            'retrieval': [{'rule_id': k, 'status': s['status'], 'provider': s.get('provider', 'external'), 'warnings': s.get('warnings', []), 'issue': s.get('issue'),
+                           'error': next((a['error'] for a in s.get('attempts', []) if a.get('error')), None)}
                           for k, s in p.get('searches', {}).items()],
             'notice': '法律意见为辅助审查；模型复核和原文匹配不代表法条版本及适用已由法务确认。未发现意见不代表无风险。'}
 

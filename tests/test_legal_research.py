@@ -201,3 +201,37 @@ def test_each_unused_candidate_records_why(monkeypatch):
     assert result['status'] == 'no_verified_source'
     assert [r['reason'] for r in result['rejected']] == ['non_official_source via http://www.npc.gov.cn', 'http_403',
                                                           'unsupported_source_format', 'no_matching_provision']
+
+
+def test_tavily_is_used_when_its_key_is_set_even_with_stray_quotes(monkeypatch):
+    monkeypatch.setenv('LEGAL_SEARCH_PROVIDER', 'auto')
+    monkeypatch.setenv('TAVILY_API_KEY', '  "tvly-synthetic"\n')
+    monkeypatch.setattr(law, '_public_host', lambda _: None)
+    law.clear_page_cache()
+    seen = []
+    def respond(request):
+        if request.url.host == 'api.tavily.com':
+            seen.append((request.headers['Authorization'], json.loads(request.content)))
+            return httpx.Response(200, json={'results': [{'url': 'https://www.npc.gov.cn/code', 'title': '民法典'}]})
+        return httpx.Response(200, headers={'content-type': 'text/html'}, text='<p>' + CODE.replace('\n', '</p><p>') + '</p>')
+    assert law.provider_status()['provider'] == 'tavily' and law.provider_status()['configured']
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = law.retrieve_law('民法典 违约金 调整', ['第五百八十五条'], client=client)
+    assert seen[0][0] == 'Bearer tvly-synthetic' and 'www.npc.gov.cn' in seen[0][1]['include_domains']
+    assert result['provider'] == 'tavily' and result['status'] == 'retrieved' and result['discovery_error'] is None
+
+
+@pytest.mark.parametrize('status,phrase', [(401, 'TAVILY_API_KEY'), (432, '额度'), (500, 'http_500')])
+def test_a_tavily_failure_says_why_and_is_recorded_per_attempt(monkeypatch, status, phrase):
+    monkeypatch.setenv('LEGAL_SEARCH_PROVIDER', 'auto')
+    monkeypatch.setenv('TAVILY_API_KEY', 'tvly-synthetic')
+    monkeypatch.setenv('LEGAL_DIRECT_OFFICIAL_FALLBACK', 'false')
+    def respond(request):
+        return httpx.Response(status, json={'detail': 'secret upstream body'})
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = law.retrieve_law('民法典 违约金 调整', ['第五百八十五条'], client=client)
+    assert result['status'] == 'unavailable' and result['discovery_error'] == f'http_{status}'
+    assert any(phrase in w for w in result['warnings']) and not any('secret' in w for w in result['warnings'])
+    searches = research.run_retrieval([{'key': 'issue_1', 'issue': '违约金', 'rule_ids': ['*'], 'laws': [], 'queries': ['民法典 违约金 调整']}],
+                                      lambda q, k: result, lambda: None)
+    assert searches['issue_1']['attempts'][0]['error'] == f'http_{status}' and searches['issue_1']['provider'] == 'tavily'
