@@ -2,7 +2,7 @@ name: Legal UI final verification
 on:
   push:
     branches: [feat/legal-motion-bilingual]
-    paths: [.github/workflows/frontend-workspace.yml]
+    paths: [.github/workflows/frontend-workspace.yml, '.ui-finish/**']
 permissions:
   contents: write
 jobs:
