@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n/useI18n';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
@@ -10,6 +11,7 @@ type Mode = 'login' | 'register';
 type RegisterRole = 'user' | 'admin';
 
 const Login: React.FC = () => {
+  const { t } = useI18n();
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -28,7 +30,7 @@ const Login: React.FC = () => {
   const [emailCodeCooldown, setEmailCodeCooldown] = useState(0);
   const [registerRole, setRegisterRole] = useState<RegisterRole>('user');
   const [adminInviteCode, setAdminInviteCode] = useState('');
-  useDocumentTitle(mode === 'login' ? 'Sign in' : 'Create account');
+  useDocumentTitle(t(mode === 'login' ? 'Sign in' : 'Create account'));
 
   const fetchCaptcha = useCallback(async () => {
     try {
@@ -99,7 +101,7 @@ const Login: React.FC = () => {
       const redirectTo =
         from?.pathname && from.pathname !== '/login'
           ? `${from.pathname}${from.search || ''}${from.hash || ''}`
-          : '/agent';
+          : '/legal';
       navigate(redirectTo, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -125,18 +127,18 @@ const Login: React.FC = () => {
     <div className="px-5 pb-24 pt-14 sm:pt-20">
       <div className="mx-auto w-full max-w-[400px]">
         <h1 className="display text-display-sm sm:text-display-md">
-          {mode === 'login' ? 'Sign in to CausalGraph' : 'Create your account'}
+          {mode === 'login' ? t("Sign in to CausalGraph") : t("Create your account")}
         </h1>
         <p className="mt-3 text-ink-3">
           {mode === 'login'
-            ? 'Continue with your contracts and earlier questions.'
-            : 'Your documents and conversations are private to your account.'}
+            ? t("Continue with your contracts and earlier questions.")
+            : t("Your documents and conversations are private to your account.")}
         </p>
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-5">
           {mode === 'register' && (
             <div>
-              <span className="field-label" id="account-type-label">Account type</span>
+              <span className="field-label" id="account-type-label">{t("Account type")}</span>
               <div className="segmented w-full" role="group" aria-labelledby="account-type-label">
                 {(['user', 'admin'] as const).map((role) => (
                   <button
@@ -146,7 +148,7 @@ const Login: React.FC = () => {
                     aria-pressed={registerRole === role}
                     className="flex-1 justify-center"
                   >
-                    {role === 'user' ? 'Member' : 'Administrator'}
+                    {role === 'user' ? t("Member") : t("Administrator")}
                   </button>
                 ))}
               </div>
@@ -154,7 +156,7 @@ const Login: React.FC = () => {
           )}
 
           <div>
-            <label className="field-label" htmlFor="auth-email">Email</label>
+            <label className="field-label" htmlFor="auth-email">{t("Email")}</label>
             <input
               id="auth-email"
               type="email"
@@ -163,13 +165,13 @@ const Login: React.FC = () => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="input"
-              placeholder="you@company.com"
+              placeholder={"you@company.com"}
             />
           </div>
 
           {mode === 'register' && (
             <div>
-              <label className="field-label" htmlFor="auth-username">Name</label>
+              <label className="field-label" htmlFor="auth-username">{t("Name")}</label>
               <input
                 id="auth-username"
                 type="text"
@@ -178,14 +180,14 @@ const Login: React.FC = () => {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="input"
-                placeholder="How your name appears in the workspace"
+                placeholder={t("How your name appears in the workspace")}
               />
             </div>
           )}
 
           {mode === 'register' && registerRole === 'admin' && (
             <div>
-              <label className="field-label" htmlFor="auth-invite">Admin invite code</label>
+              <label className="field-label" htmlFor="auth-invite">{t("Admin invite code")}</label>
               <input
                 id="auth-invite"
                 type="text"
@@ -193,14 +195,14 @@ const Login: React.FC = () => {
                 value={adminInviteCode}
                 onChange={(e) => setAdminInviteCode(e.target.value.toUpperCase())}
                 className="input font-mono"
-                placeholder="ADM-XXXXXXXXXX"
+                placeholder={"ADM-XXXXXXXXXX"}
               />
-              <p className="field-hint">Ask an existing administrator to generate one. Codes expire after five minutes.</p>
+              <p className="field-hint">{t("Ask an existing administrator to generate one. Codes expire after five minutes.")}</p>
             </div>
           )}
 
           <div>
-            <label className="field-label" htmlFor="auth-password">Password</label>
+            <label className="field-label" htmlFor="auth-password">{t("Password")}</label>
             <input
               id="auth-password"
               type="password"
@@ -214,7 +216,7 @@ const Login: React.FC = () => {
 
           {mode === 'register' && (
             <div>
-              <label className="field-label" htmlFor="auth-captcha">Image code</label>
+              <label className="field-label" htmlFor="auth-captcha">{t("Image code")}</label>
               <div className="flex items-center gap-2">
                 <input
                   id="auth-captcha"
@@ -232,13 +234,13 @@ const Login: React.FC = () => {
                     type="button"
                     onClick={fetchCaptcha}
                     className="h-10 shrink-0 overflow-hidden rounded-lg border border-line-strong bg-white"
-                    title="Load a new image"
-                    aria-label="Load a new image code"
+                    title={t("Load a new image")}
+                    aria-label={t("Load a new image code")}
                   >
-                    <img src={captchaImage} alt="Verification digits" className="h-full" />
+                    <img src={captchaImage} alt={t("Verification digits")} className="h-full" />
                   </button>
                 )}
-                <button type="button" onClick={fetchCaptcha} className="icon-btn h-10 w-10" title="Load a new image" aria-label="Refresh image code">
+                <button type="button" onClick={fetchCaptcha} className="icon-btn h-10 w-10" title={t("Load a new image")} aria-label={t("Refresh image code")}>
                   <RefreshCw className="h-4 w-4" />
                 </button>
               </div>
@@ -247,7 +249,7 @@ const Login: React.FC = () => {
 
           {mode === 'register' && (
             <div>
-              <label className="field-label" htmlFor="auth-email-code">Email verification code</label>
+              <label className="field-label" htmlFor="auth-email-code">{t("Email verification code")}</label>
               <div className="flex items-center gap-2">
                 <input
                   id="auth-email-code"
@@ -267,28 +269,28 @@ const Login: React.FC = () => {
                   disabled={emailCodeSending || emailCodeCooldown > 0}
                   className="btn btn-secondary h-10 min-w-[120px] shrink-0 px-3 tabular-nums"
                 >
-                  {emailCodeSending ? 'Sending…' : emailCodeCooldown > 0 ? `Resend in ${emailCodeCooldown}s` : emailCodeSent ? 'Resend' : 'Send code'}
+                  {emailCodeSending ? t("Sending…") : emailCodeCooldown > 0 ? t("Resend in {0}s", { "0": emailCodeCooldown }) : emailCodeSent ? t("Resend") : t("Send code")}
                 </button>
               </div>
-              <p className="field-hint">Enter the image code first, then we will email you a six-digit code.</p>
+              <p className="field-hint">{t("Enter the image code first, then we will email you a six-digit code.")}</p>
             </div>
           )}
 
           {error && (
             <p role="alert" className="rounded-lg border border-err-line bg-err-bg px-3 py-2.5 text-sm text-err">
-              {error}
+              {t(error)}
             </p>
           )}
 
           <button type="submit" disabled={loading} className="btn btn-primary btn-lg w-full">
-            {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
+            {loading ? t("Please wait…") : mode === 'login' ? t("Sign in") : t("Create account")}
           </button>
         </form>
 
         <p className="mt-6 text-sm text-ink-3">
-          {mode === 'login' ? 'New to CausalGraph? ' : 'Already have an account? '}
+          {mode === 'login' ? t("New to CausalGraph? ") : t("Already have an account? ")}
           <button type="button" onClick={switchMode} className="text-link font-medium text-ink">
-            {mode === 'login' ? 'Create an account' : 'Sign in'}
+            {mode === 'login' ? t("Create an account") : t("Sign in")}
           </button>
         </p>
       </div>

@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n/useI18n';
 import { Fragment } from 'react';
 import type { ReactNode } from 'react';
 import { Columns, FileText } from 'lucide-react';
@@ -36,6 +37,7 @@ function Runs({ runs, blockId, selected, running, party, onParty }: {
   runs: Run[]; blockId: string; selected: string | null; running: boolean;
   party: { blockId: string; quote: string }; onParty: (blockId: string, quote: string) => void;
 }) {
+  const { t } = useI18n();
   return <>{runs.map((run, i) => {
     let node: ReactNode = <RichText text={run.text} />;
     if (run.heading) node = <strong className="lv-para-heading">{node}</strong>;
@@ -43,8 +45,8 @@ function Runs({ runs, blockId, selected, running, party, onParty }: {
       node = <span className={`lv-mark tone-${findingTone(run.finding)}${run.finding.id === selected ? ' is-selected' : ''}${running ? ' is-prelim' : ''}`}>{node}</span>;
     } else if (run.party) {
       const quote = run.party, on = party.blockId === blockId && party.quote === quote;
-      node = <button type="button" className={`lv-pick${on ? ' is-on' : ''}`} aria-pressed={on} aria-label={`在正文中选择我方主体：${quote}`}
-        onClick={event => { event.stopPropagation(); onParty(blockId, quote); }}>{node}{on && <span className="lv-pick-tag" aria-hidden="true">我方</span>}</button>;
+      node = <button type="button" className={`lv-pick${on ? ' is-on' : ''}`} aria-pressed={on} aria-label={t("在正文中选择我方主体：{0}", { "0": quote })}
+        onClick={event => { event.stopPropagation(); onParty(blockId, quote); }}>{node}{on && <span className="lv-pick-tag" aria-hidden="true">{t("我方")}</span>}</button>;
     }
     return <Fragment key={i}>{node}</Fragment>;
   })}</>;
@@ -52,19 +54,20 @@ function Runs({ runs, blockId, selected, running, party, onParty }: {
 
 /** The contract as paper: findings numbered in the margin, quoted passages marked, adopted edits shown as a redline. */
 export function Paper(p: Props) {
+  const { t } = useI18n();
   const pages = pagesOf(p.blocks);
   const running = p.stage === 'running';
   const picking = p.stage === 'setup';
   const marking = p.stage === 'results' || running;
-  return <section className={`lv-paper-desk stage-${p.stage}`} aria-label="合同正文">
+  return <section className={`lv-paper-desk stage-${p.stage}`} aria-label={t("合同正文")}>
     <div className="lv-desk-bar">
       <span className="lv-desk-file"><FileText {...ic} size={14} /><span className="lv-desk-name">{p.contract.name}</span>
-        <span aria-hidden="true">·</span><span>{p.stage === 'redaction' ? '自动脱敏' : '已脱敏'} {p.contract.replacement_count} 处</span></span>
+        <span aria-hidden="true">·</span><span>{p.stage === 'redaction' ? t("自动脱敏") : t("已脱敏")} {p.contract.replacement_count}{' '}{t("处")}</span></span>
       {p.stage === 'redaction' && <button className={`lv-toggle${p.originals ? ' is-on' : ''}`} aria-pressed={Boolean(p.originals)} disabled={p.busy} onClick={p.onCompare}>
-        <Columns {...ic} size={14} />对照原件</button>}
+        <Columns {...ic} size={14} />{t("对照原件")}</button>}
       {p.stage === 'results' && p.items.length > 0 && <span className="lv-legend" aria-hidden="true">
-        {LEGEND.map(t => <span key={t}><i className={`lv-legend-mark tone-${t}`} />{TONE_LABEL[t]}</span>)}</span>}
-      {p.stage === 'export' && <span className="lv-legend">修订预览<del>删除</del><ins>新增</ins></span>}
+        {LEGEND.map(tone => <span key={tone}><i className={`lv-legend-mark tone-${tone}`} />{t(TONE_LABEL[tone])}</span>)}</span>}
+      {p.stage === 'export' && <span className="lv-legend">{t("修订预览")}<del>{t("删除")}</del><ins>{t("新增")}</ins></span>}
       {running && p.detail && <span className="lv-desk-detail">{p.detail}</span>}
     </div>
     <div className="lv-sheets">
@@ -91,7 +94,7 @@ export function Paper(p: Props) {
             {here.length > 0 && !picking && <span className="lv-margin">{here.map(x => {
               const marker = <Marker n={x.n} finding={x.finding} state={markerState(p.decisions[x.finding.id], running)} />;
               return p.stage === 'results'
-                ? <button key={x.finding.id} className="lv-margin-mark" aria-label={`第 ${x.n} 条批注：${x.finding.title}`}
+                ? <button key={x.finding.id} className="lv-margin-mark" aria-label={t("第 {0} 条批注：{1}", { "0": x.n, "1": x.finding.title })}
                   onClick={event => { event.stopPropagation(); p.onSelect(x.finding.id); }}>{marker}</button>
                 : <Fragment key={x.finding.id}>{marker}</Fragment>;
             })}</span>}

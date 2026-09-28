@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n/useI18n';
 import { ArrowUp } from 'lucide-react';
 import type { Answer, Block, Review } from './types';
 import { clauseLabel } from './text';
@@ -11,37 +12,38 @@ export function FollowUp({ review, blocks, answers, question, busy, consent, onQ
   review: Review; blocks: Block[]; answers: Answer[]; question: string; busy: boolean; consent: boolean;
   onQuestion: (value: string) => void; onConsent: (value: boolean) => void; onAsk: () => void; onLocate: (id: string) => void;
 }) {
+  const { t } = useI18n();
   const pending = busy && Boolean(question.trim());
   return <div className="lv-qa">
     <div className="lv-rail-body">
       {(answers.length > 0 || pending) && <ol className="lv-qa-log">{answers.map(a => <li key={a.id}>
         <p className="lv-qa-q">{a.question}</p>
         <div className="lv-qa-a">
-          <p>{a.answer || (a.status === 'failed' ? '回答失败，请重试。' : '处理中，请稍后刷新。')}</p>
+          <p>{a.answer || (a.status === 'failed' ? t("回答失败，请重试。") : t("处理中，请稍后刷新。"))}</p>
           {((a.block_refs?.length || 0) > 0 || (a.citations?.length || 0) > 0 || (a.law_refs?.length || 0) > 0) && <div className="lv-qa-refs">
             {a.block_refs?.map((ref, i) => <button key={i} className="lv-reference" onClick={() => onLocate(ref.block_id)}><RichText text={clauseLabel(blocks.find(b => b.id === ref.block_id)) || `第 ${ref.block_id} 段`} /></button>)}
             {a.citations?.map((ref, i) => { const source = review.sources.find(x => x.id === ref.source_id); return source ? <a key={i} className="lv-reference" href={source.url} target="_blank" rel="noreferrer noopener">{source.title}</a> : null; })}
-            {a.law_refs?.map((ref, i) => <span key={`law-${i}`} className="lv-reference" title={ref.point}>{ref.law}{ref.article ? ` ${ref.article}` : ''}（模型引用，待核对）</span>)}
+            {a.law_refs?.map((ref, i) => <span key={`law-${i}`} className="lv-reference" title={ref.point}>{ref.law}{ref.article ? ` ${ref.article}` : ''}{t("（模型引用，待核对）")}</span>)}
           </div>}
-          {a.uncertain && <small className="lv-qa-uncertain">依据不足，建议人工核实。</small>}
+          {a.uncertain && <small className="lv-qa-uncertain">{t("依据不足，建议人工核实。")}</small>}
         </div>
       </li>)}
         {pending && <li className="lv-qa-pending" role="status">
           <p className="lv-qa-q">{question.trim()}</p>
-          <div className="lv-qa-a"><span className="lv-sk" /><span className="lv-sk" /><small>正在对照合同原文作答…</small></div>
+          <div className="lv-qa-a"><span className="lv-sk" /><span className="lv-sk" /><small>{t("正在对照合同原文作答…")}</small></div>
         </li>}
       </ol>}
       {!answers.length && !pending && <div className="lv-qa-suggest">
-        <span className="lv-hint">回答会引用具体条款</span>
+        <span className="lv-hint">{t("回答会引用具体条款")}</span>
         {SUGGESTED.map(q => <button key={q} type="button" onClick={() => onQuestion(q)}>{q}</button>)}
       </div>}
     </div>
     <div className="lv-rail-foot lv-stack">
       <div className="lv-composer">
-        <textarea aria-label="追问本轮审查" maxLength={1500} rows={2} value={question} disabled={busy} onChange={e => onQuestion(e.target.value)} placeholder="就本合同提问" />
-        <button className="lv-send" aria-label="发送追问" disabled={busy || !question.trim() || !consent} onClick={onAsk}>{busy ? <Spinner /> : <ArrowUp {...ic} size={16} />}</button>
+        <textarea aria-label={t("追问本轮审查")} maxLength={1500} rows={2} value={question} disabled={busy} onChange={e => onQuestion(e.target.value)} placeholder={t("就本合同提问")} />
+        <button className="lv-send" aria-label={t("发送追问")} disabled={busy || !question.trim() || !consent} onClick={onAsk}>{busy ? <Spinner /> : <ArrowUp {...ic} size={16} />}</button>
       </div>
-      <label className="lv-check lv-check-sm"><input type="checkbox" checked={consent} onChange={e => onConsent(e.target.checked)} /><span>同意将问题及脱敏材料提交原审查模型</span></label>
+      <label className="lv-check lv-check-sm"><input type="checkbox" checked={consent} onChange={e => onConsent(e.target.checked)} /><span>{t("同意将问题及脱敏材料提交原审查模型")}</span></label>
     </div>
   </div>;
 }

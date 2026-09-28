@@ -99,10 +99,13 @@ export function strongestTone(findings: Finding[]): Tone | null {
   return findings.map(findingTone).filter(t => t !== 'excluded').sort((a, b) => TONE_RANK[a] - TONE_RANK[b])[0] || null;
 }
 
-export function formatDate(value: unknown): string {
+export function formatDate(value: unknown, locale: string = 'zh-CN'): string {
   const n = typeof value === 'number' ? (value < 1e12 ? value * 1000 : value) : typeof value === 'string' ? Date.parse(value) : NaN;
   if (!Number.isFinite(n)) return '';
   const date = new Date(n), now = new Date();
+  if (locale === 'en') return date.toDateString() === now.toDateString()
+    ? `Today ${date.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}`
+    : date.toLocaleDateString('en', { month: 'short', day: 'numeric', ...(date.getFullYear() !== now.getFullYear() ? { year: 'numeric' } as const : {}) });
   if (date.toDateString() === now.toDateString()) return `今天 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
   return date.getFullYear() === now.getFullYear()
     ? `${date.getMonth() + 1}月${date.getDate()}日`

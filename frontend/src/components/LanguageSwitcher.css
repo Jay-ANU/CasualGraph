@@ -1,0 +1,8 @@
+.cg-language { display:inline-flex; align-items:center; gap:3px; flex-shrink:0; color:inherit; font:500 12px/1.2 system-ui,sans-serif; white-space:nowrap; }
+.cg-language>svg { margin-right:4px; opacity:.7; }
+.cg-language>span { opacity:.35; }
+.cg-language button { min-width:34px; min-height:44px; padding:4px; color:inherit; opacity:.6; border:0; background:none; cursor:pointer; border-radius:5px; }
+.cg-language button[aria-pressed=true] { opacity:1; font-weight:700; text-decoration:underline; text-underline-offset:6px; text-decoration-thickness:1.5px; }
+.cg-language button:hover { opacity:1; }
+.cg-language button:focus-visible { outline:2px solid currentColor; outline-offset:1px; }
+@media(max-width:380px) { .cg-language>svg { display:none; } }

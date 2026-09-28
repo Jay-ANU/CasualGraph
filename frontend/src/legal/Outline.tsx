@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n/useI18n';
 import type { Decision } from './types';
 import type { Numbered, OutlineEntry } from './workspace';
 import { markerState } from './workspace';
@@ -10,8 +11,9 @@ export function Outline({ entries, items, decisions, running, activeBlock, block
   activeBlock: string | null; blockCount: number; pageCount: number; meta: { k: string; v: string }[];
   onEntry: (entry: OutlineEntry, firstFinding?: string) => void;
 }) {
-  return <nav className="lv-outline" aria-label="条款目录">
-    <div className="lv-outline-head"><span>条款</span><span className="lv-mono">{blockCount} 段{pageCount > 1 ? ` · ${pageCount} 页` : ''}</span></div>
+  const { t } = useI18n();
+  return <nav className="lv-outline" aria-label={t("条款目录")}>
+    <div className="lv-outline-head"><span>{t("条款")}</span><span className="lv-mono">{blockCount}{' '}{t("段")}{pageCount > 1 ? t(" · {0} 页", { "0": pageCount }) : ''}</span></div>
     <ol className="lv-outline-list">
       {entries.map(entry => {
         const marks = items.filter(x => x.finding.block_id && entry.blockIds.includes(x.finding.block_id));
@@ -22,12 +24,12 @@ export function Outline({ entries, items, decisions, running, activeBlock, block
             <span className="lv-outline-name"><RichText text={entry.name} /></span>
             {marks.length > 0 && <span className="lv-outline-marks">
               {marks.map(x => <Marker key={x.finding.id} n={x.n} finding={x.finding} state={markerState(decisions[x.finding.id], running)} size="sm" />)}
-              <span className="lv-sr">，{marks.length} 条批注</span>
+              <span className="lv-sr">，{marks.length}{' '}{t("条批注")}</span>
             </span>}
           </button>
         </li>;
       })}
     </ol>
-    {meta.length > 0 && <dl className="lv-outline-meta">{meta.map(m => <div key={m.k}><dt>{m.k}</dt><dd title={m.v}>{m.v}</dd></div>)}</dl>}
+    {meta.length > 0 && <dl className="lv-outline-meta">{meta.map(m => <div key={m.k}><dt>{t(m.k)}</dt><dd title={t(m.v)}>{t(m.v)}</dd></div>)}</dl>}
   </nav>;
 }

@@ -1,8 +1,10 @@
+import { useI18n } from '../i18n/useI18n';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { FileDown, PenLine, ShieldCheck } from 'lucide-react';
 import { apiFetch } from '../api/client';
 import '../legal/LegalDesk.css';
+import LanguageSwitcher from './LanguageSwitcher';
 import { ContractSheet } from '../legal/art';
 
 type Access = { allowed: boolean; plan: string; required_plan: string };
@@ -14,6 +16,7 @@ const BENEFITS = [
 ];
 
 export default function LegalAccessGate({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const [access, setAccess] = useState<Access | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -35,14 +38,15 @@ export default function LegalAccessGate({ children }: { children: ReactNode }) {
   const checking = !access && !error;
   return <div className="lv-gate">
     <main className="lv-gate-card">
-      <Link to="/" className="lv-gate-brand"><img src="/brand/logo-mark.svg" alt="" width={22} height={22} />CausalGraph<span className="lv-rule-v" aria-hidden="true" /><span className="lv-gate-product">合同审查</span></Link>
+      <LanguageSwitcher />
+      <Link to="/" className="lv-gate-brand"><img src="/brand/logo-mark.svg" alt="" width={22} height={22} />CausalGraph<span className="lv-rule-v" aria-hidden="true" /><span className="lv-gate-product">{t("合同审查")}</span></Link>
       <ContractSheet size={56} />
-      <h1>{checking ? '正在验证会员权限' : error ? '服务暂不可用' : '合同审查为 Max 会员专享'}</h1>
-      {access && !error && <ul>{BENEFITS.map(({ icon: Icon, text }) => <li key={text}><Icon size={16} strokeWidth={1.75} aria-hidden="true" />{text}</li>)}</ul>}
-      <p role="status">{error || (checking ? '请稍候…' : '如需开通，请联系管理员。')}</p>
+      <h1>{checking ? t("正在验证会员权限") : error ? t("服务暂不可用") : t("合同审查为 Max 会员专享")}</h1>
+      {access && !error && <ul>{BENEFITS.map(({ icon: Icon, text }) => <li key={text}><Icon size={16} strokeWidth={1.75} aria-hidden="true" />{t(text)}</li>)}</ul>}
+      <p role="status">{(error && t(error)) || (checking ? t("请稍候…") : t("如需开通，请联系管理员。"))}</p>
       {!checking && <div className="lv-gate-actions">
-        <Link to="/agent" className="lv-primary">返回研究工作台</Link>
-        <button className="lv-secondary" onClick={() => { setAccess(null); setError(''); setAttempt(x => x + 1); }}>重新验证</button>
+        <Link to="/agent" className="lv-primary">{t("返回研究工作台")}</Link>
+        <button className="lv-secondary" onClick={() => { setAccess(null); setError(''); setAttempt(x => x + 1); }}>{t("重新验证")}</button>
       </div>}
     </main>
   </div>;

@@ -72,6 +72,7 @@ jobs:
         run: |
           python scripts/research_ui_smoke.py
           python scripts/legal_ui_smoke.py
+          python scripts/legal_motion_locale_smoke.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
