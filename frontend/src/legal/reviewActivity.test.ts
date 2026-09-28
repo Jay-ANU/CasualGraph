@@ -1,3 +1,4 @@
+import { translate } from '../i18n/locale';
 import { describe, expect, it } from 'vitest';
 import { agentLine, formatClock, phaseDetail, remainingLabel, remainingSeconds, reviewEvents, reviewPercent, reviewPhase } from './reviewActivity';
 import type { Collaboration, Finding, Review } from './types';
@@ -123,5 +124,22 @@ describe('agent lines', () => {
     expect(agentLine({ ...critic, status: 'running', completed: 3 })).toBe('已复核 3/4 项');
     expect(agentLine({ ...legal, status: 'completed', completed: 2 })).toBe('已完成 2/2 项');
     expect(agentLine({ ...legal, status: 'partial' })).toBe('部分完成 1/2 项');
+  });
+});
+
+
+describe('localized progress without altering review data', () => {
+  const english = (source: string, values?: Record<string, string | number>) => translate(source, 'en', values);
+  it('formats progress counts and estimated time in English', () => {
+    expect(phaseDetail(review({ progress: { phase: 'verification', completed: 1, total: 4 } }), english)).toBe('Issue review · group 2/4');
+    expect(phaseDetail(review({ status: 'queued' }), english)).toBe('Waiting to start');
+    expect(remainingLabel(301, english)).toBe('About 6 min');
+    expect(remainingLabel(null, english)).toBe('');
+  });
+  it('localizes frontend agent counts but preserves engine notes verbatim', () => {
+    const agent = team(['running', 1], ['pending', 0], ['pending', 0], ['pending', 0]).agents[0];
+    expect(agentLine(agent, english)).toBe('Reviewing item 2/2');
+    expect(agentLine({ ...agent, note: '第 2/2 项：违约责任' }, english)).toBe('第 2/2 项：违约责任');
+    expect(agent.completed).toBe(1);
   });
 });

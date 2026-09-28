@@ -1,9 +1,9 @@
 """Browser regression for original legal motion and zh/en UI; synthetic APIs only."""
-from contextlib import contextmanager
 import functools
 import http.server
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import threading
@@ -51,12 +51,35 @@ def api(route):
     route.fulfill(status=200 if data is not None else 404, headers=headers,
         content_type='application/json', body=json.dumps(data or {'detail': 'Unhandled synthetic request'}, ensure_ascii=False))
 
+contrast_checks = []
+def readable_dark_heading(page, selector, background_selector):
+    """Guard the actual computed foreground, including inherited opacity."""
+    fg, bg, opacity = page.locator(selector).evaluate(r"""(el, background) => {
+        const rgb = value => value.match(/[\d.]+/g).slice(0, 3).map(Number);
+        let opacity = 1;
+        for (let node = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+        return [rgb(getComputedStyle(el).color), rgb(getComputedStyle(document.querySelector(background)).backgroundColor), opacity];
+    }""", background_selector)
+    def luminance(rgb):
+        linear = [(v / 255 / 12.92 if v / 255 <= .04045 else ((v / 255 + .055) / 1.055) ** 2.4) for v in rgb]
+        return sum(v * w for v, w in zip(linear, (.2126, .7152, .0722)))
+    top, bottom = sorted((luminance(fg), luminance(bg)), reverse=True)
+    ratio = (top + .05) / (bottom + .05)
+    assert ratio >= 4.5 and opacity >= .99, (selector, ratio, opacity)
+    contrast_checks.append({'selector': selector, 'width': page.viewport_size['width'], 'ratio': round(ratio, 2)})
+
 def layout(page, label):
     for width in (320, 390, 768, 1024, 1440):
         page.set_viewport_size({'width': width, 'height': 900})
-        page.wait_for_timeout(120)
+        page.evaluate('window.scrollTo(0, 0)')
+        # Wait for fonts/layout, not a guessed delay that photographs a fade mid-frame.
+        page.evaluate('document.fonts.ready')
+        if page.locator('#cg-hero-title').count():
+            readable_dark_heading(page, '#cg-hero-title', '.cg-hero')
+            readable_dark_heading(page, '#cg-hero-title em', '.cg-hero')
+            readable_dark_heading(page, '.cg-home-cta h2', '.cg-home-cta')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 2'), (label, width)
-        page.screenshot(path=str(OUT / f'{label}-{width}.png'), full_page=True)
+        page.screenshot(path=str(OUT / f'{label}-{width}.png'), full_page=True, animations='disabled')
 
 server = http.server.ThreadingHTTPServer(('127.0.0.1', 4185), functools.partial(Handler, directory=str(ROOT / 'frontend/dist')))
 threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -78,9 +101,26 @@ try:
         expect(page.get_by_role('button', name='播放动态效果', exact=True)).to_be_visible()
         time_before = page.locator('video').evaluate('(v) => v.currentTime')
         page.wait_for_timeout(250)
+        # A paused video retains its current frame instead of jumping to the poster.
+        expect(page.locator('.cg-legal-motion')).to_have_class(re.compile(r'has-frame'))
         assert abs(page.locator('video').evaluate('(v) => v.currentTime') - time_before) < .1
         page.get_by_role('button', name='播放动态效果', exact=True).click()
         page.wait_for_function("!document.querySelector('video').paused")
+        page.evaluate("window.scrollTo(0, document.querySelector('#legal-workflow').offsetTop)")
+        page.wait_for_function("document.querySelector('video').paused")
+        page.evaluate('window.scrollTo(0, 0)')
+        page.wait_for_function("!document.querySelector('video').paused")
+        page.get_by_role('button', name='暂停动态效果', exact=True).click()
+        page.reload()
+        page.wait_for_load_state('networkidle')
+        assert page.locator('video').get_attribute('src') is None
+        page.get_by_role('button', name='播放动态效果', exact=True).click()
+        page.wait_for_function("document.querySelector('video').currentTime > .1")
+        # An OS preference change takes effect while the page is already open.
+        page.emulate_media(reduced_motion='reduce')
+        expect(page.locator('video')).to_have_count(0)
+        page.emulate_media(reduced_motion='no-preference')
+        page.wait_for_function("document.querySelector('video')?.currentTime > .1")
         layout(page, 'motion-home-zh')
         page.get_by_role('button', name='EN', exact=True).click()
         expect(page).to_have_url(BASE + '/en')
@@ -97,6 +137,7 @@ try:
         expect(page).to_have_url(BASE + '/login')
         page.get_by_role('button', name='EN', exact=True).click()
         expect(page.locator('input[type=email]')).to_be_visible()
+        layout(page, 'motion-login-en')
         page.screenshot(path=str(OUT / 'motion-login-en.png'), full_page=True)
         assert not errors, errors
         context.close()
@@ -112,11 +153,23 @@ try:
         assert not video_requests
         context.close()
 
+        # Data-saving connections show a poster until the user explicitly plays it.
+        context = browser.new_context()
+        context.add_init_script("Object.defineProperty(navigator, 'connection', { value: { saveData: true }, configurable: true });")
+        page = context.new_page()
+        page.goto(BASE + '/en', wait_until='networkidle')
+        assert page.locator('video').get_attribute('src') is None
+        page.get_by_role('button', name='Play motion', exact=True).click()
+        page.wait_for_function("document.querySelector('video').currentTime > .1")
+        context.close()
+
         # Asset failure falls back to the poster without hiding primary actions.
         context = browser.new_context()
         page = context.new_page()
         page.route('**/media/legal-motion.mp4', lambda route: route.abort())
         page.goto(BASE)
+        expect(page.locator('video')).to_have_count(0)
+        expect(page.locator('.cg-motion-caption')).to_contain_text('静态预览')
         expect(page.locator('.cg-motion-poster')).to_be_visible()
         expect(page.locator('.cg-hero-actions a').first).to_be_visible()
         context.close()
@@ -127,6 +180,15 @@ try:
         context.route('http://127.0.0.1:8000/**', api)
         page = context.new_page()
         page.on('pageerror', lambda e: errors.append(str(e)))
+        page.goto(BASE + '/legal')
+        expect(page.locator('.lv-motion-welcome h2')).to_be_visible()
+        # The existing library entrance is finite. Check its settled state.
+        page.evaluate("""async () => {
+            const finite = document.getAnimations().filter(a => Number.isFinite(a.effect?.getTiming().iterations));
+            await Promise.all(finite.map(a => a.finished.catch(() => {})));
+        }""")
+        readable_dark_heading(page, '.lv-motion-welcome h2', '.lv-motion-welcome')
+        page.screenshot(path=str(OUT / 'motion-library-zh.png'), full_page=True, animations='disabled')
         page.goto(BASE + '/legal?contract=locale-c1')
         page.get_by_label('合同类型', exact=True).select_option('销售合同')
         page.get_by_role('radio', name='销售方', exact=True).check()
@@ -152,9 +214,9 @@ try:
         assert not errors, errors
         context.close()
         browser.close()
-    (OUT / 'motion-locale-results.json').write_text(json.dumps({'status': 'passed', 'locales': ['zh-CN', 'en'],
+    (OUT / 'motion-locale-results.json').write_text(json.dumps({'status': 'passed', 'contrast_checks': contrast_checks, 'locales': ['zh-CN', 'en'],
         'widths': [320, 390, 768, 1024, 1440], 'checks': ['default Chinese', 'language persistence', 'explicit URLs',
-        'real video playback', 'pause/resume', 'reduced motion', 'asset fallback', 'auth redirect',
+        'real video playback', 'pause/resume keeps frame', 'pause preference on reload', 'offscreen pause', 'live reduced-motion changes', 'dark-heading contrast', 'save-data opt-in playback', 'reduced motion', 'asset fallback', 'auth redirect',
         'form identity', 'contract deep link', 'unchanged API enum values', 'original contract unchanged', 'no write requests']}, indent=2))
     print('Legal motion and locale browser checks passed.')
 finally:

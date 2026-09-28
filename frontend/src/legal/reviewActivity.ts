@@ -10,6 +10,9 @@ import { findingTone, tierOf, TONE_LABEL } from './labels';
 
 export type PhaseId = 'queued' | 'intake' | 'retrieval' | 'review' | 'coordination' | 'complete';
 export type Agent = Collaboration['agents'][number];
+type UiTranslator = (source: string, values?: Record<string, string | number>) => string;
+const sourceText: UiTranslator = (source, values) => source.replace(/\{(\w+)\}/g,
+  (match, key: string) => values && Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match);
 
 export const PHASE_STEPS: { id: 'intake' | 'retrieval' | 'review' | 'coordination'; label: string }[] = [
   { id: 'intake', label: '读取合同' },
@@ -75,18 +78,18 @@ export function reviewPercent(r: Review): number {
 }
 
 /** Concrete counts for the current phase; also the progress bar's spoken value. */
-export function phaseDetail(r: Review): string {
+export function phaseDetail(r: Review, t: UiTranslator = sourceText): string {
   const phase = reviewPhase(r);
-  if (phase === 'queued') return '等待开始';
-  if (phase === 'intake') return ['ultra_fast', 'fast'].includes(tierOf(r)) ? '读取合同' : '读取合同，规划法律检索';
-  if (phase === 'retrieval') return `法规检索 · 已检索 ${r.retrieval?.length || 0} 项`;
+  if (phase === 'queued') return t('等待开始');
+  if (phase === 'intake') return t(['ultra_fast', 'fast'].includes(tierOf(r)) ? '读取合同' : '读取合同，规划法律检索');
+  if (phase === 'retrieval') return t('法规检索 · 已检索 {0} 项', { 0: r.retrieval?.length || 0 });
   if (r.collaboration) {
     const team = specialists(r);
-    return phase === 'review' ? `分项审查 · 已完成 ${sum(team, 'completed')}/${sum(team, 'total')} 项` : '汇总复核 · 交叉检查各项结论';
+    return phase === 'review' ? t('分项审查 · 已完成 {0}/{1} 项', { 0: sum(team, 'completed'), 1: sum(team, 'total') }) : t('汇总复核 · 交叉检查各项结论');
   }
   const p = r.progress;
   if (!p?.total) return '';
-  return `${phase === 'coordination' ? '汇总复核' : '分项审查'} · 第 ${Math.min(p.completed + 1, p.total)}/${p.total} 组`;
+  return t(phase === 'coordination' ? '汇总复核 · 第 {0}/{1} 组' : '分项审查 · 第 {0}/{1} 组', { 0: Math.min(p.completed + 1, p.total), 1: p.total });
 }
 
 /** Rough time left from the pace so far; only once there is enough signal to be useful. */
@@ -95,9 +98,9 @@ export function remainingSeconds(percent: number, elapsedSeconds: number): numbe
   return elapsedSeconds * (100 - percent) / percent;
 }
 
-export function remainingLabel(seconds: number | null): string {
+export function remainingLabel(seconds: number | null, t: UiTranslator = sourceText): string {
   if (seconds == null) return '';
-  return seconds < 60 ? '即将完成' : `约 ${Math.ceil(seconds / 60)} 分钟`;
+  return seconds < 60 ? t('即将完成') : t('约 {0} 分钟', { 0: Math.ceil(seconds / 60) });
 }
 
 export function formatClock(totalSeconds: number): string {
@@ -146,17 +149,18 @@ export function reviewEvents(prev: Review | null, next: Review): Draft[] {
 export const agentStepKey = (a: Agent) => `${a.status}|${a.completed}|${a.note}`;
 
 /** One line under each agent: the engine's note when it sends one, otherwise counts. */
-export function agentLine(a: Agent): string {
+export function agentLine(a: Agent, t: UiTranslator = sourceText): string {
+  // Engine notes are evidence-bearing content; never rewrite or translate them.
   if (a.note) return a.note;
-  const counts = `${a.completed}/${a.total} 项`;
+  const counts = { 0: a.completed, 1: a.total };
   switch (a.status) {
     case 'running':
-      return a.id === 'arbiter' ? '正在交叉检查各项结论' : a.id === 'critic' ? `已复核 ${counts}` : `正在审查第 ${Math.min(a.completed + 1, a.total)}/${a.total} 项`;
+      return a.id === 'arbiter' ? t('正在交叉检查各项结论') : a.id === 'critic' ? t('已复核 {0}/{1} 项', counts) : t('正在审查第 {0}/{1} 项', { ...counts, 0: Math.min(a.completed + 1, a.total) });
     case 'pending':
-      return a.id === 'arbiter' ? '分项审查完成后开始' : a.id === 'critic' ? '随各项审查逐项复核' : '等待开始';
-    case 'completed': return a.id === 'arbiter' ? '已完成' : `已完成 ${counts}`;
-    case 'partial': return `部分完成 ${counts}`;
-    case 'paused': return '已暂停，可恢复';
-    default: return '本轮不适用';
+      return t(a.id === 'arbiter' ? '分项审查完成后开始' : a.id === 'critic' ? '随各项审查逐项复核' : '等待开始');
+    case 'completed': return a.id === 'arbiter' ? t('已完成') : t('已完成 {0}/{1} 项', counts);
+    case 'partial': return t('部分完成 {0}/{1} 项', counts);
+    case 'paused': return t('已暂停，可恢复');
+    default: return t('本轮不适用');
   }
 }

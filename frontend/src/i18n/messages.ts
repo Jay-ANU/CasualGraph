@@ -1,4 +1,5 @@
 export const messages: Record<string, string> = {
+  "找不到页面": "Page not found",
   "界面语言": "Interface language",
   "合同审查": "Contract review",
   "正在验证会员权限": "Checking membership access",

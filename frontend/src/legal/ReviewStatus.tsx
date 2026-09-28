@@ -17,7 +17,7 @@ function Clock({ createdAt, percent }: { createdAt?: number; percent: number }) 
   const elapsed = Math.max(0, now / 1000 - createdAt);
   return <dl className="lv-live-clock">
     <div><dt>{t("已用时")}</dt><dd>{formatClock(elapsed)}</dd></div>
-    <div><dt>{t("预计剩余")}</dt><dd>{remainingLabel(remainingSeconds(percent, elapsed)) || '—'}</dd></div>
+    <div><dt>{t("预计剩余")}</dt><dd>{remainingLabel(remainingSeconds(percent, elapsed), t) || '—'}</dd></div>
   </dl>;
 }
 
@@ -42,7 +42,7 @@ function AgentRow({ agent }: { agent: Agent }) {
         {agent.total > 0 ? `${agent.completed}/${agent.total}` : t(AGENT_STATUS[agent.status] || '—')}</span>
     </div>
     <span className="lv-agent-bar" aria-hidden="true"><i style={{ width: `${percent}%` }} /></span>
-    <p>{agentLine(agent)}</p>
+    <p>{agentLine(agent, t)}</p>
   </li>;
 }
 
@@ -58,7 +58,7 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
   const steps = phaseSteps(review);
   // A phase a tier does not run (e.g. the final pass in ultra-fast) shows as the last step.
   const step = Math.max(steps.findIndex(item => item.id === phase), phase === 'coordination' ? steps.length - 1 : -1);
-  const detail = phaseDetail(review);
+  const detail = phaseDetail(review, t);
   const interim = review.findings.filter(f => findingStatus(f) !== 'rejected').length;
   const agents = review.collaboration?.agents || [];
   const working = agents.filter(a => a.status !== 'not_applicable');
@@ -85,7 +85,7 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
     </div>
     <div className="lv-rail-body">
       {working.length > 0 && <ul className="lv-agents" aria-label={t("协作进度")}>{working.map(agent => <AgentRow key={agent.id} agent={agent} />)}</ul>}
-      {idle.map(agent => <p key={agent.id} className="lv-agents-note">{t(agent.title)}{t("不适用：")}{agentLine(agent)}</p>)}
+      {idle.map(agent => <p key={agent.id} className="lv-agents-note">{t(agent.title)}{t("不适用：")}{agentLine(agent, t)}</p>)}
       <div className="lv-activity">
         <div className="lv-activity-head"><h3>{t("实时动态")}</h3><SyncStatus at={live.syncedAt} /></div>
         <div role="log" aria-label={t("审查动态")}><ol className="lv-activity-list">

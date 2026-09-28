@@ -3,7 +3,7 @@
 .lv-motion-welcome { display:flex; align-items:center; justify-content:space-between; gap:28px; margin:0 0 28px; padding:12px 24px 12px 32px; border-radius:12px; color:#f8f7f2; background:#132621; overflow:hidden; }
 .lv-motion-welcome>div:first-child { min-width:0; }
 .lv-motion-welcome .lv-welcome-kicker { font-size:11px; color:#c0cabd; letter-spacing:.09em; margin:0 0 12px; }
-.lv-motion-welcome h2 { margin:0 0 10px; font-family:'Newsreader Variable','Songti SC','Noto Serif CJK SC',serif; font-size:30px; font-weight:400; letter-spacing:.04em; }
+.lv-motion-welcome h2 { color:#f8f7f2; margin:0 0 10px; font-family:'Newsreader Variable','Songti SC','Noto Serif CJK SC',serif; font-size:30px; font-weight:400; letter-spacing:.04em; }
 .lv-motion-welcome p { font-size:12px; line-height:1.8; margin:0; color:#bfc8ba; }
 .lv-motion-welcome .cg-legal-motion { max-height:185px; width:220px; }
 html[lang=en] .lv-stepper { gap:12px; }

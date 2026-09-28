@@ -86,6 +86,8 @@ def check(label, ok, detail=None):
 
 def chromium_executable(playwright):
     """Playwright's own Chromium when installed; otherwise one already under PLAYWRIGHT_BROWSERS_PATH."""
+    if os.getenv('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
+        return os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
     if Path(playwright.chromium.executable_path).is_file():
         return None
     root = Path(os.environ.get('PLAYWRIGHT_BROWSERS_PATH') or '/opt/pw-browsers')
@@ -104,18 +106,19 @@ try:
         page = context.new_page()
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
-        check('Home heading', page.get_by_role('heading', name='Answers from sustainability reports, with the page they came from.').count() == 1)
-        check('Independent Legal navigation', page.get_by_role('navigation', name='Primary').get_by_role('link', name='法务 Agent', exact=True).get_attribute('href') == '/legal')
+        check('Legal-first Chinese home', page.locator('html').get_attribute('lang') == 'zh-CN' and '让每一份合同' in page.locator('h1').inner_text())
+        page.get_by_role('button', name='EN', exact=True).click()
+        page.wait_for_url('**/en')
+        check('Independent Legal navigation', page.get_by_role('navigation', name='Primary').get_by_role('link', name='Legal Agent', exact=True).get_attribute('href') == '/legal')
         for path, heading in [('/about', 'A reading tool, not a verdict.'), ('/desktop', 'Your research, a little closer.')]:
             # Assert the real restored page renders, without hard-coding copy that might evolve.
             page.goto('http://127.0.0.1:4173' + path, wait_until='networkidle')
             check('Restored page ' + path, page.get_by_role('heading', level=1).count() == 1 and 'doesn’t exist' not in page.locator('body').inner_text())
         page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
-        check('Home action empty disabled', page.get_by_role('button', name='Start research', exact=True).is_disabled())
+        check('Legal primary action', page.locator('.cg-hero-actions').get_by_role('link', name='Review a contract').get_attribute('href') == '/legal')
         no_overflow(page, 'Desktop homepage no horizontal overflow')
         page.screenshot(path=str(OUT / 'home-desktop.png'), full_page=True)
-        page.get_by_role('textbox', name='Ask a research question').fill('Summarise the payment terms')
-        page.get_by_role('button', name='Start research', exact=True).click()
+        page.get_by_role('navigation', name='Primary').get_by_role('link', name='Research', exact=True).click()
         page.wait_for_url('**/login')
         check('Unauthenticated research opens login', '/login' in page.url)
         page.evaluate('(u)=>{localStorage.setItem("token","ui-smoke-token");localStorage.setItem("user",JSON.stringify(u))}', USER)

@@ -20,19 +20,25 @@ export default function LegalMotion({ compact = false }: { compact?: boolean }) 
   const [hidden, setHidden] = useState(() => document.hidden);
   const [failed, setFailed] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [hasFrame, setHasFrame] = useState(false);
   const active = !paused && !reduced && visible && !hidden && !failed;
   useEffect(() => {
     const media = window.matchMedia(QUERY);
-    const change = () => setReduced(media.matches);
+    const change = () => {
+      setReduced(media.matches);
+      if (media.matches) { video.current?.pause(); setPlaying(false); setHasFrame(false); }
+    };
     const visibility = () => setHidden(document.hidden);
     const sync = (event: Event) => setPaused(Boolean((event as CustomEvent<boolean>).detail));
+    const storage = (event: StorageEvent) => { if (event.key === PREF) setPaused(event.newValue === 'true'); };
     media.addEventListener('change', change);
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('cg-motion-change', sync);
+    window.addEventListener('storage', storage);
     const observer = new IntersectionObserver(entries => setVisible(entries[0]?.isIntersecting ?? false), { threshold: 0.12 });
     if (container.current) observer.observe(container.current);
     return () => { observer.disconnect(); media.removeEventListener('change', change);
-      document.removeEventListener('visibilitychange', visibility); window.removeEventListener('cg-motion-change', sync); };
+      document.removeEventListener('visibilitychange', visibility); window.removeEventListener('cg-motion-change', sync); window.removeEventListener('storage', storage); };
   }, []);
   useEffect(() => {
     const player = video.current;
@@ -54,12 +60,13 @@ export default function LegalMotion({ compact = false }: { compact?: boolean }) 
       void video.current.play().catch(() => {});
     }
   };
-  return <div ref={container} className={`cg-legal-motion ${compact ? 'is-compact' : ''} ${playing ? 'is-playing' : 'is-still'}`}>
+  return <div ref={container} className={`cg-legal-motion ${compact ? 'is-compact' : ''} ${playing ? 'is-playing' : 'is-still'} ${hasFrame ? 'has-frame' : ''}`}>
     <img className="cg-motion-poster" src="/media/legal-motion-poster.webp" alt="" width={960} height={800} aria-hidden="true" fetchPriority={compact ? 'auto' : 'high'} />
     {!reduced && !failed && <video ref={video} className="cg-motion-video" muted loop playsInline preload="none"
       poster="/media/legal-motion-poster.webp"
       aria-hidden="true" tabIndex={-1} disablePictureInPicture
-      onPlaying={() => setPlaying(true)} onPause={() => setPlaying(false)} onError={() => setFailed(true)}
+      onPlaying={() => { setPlaying(true); setHasFrame(true); }} onPause={() => setPlaying(false)}
+      onError={() => { setFailed(true); setPlaying(false); setHasFrame(false); }}
       onCanPlay={() => { if (active) void video.current?.play().catch(() => {}); }} />}
     <div className="cg-motion-caption"><span>{t('法务工作流 · 动态示意')}</span>
       {!reduced && !failed && <button type="button" onClick={toggle} aria-label={playing ? t('暂停动态效果') : t('播放动态效果')} aria-pressed={playing}>
