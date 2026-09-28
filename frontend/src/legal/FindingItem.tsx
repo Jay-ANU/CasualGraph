@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n/useI18n';
 import { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { Block, Review } from './types';
@@ -23,6 +24,7 @@ const DECISION_NOTE: Record<string, string> = { accepted: '已采纳，正文已
 
 /** One finding in the rail: a single line until selected, then its reasoning, basis and the revision to decide on. */
 export function FindingItem({ item: { finding: f, n }, review: r, block, clause, busy, selected, legalOk, manualOk, onLegal, onManual, onSelect, onLocate, onDecision }: Props) {
+  const { t } = useI18n();
   const decision = r.decisions[f.id];
   const decided = Boolean(decision && decision.decision !== 'pending');
   const original = block?.text || '';
@@ -45,9 +47,9 @@ export function FindingItem({ item: { finding: f, n }, review: r, block, clause,
       <Marker n={n} finding={f} state={markerState(decision, false)} />
       <span className="lv-note-main">
         <span className="lv-note-meta">
-          <span className={`lv-note-risk tone-${tone}`}>{TONE_LABEL[tone]}</span><span aria-hidden="true">·</span><span>{KIND_LABEL[f.kind] || '其他'}</span>
-          {status === 'quick' && <span className="lv-note-flag">未复核</span>}
-          {decided && <span className={`lv-note-decision is-${decision!.decision}`}>{DECISION_LABEL[decision!.decision]}</span>}
+          <span className={`lv-note-risk tone-${tone}`}>{t(TONE_LABEL[tone])}</span><span aria-hidden="true">·</span><span>{t(KIND_LABEL[f.kind] || "其他")}</span>
+          {status === 'quick' && <span className="lv-note-flag">{t("未复核")}</span>}
+          {decided && <span className={`lv-note-decision is-${decision!.decision}`}>{t(DECISION_LABEL[decision!.decision])}</span>}
           <span className="lv-note-clause"><RichText text={clause} /></span>
         </span>
         <span className="lv-note-title">{f.title}</span>
@@ -55,51 +57,51 @@ export function FindingItem({ item: { finding: f, n }, review: r, block, clause,
       </span>
     </button>
     {selected && <div className="lv-note-body">
-      <div className="lv-note-sec"><span className="lv-note-label">风险说明</span><p>{f.reason}</p></div>
-      {f.missing_facts.length > 0 && <div className="lv-note-sec"><span className="lv-note-label">待补充</span><p className="is-warn">{f.missing_facts.join('；')}</p></div>}
-      {(laws.length > 0 || sources.length > 0 || policies.length > 0 || unsupported) && <div className="lv-note-sec"><span className="lv-note-label">依据</span>
+      <div className="lv-note-sec"><span className="lv-note-label">{t("风险说明")}</span><p>{f.reason}</p></div>
+      {f.missing_facts.length > 0 && <div className="lv-note-sec"><span className="lv-note-label">{t("待补充")}</span><p className="is-warn">{f.missing_facts.join('；')}</p></div>}
+      {(laws.length > 0 || sources.length > 0 || policies.length > 0 || unsupported) && <div className="lv-note-sec"><span className="lv-note-label">{t("依据")}</span>
         {laws.map((ref, i) => <div className="lv-basis" key={`${ref.law}-${ref.article}-${i}`}>
           <div className="lv-basis-head"><strong>{ref.law}{ref.article && ` ${ref.article}`}</strong>
-            <span className={`lv-pill ${ref.status === 'source_matched' ? 'is-ok' : 'is-mid'}`}>{LAW_STATUS[ref.status] || LAW_STATUS.model_cited}</span></div>
+            <span className={`lv-pill ${ref.status === 'source_matched' ? 'is-ok' : 'is-mid'}`}>{t(LAW_STATUS[ref.status] || LAW_STATUS.model_cited)}</span></div>
           {ref.point && <p>{ref.point}</p>}
         </div>)}
         {sources.map(({ c, source }, i) => <details className="lv-basis lv-citation" key={`${c.source_id}-${i}`}>
-          <summary>官方原文：{source!.title}</summary>
+          <summary>{t("官方原文：")}{source!.title}</summary>
           <blockquote>{c.supporting_quote}</blockquote>
-          <a href={source!.url} target="_blank" rel="noreferrer noopener">查看来源<ExternalLink {...ic} size={13} /></a>
+          <a href={source!.url} target="_blank" rel="noreferrer noopener">{t("查看来源")}<ExternalLink {...ic} size={13} /></a>
           <SourceDetails source={source!} />
         </details>)}
         {policies.map(p => <details className="lv-basis lv-citation" key={p!.id}>
-          <summary>公司规范：{p!.title}（v{p!.version}）</summary>
-          <p>{p!.text}</p><small>内部规范，非法律规定。</small>
+          <summary>{t("公司规范：")}{p!.title}（v{p!.version}）</summary>
+          <p>{p!.text}</p><small>{t("内部规范，非法律规定。")}</small>
         </details>)}
-        {unsupported && <p className="is-warn">{unsupported}</p>}
+        {unsupported && <p className="is-warn">{t(unsupported)}</p>}
       </div>}
-      {status === 'unconfirmed' && f.verification_note && <div className="lv-note-sec"><span className="lv-note-label">复核</span><p className="lv-muted">{f.verification_note}</p></div>}
+      {status === 'unconfirmed' && f.verification_note && <div className="lv-note-sec"><span className="lv-note-label">{t("复核")}</span><p className="lv-muted">{f.verification_note}</p></div>}
       {showRevision && <div className="lv-note-sec">
-        <span className="lv-note-label lv-note-label-row">{f.suggested_text && !drafting ? '修改建议' : '修订文本'}
-          {!decided && <button className="lv-text-button" onClick={() => setEditing(!editing)}>{editing ? '查看对比' : '编辑'}</button>}</span>
-        {editing ? <textarea className="lv-textarea lv-serif" aria-label="编辑本段修订" rows={6} value={text} maxLength={12000} onChange={e => { setText(e.target.value); onManual(false); }} />
-          : <div className="lv-redline-box" role="group" aria-label="原文与修订对比"><Redline before={original || f.original_quote} after={decided && decision!.text ? decision!.text : text} /></div>}
+        <span className="lv-note-label lv-note-label-row">{f.suggested_text && !drafting ? t("修改建议") : t("修订文本")}
+          {!decided && <button className="lv-text-button" onClick={() => setEditing(!editing)}>{editing ? t("查看对比") : t("编辑")}</button>}</span>
+        {editing ? <textarea className="lv-textarea lv-serif" aria-label={t("编辑本段修订")} rows={6} value={text} maxLength={12000} onChange={e => { setText(e.target.value); onManual(false); }} />
+          : <div className="lv-redline-box" role="group" aria-label={t("原文与修订对比")}><Redline before={original || f.original_quote} after={decided && decision!.text ? decision!.text : text} /></div>}
       </div>}
       {f.validation_warnings?.map((w, i) => <p key={i} className="lv-note is-warn">{w}</p>)}
-      {f.conflict_group && <p className="lv-note is-warn">该段落有多条修改建议，只能采纳其中一条。</p>}
-      {f.cross_edit_status === 'unchecked' && f.revision_allowed && !decided && <p className="lv-note">{f.cross_edit_note || '与其他修改的交叉核对将在导出前完成。'}</p>}
+      {f.conflict_group && <p className="lv-note is-warn">{t("该段落有多条修改建议，只能采纳其中一条。")}</p>}
+      {f.cross_edit_status === 'unchecked' && f.revision_allowed && !decided && <p className="lv-note">{f.cross_edit_note || t("与其他修改的交叉核对将在导出前完成。")}</p>}
       {!decided && <>
-        {showRevision && legal && <label className="lv-check lv-check-sm"><input type="checkbox" checked={legalOk} onChange={e => onLegal(e.target.checked)} /><span>已核对引用法规的版本及适用性</span></label>}
-        {showRevision && !state.adoptable && <label className="lv-check lv-check-sm"><input type="checkbox" checked={manualOk} onChange={e => onManual(e.target.checked)} /><span>保存为人工修订（导出前核验）</span></label>}
+        {showRevision && legal && <label className="lv-check lv-check-sm"><input type="checkbox" checked={legalOk} onChange={e => onLegal(e.target.checked)} /><span>{t("已核对引用法规的版本及适用性")}</span></label>}
+        {showRevision && !state.adoptable && <label className="lv-check lv-check-sm"><input type="checkbox" checked={manualOk} onChange={e => onManual(e.target.checked)} /><span>{t("保存为人工修订（导出前核验）")}</span></label>}
         <div className="lv-note-actions">
           {showRevision && <button className="lv-primary lv-btn-sm" aria-describedby={state.issue ? `finding-help-${f.id}` : undefined} disabled={!state.canSubmit}
-            onClick={() => onDecision(state.decision, text, legalOk, manualOk)}>{state.adoptable ? '采纳修改' : '保存人工修订'}{state.adoptable && <kbd aria-hidden="true">A</kbd>}</button>}
-          {revisable && !showRevision && <button className="lv-secondary lv-btn-sm" onClick={() => { setText(original); setEditing(true); }}>编辑本段</button>}
-          <button className="lv-secondary lv-btn-sm" disabled={busy || !done} onClick={() => onDecision('rejected', '', false, false)}>保留原文<kbd aria-hidden="true">R</kbd></button>
-          {f.block_id && <button className="lv-text-button lv-narrow-only" onClick={() => onLocate(f.block_id!)}>在正文中查看</button>}
+            onClick={() => onDecision(state.decision, text, legalOk, manualOk)}>{state.adoptable ? t("采纳修改") : t("保存人工修订")}{state.adoptable && <kbd aria-hidden="true">A</kbd>}</button>}
+          {revisable && !showRevision && <button className="lv-secondary lv-btn-sm" onClick={() => { setText(original); setEditing(true); }}>{t("编辑本段")}</button>}
+          <button className="lv-secondary lv-btn-sm" disabled={busy || !done} onClick={() => onDecision('rejected', '', false, false)}>{t("保留原文")}<kbd aria-hidden="true">R</kbd></button>
+          {f.block_id && <button className="lv-text-button lv-narrow-only" onClick={() => onLocate(f.block_id!)}>{t("在正文中查看")}</button>}
         </div>
-        {showRevision && state.issue && <p id={`finding-help-${f.id}`} className="lv-start-help">{state.issue}</p>}
+        {showRevision && state.issue && <p id={`finding-help-${f.id}`} className="lv-start-help">{t(state.issue)}</p>}
       </>}
       {decided && <div className={`lv-decided is-${decision!.decision}`} role="status">
-        <span>{DECISION_NOTE[decision!.decision]}</span>
-        <button className="lv-text-button" disabled={busy || !done} onClick={() => onDecision('pending', '', false, false)}>撤销</button>
+        <span>{t(DECISION_NOTE[decision!.decision])}</span>
+        <button className="lv-text-button" disabled={busy || !done} onClick={() => onDecision('pending', '', false, false)}>{t("撤销")}</button>
       </div>}
     </div>}
   </li>;

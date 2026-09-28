@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n/useI18n';
 import { useState } from 'react';
 import type { Policy, ScenarioCatalog } from './types';
 import { ScenarioOptions } from './ScenarioPicker';
@@ -11,53 +12,54 @@ export function PolicyEditor({ catalog, policies, busy, onSave, onArchive }: {
   catalog?: ScenarioCatalog; policies: Policy[]; busy: boolean;
   onSave: (draft: Draft, existing: Policy | null) => void; onArchive: (policy: Policy) => void;
 }) {
+  const { t } = useI18n();
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [editing, setEditing] = useState<Policy | null>(null);
   const scene = currentScenario(catalog, draft.contract_type);
   const validScope = usableCatalog(catalog) && (draft.contract_type === '全部' || !!scene) && draft.our_roles.every(r => scene?.roles.some(x => x.value === r));
   return <main id="legal-main" tabIndex={-1} className="lv-policy-page">
     <div className="lv-policy-inner">
-      <h1>公司规范</h1>
-      <p className="lv-page-meta">审查时逐条对照<span className="lv-sep" aria-hidden="true">·</span><span className="lv-mono">{policies.length}</span> 条启用<span className="lv-sep" aria-hidden="true">·</span>仅组织管理员可编辑</p>
+      <h1>{t("公司规范")}</h1>
+      <p className="lv-page-meta">{t("审查时逐条对照")}<span className="lv-sep" aria-hidden="true">·</span><span className="lv-mono">{policies.length}</span>{' '}{t("条启用")}<span className="lv-sep" aria-hidden="true">·</span>{t("仅组织管理员可编辑")}</p>
       <div className="lv-policy-layout">
-        <section className="lv-policy-list" aria-label="已启用规范">
-          {!policies.length && <div className="lv-policy-empty"><PolicySheet /><p>暂无公司规范</p></div>}
+        <section className="lv-policy-list" aria-label={t("已启用规范")}>
+          {!policies.length && <div className="lv-policy-empty"><PolicySheet /><p>{t("暂无公司规范")}</p></div>}
           {policies.map(p => <article key={p.id}>
             <span className="lv-mono lv-policy-version">v{p.version}</span>
             <div className="lv-policy-main">
               <h3>{p.title}</h3>
               <p className="lv-policy-text">{p.text}</p>
-              <span className="lv-policy-type">{p.contract_type === '全部' ? '全部合同' : p.contract_type} · {p.our_roles?.length ? p.our_roles.join(' / ') : '全部身份'}</span>
+              <span className="lv-policy-type">{p.contract_type === '全部' ? t("全部合同") : t(p.contract_type)} · {p.our_roles?.length ? p.our_roles.map(role => t(role)).join(' / ') : t("全部身份")}</span>
             </div>
             <div className="lv-policy-actions">
-              <button className="lv-secondary lv-btn-sm" disabled={busy} onClick={() => { setEditing(p); setDraft({ title: p.title, text: p.text, contract_type: p.contract_type, our_roles: p.our_roles || [] }); }}>编辑</button>
-              <button className="lv-quiet lv-btn-sm" disabled={busy} onClick={() => onArchive(p)}>归档</button>
+              <button className="lv-secondary lv-btn-sm" disabled={busy} onClick={() => { setEditing(p); setDraft({ title: p.title, text: p.text, contract_type: p.contract_type, our_roles: p.our_roles || [] }); }}>{t("编辑")}</button>
+              <button className="lv-quiet lv-btn-sm" disabled={busy} onClick={() => onArchive(p)}>{t("归档")}</button>
             </div>
           </article>)}
         </section>
         <form className="lv-policy-form" onSubmit={e => { e.preventDefault(); if (validScope && !busy) onSave(draft, editing); }}>
-          <h2>{editing ? '编辑规范' : '新增规范'}</h2>
-          <label className="lv-field"><span className="lv-field-label">规范名称</span>
-            <input className="lv-input" required maxLength={150} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder="如：预付款比例上限" /></label>
-          <label className="lv-field"><span className="lv-field-label">适用合同</span>
-            <select className="lv-select" aria-label="规范适用合同" value={draft.contract_type} disabled={busy || !usableCatalog(catalog)} onChange={e => setDraft({ ...draft, contract_type: e.target.value, our_roles: [] })}>
-              <option value="全部">全部合同</option><ScenarioOptions catalog={catalog} />
+          <h2>{editing ? t("编辑规范") : t("新增规范")}</h2>
+          <label className="lv-field"><span className="lv-field-label">{t("规范名称")}</span>
+            <input className="lv-input" required maxLength={150} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder={t("如：预付款比例上限")} /></label>
+          <label className="lv-field"><span className="lv-field-label">{t("适用合同")}</span>
+            <select className="lv-select" aria-label={t("规范适用合同")} value={draft.contract_type} disabled={busy || !usableCatalog(catalog)} onChange={e => setDraft({ ...draft, contract_type: e.target.value, our_roles: [] })}>
+              <option value="全部">{t("全部合同")}</option><ScenarioOptions catalog={catalog} />
             </select></label>
           {scene && <fieldset className="lv-field lv-fieldset" disabled={busy}>
-            <legend className="lv-field-label">适用身份<span className="lv-optional">不选则全部适用</span></legend>
+            <legend className="lv-field-label">{t("适用身份")}<span className="lv-optional">{t("不选则全部适用")}</span></legend>
             <div className="lv-check-pills">{scene.roles.map(role => <label key={role.value} className={draft.our_roles.includes(role.value) ? 'selected' : ''}>
               <input type="checkbox" checked={draft.our_roles.includes(role.value)} onChange={e => setDraft({ ...draft, our_roles: e.target.checked ? [...draft.our_roles, role.value] : draft.our_roles.filter(r => r !== role.value) })} />
-              {role.value}</label>)}</div>
+              {t(role.value)}</label>)}</div>
           </fieldset>}
-          {!validScope && <p className="lv-note is-warn" role="alert">适用范围与合同类型目录不匹配，请重新选择。</p>}
-          <label className="lv-field"><span className="lv-field-label">规范内容</span>
+          {!validScope && <p className="lv-note is-warn" role="alert">{t("适用范围与合同类型目录不匹配，请重新选择。")}</p>}
+          <label className="lv-field"><span className="lv-field-label">{t("规范内容")}</span>
             <textarea className="lv-textarea" required minLength={5} maxLength={2500} rows={5} value={draft.text} onChange={e => setDraft({ ...draft, text: e.target.value })}
-              placeholder="如：预付款超过合同总价 30% 时，须经业务负责人审批。" /></label>
+              placeholder={t("如：预付款超过合同总价 30% 时，须经业务负责人审批。")} /></label>
           <div className="lv-policy-submit">
-            <span className="lv-hint">保存后用于新的审查</span>
+            <span className="lv-hint">{t("保存后用于新的审查")}</span>
             <span className="lv-inline-actions">
-              {editing && <button type="button" className="lv-quiet lv-btn-sm" onClick={() => { setEditing(null); setDraft(EMPTY); }}>取消编辑</button>}
-              <button className="lv-primary lv-btn-sm" disabled={busy || !validScope}>保存规范</button>
+              {editing && <button type="button" className="lv-quiet lv-btn-sm" onClick={() => { setEditing(null); setDraft(EMPTY); }}>{t("取消编辑")}</button>}
+              <button className="lv-primary lv-btn-sm" disabled={busy || !validScope}>{t("保存规范")}</button>
             </span>
           </div>
         </form>

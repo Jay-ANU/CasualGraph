@@ -1,21 +1,24 @@
+import { useI18n } from '../i18n/useI18n';
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import BrandLogo from './BrandLogo';
+import LanguageSwitcher from './LanguageSwitcher';
 
 const NAV_LINKS = [
+  { name: '法务 Agent', href: '/legal' },
   { name: 'Research', href: '/agent' },
   { name: 'Graph', href: '/causal-inference' },
   { name: 'Desktop', href: '/desktop' },
   { name: 'Company', href: '/about' },
-  { name: '法务 Agent', href: '/legal' },
 ];
 
 const initialOf = (value?: string | null) =>
   String(value || '?').trim().charAt(0).toUpperCase() || '?';
 
 const Navbar: React.FC = () => {
+  const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null);
@@ -59,26 +62,25 @@ const Navbar: React.FC = () => {
     }`;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-paper">
-      <div className="mx-auto flex h-[60px] max-w-content items-center gap-6 px-5 sm:px-8">
-        <Link to="/" className="shrink-0 rounded-md" aria-label="CausalGraph home">
+    <header className={`sticky top-0 z-40 border-b border-line bg-paper ${['/', '/home', '/zh', '/en'].includes(location.pathname) ? 'cg-nav-home' : ''}`}>
+      <div className="mx-auto flex h-[60px] max-w-content items-center gap-2 px-3 sm:gap-4 sm:px-8">
+        <Link to="/" className="shrink-0 rounded-md" aria-label={t("CausalGraph home")}>
           <BrandLogo size="md" />
         </Link>
 
-        <nav className="hidden items-center gap-0.5 lg:flex" aria-label="Primary">
+        <nav className="hidden items-center gap-0.5 lg:flex" aria-label={t("Primary")}>
           {NAV_LINKS.map((item) => (
             <NavLink key={item.href} to={item.href} className={linkClass}>
-              {item.name}
+              {t(item.name)}
             </NavLink>
           ))}
         </nav>
 
-        <div className="ml-auto hidden items-center gap-2 lg:flex">
+        <div className="ml-auto shrink-0"><LanguageSwitcher /></div>
+        <div className="hidden items-center gap-2 lg:flex">
           {isAuthenticated ? (
             <>
-              <Link to="/agent" className="btn btn-primary btn-sm">
-                Open research desk
-              </Link>
+              <Link to="/legal" className="btn btn-primary btn-sm">{t("开始审查")}{' '}</Link>
               <div className="relative" ref={accountRef}>
                 <button
                   type="button"
@@ -86,7 +88,7 @@ const Navbar: React.FC = () => {
                   className="flex h-8 items-center gap-1.5 rounded-md pl-1 pr-1.5 text-ink-3 transition-colors hover:bg-paper-hover hover:text-ink"
                   aria-expanded={isAccountOpen}
                   aria-haspopup="menu"
-                  aria-label="Account menu"
+                  aria-label={t("Account menu")}
                 >
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink text-[11px] font-medium text-white">
                     {initialOf(userLabel)}
@@ -103,16 +105,12 @@ const Navbar: React.FC = () => {
                     <div className="menu-sep" />
                     {isAdmin && (
                       <Link to="/admin" className="menu-item" role="menuitem">
-                        <ShieldCheck className="h-4 w-4 text-ink-4" />
-                        Admin console
-                      </Link>
+                        <ShieldCheck className="h-4 w-4 text-ink-4" />{t("Admin console")}{' '}</Link>
                     )}
-                    {isAdmin && <Link to="/admin/memberships" className="menu-item" role="menuitem">Max 会员</Link>}
-                    {isAdmin && <Link to="/admin/recruitment" className="menu-item" role="menuitem">Recruitment</Link>}
+                    {isAdmin && <Link to="/admin/memberships" className="menu-item" role="menuitem">{t("Max 会员")}</Link>}
+                    {isAdmin && <Link to="/admin/recruitment" className="menu-item" role="menuitem">{t("Recruitment")}</Link>}
                     <button type="button" onClick={handleLogout} className="menu-item" role="menuitem">
-                      <LogOut className="h-4 w-4 text-ink-4" />
-                      Sign out
-                    </button>
+                      <LogOut className="h-4 w-4 text-ink-4" />{t("Sign out")}{' '}</button>
                   </div>
                 )}
               </div>
@@ -120,13 +118,9 @@ const Navbar: React.FC = () => {
           ) : (
             <>
               {location.pathname !== '/login' && (
-                <Link to="/login" className="btn btn-ghost btn-sm">
-                  Sign in
-                </Link>
+                <Link to="/login" className="btn btn-ghost btn-sm">{t("Sign in")}{' '}</Link>
               )}
-              <Link to="/agent" className="btn btn-primary btn-sm">
-                Open research desk
-              </Link>
+              <Link to="/legal" className="btn btn-primary btn-sm">{t("开始审查")}{' '}</Link>
             </>
           )}
         </div>
@@ -134,8 +128,8 @@ const Navbar: React.FC = () => {
         <button
           type="button"
           onClick={() => setIsOpen((prev) => !prev)}
-          className="icon-btn ml-auto lg:hidden"
-          aria-label={isOpen ? 'Close menu' : 'Open menu'}
+          className="icon-btn shrink-0 lg:hidden"
+          aria-label={isOpen ? t("Close menu") : t("Open menu")}
           aria-expanded={isOpen}
         >
           {isOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -143,8 +137,8 @@ const Navbar: React.FC = () => {
       </div>
 
       {isOpen && (
-        <div className="border-t border-line bg-paper px-5 pb-6 pt-2 lg:hidden">
-          <nav className="flex flex-col" aria-label="Mobile">
+        <div className="cg-mobile-menu border-t border-line bg-paper px-5 pb-6 pt-2 lg:hidden">
+          <nav className="flex flex-col" aria-label={t("Mobile")}>
             {NAV_LINKS.map((item) => (
               <NavLink
                 key={item.href}
@@ -153,7 +147,7 @@ const Navbar: React.FC = () => {
                   `border-b border-line-soft py-3.5 text-[17px] ${isActive ? 'font-medium text-ink' : 'text-ink-2'}`
                 }
               >
-                {item.name}
+                {t(item.name)}
               </NavLink>
             ))}
           </nav>
@@ -170,17 +164,17 @@ const Navbar: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Link to="/agent" className="btn btn-primary">Open research desk</Link>
-                  {isAdmin && <Link to="/admin" className="btn btn-secondary">Admin console</Link>}
-                  {isAdmin && <Link to="/admin/memberships" className="btn btn-secondary">Max 会员</Link>}
-                  {isAdmin && <Link to="/admin/recruitment" className="btn btn-secondary">Recruitment</Link>}
-                  <button type="button" onClick={handleLogout} className="btn btn-secondary">Sign out</button>
+                  <Link to="/legal" className="btn btn-primary">{t("开始审查")}</Link>
+                  {isAdmin && <Link to="/admin" className="btn btn-secondary">{t("Admin console")}</Link>}
+                  {isAdmin && <Link to="/admin/memberships" className="btn btn-secondary">{t("Max 会员")}</Link>}
+                  {isAdmin && <Link to="/admin/recruitment" className="btn btn-secondary">{t("Recruitment")}</Link>}
+                  <button type="button" onClick={handleLogout} className="btn btn-secondary">{t("Sign out")}</button>
                 </div>
               </div>
             ) : (
               <div className="flex gap-2">
-                <Link to="/agent" className="btn btn-primary flex-1">Open research desk</Link>
-                <Link to="/login" className="btn btn-secondary flex-1">Sign in</Link>
+                <Link to="/legal" className="btn btn-primary flex-1">{t("开始审查")}</Link>
+                <Link to="/login" className="btn btn-secondary flex-1">{t("Sign in")}</Link>
               </div>
             )}
           </div>

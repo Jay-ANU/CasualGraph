@@ -1,3 +1,4 @@
+import { LocaleContext } from '../i18n/context';
 import React from 'react';
 import { AlertCircle, FileText, X } from 'lucide-react';
 import { apiFetch, jsonRequest, readApiError, withAuth } from '../api/client';
@@ -56,6 +57,8 @@ const freshContract = () => ({
 
 /** Own the desk's request lifecycle; test previews may inject a synthetic API. */
 export default class LegalDesk extends React.Component<Props, State> {
+  static contextType = LocaleContext;
+  declare context: React.ContextType<typeof LocaleContext>;
   state: State = { workspace: null, matters: [], contracts: [], contract: null, review: null, policies: [], caps: null, catalog: null,
     busy: false, loading: true, error: '', modelError: '', modelsLoading: false, tab: 'review', view: 'work', pane: 'rail', railTab: 'notes', tone: 'all',
     selected: null, located: null, ourRole: '', contractType: '采购合同', date: '', instructions: '', consent: false, modelId: '',
@@ -78,11 +81,13 @@ export default class LegalDesk extends React.Component<Props, State> {
   componentDidMount() {
     this.live = true;
     this.priorTitle = document.title;
-    document.title = '合同审查 · CausalGraph';
+    document.title = this.context.t('合同审查 · CausalGraph');
     void this.initialize();
     this.timer = setInterval(() => void this.poll(), 2500);
     document.addEventListener('visibilitychange', this.refreshOnReturn);
   }
+  componentDidUpdate() { document.title = this.context.t('合同审查 · CausalGraph'); }
+
   componentWillUnmount() {
     this.live = false; this.generation++; clearInterval(this.timer); document.title = this.priorTitle;
     document.removeEventListener('visibilitychange', this.refreshOnReturn);
@@ -159,7 +164,8 @@ export default class LegalDesk extends React.Component<Props, State> {
       tab: 'review', error: '', notice: '', hint: '', libraryQuery: '' }, () => {
       document.getElementById('legal-upload-button')?.focus();
     });
-    history.replaceState(null, '', '/legal');
+    const url = new URL(window.location.href); url.searchParams.delete('contract');
+    history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
   };
   private openContract = async (id: string) => {
     const seq = ++this.generation;
@@ -167,7 +173,8 @@ export default class LegalDesk extends React.Component<Props, State> {
     const contract = await this.api<Contract>(`/legal/contracts/${id}`);
     if (!this.live || seq !== this.generation) return;
     this.setState({ contract, tab: 'review' });
-    history.replaceState(null, '', `/legal?contract=${encodeURIComponent(id)}`);
+    const url = new URL(window.location.href); url.searchParams.set('contract', id);
+    history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
     if (contract.reviews.length) {
       const review = await this.api<Review>(`/legal/reviews/${contract.reviews[0].id}`);
       if (!this.live || seq !== this.generation) return;
@@ -349,6 +356,7 @@ export default class LegalDesk extends React.Component<Props, State> {
   }
 
   private renderWorkspace(c: Contract, stage: Stage) {
+  const { t } = this.context;
     const s = this.state, r = s.review;
     const blocks = s.preview || c.blocks;
     const outline = clauseOutline(blocks);
@@ -372,10 +380,10 @@ export default class LegalDesk extends React.Component<Props, State> {
       dealValue: s.dealValue, currency: s.currency, date: s.date, reviewTier: s.reviewTier, modelId: s.modelId, consent: s.consent };
     const checked = r ? r.coverage.filter(x => ['reviewed', 'not_applicable'].includes(x.status)).length : 0;
     const format = (c.format || '').toUpperCase();
-    const meta = stage === 'redaction' ? [{ k: '文件', v: `${format} · ${c.blocks.length} 段` }, { k: '脱敏', v: `${c.replacement_count} 处` }]
-      : stage === 'setup' ? [{ k: '文件', v: `${format} · ${c.blocks.length} 段` }, { k: '脱敏', v: `已确认 ${c.replacement_count} 处` }]
+    const meta = stage === 'redaction' ? [{ k: '文件', v: `${format} · ${c.blocks.length} ${t('段')}` }, { k: '脱敏', v: `${c.replacement_count} ${t('处')}` }]
+      : stage === 'setup' ? [{ k: '文件', v: `${format} · ${c.blocks.length} ${t('段')}` }, { k: '脱敏', v: `${t('已确认')} ${c.replacement_count} ${t('处')}` }]
       : r ? [{ k: '类型', v: r.profile?.contract_type || s.contractType }, { k: '我方', v: r.profile?.our_role || '—' }, { k: '档位', v: TIER_LABEL[tierOf(r)] },
-        { k: '模型', v: r.profile?.model?.id || s.modelId || '—' }, { k: '范围', v: isActive(r) ? '审查中' : `${checked}/${r.coverage.length} 已审查` }] : [];
+        { k: '模型', v: r.profile?.model?.id || s.modelId || '—' }, { k: '范围', v: isActive(r) ? '审查中' : `${checked}/${r.coverage.length} ${t('已审查')}` }] : [];
     const legacy = c.status === 'ready' && c.redaction_version !== 2;
     let rail: React.ReactNode = null;
     if (stage === 'redaction') rail = <RedactionPanel tokens={redactionTokens(blocks, s.originalBlocks)} comparing={Boolean(s.originalBlocks)}
@@ -407,10 +415,10 @@ export default class LegalDesk extends React.Component<Props, State> {
       onReport={() => void this.run(() => this.download('md'))}
       onDraft={() => void this.run(() => this.download(c.format === 'docx' ? 'docx' : 'txt'))}
       onBack={() => this.setState({ view: 'work' })} />;
-    return <main id="legal-main" tabIndex={-1} className={`lv-workspace pane-${s.pane}`} aria-label="合同审查工作区">
-      <div className="lv-pane-switch" role="group" aria-label="工作区视图">
-        <button aria-pressed={s.pane === 'rail'} onClick={() => this.setState({ pane: 'rail' })}>{RAIL_LABEL[stage]}</button>
-        <button aria-pressed={s.pane === 'paper'} onClick={() => this.setState({ pane: 'paper' }, () => this.reveal(selectedBlock))}>合同正文</button>
+    return <main id="legal-main" tabIndex={-1} className={`lv-workspace pane-${s.pane}`} aria-label={t("合同审查工作区")}>
+      <div className="lv-pane-switch" role="group" aria-label={t("工作区视图")}>
+        <button aria-pressed={s.pane === 'rail'} onClick={() => this.setState({ pane: 'rail' })}>{t(RAIL_LABEL[stage])}</button>
+        <button aria-pressed={s.pane === 'paper'} onClick={() => this.setState({ pane: 'paper' }, () => this.reveal(selectedBlock))}>{t("合同正文")}</button>
       </div>
       <Outline entries={outline} items={items} decisions={r?.decisions || {}} running={stage === 'running'} activeBlock={selectedBlock}
         blockCount={blocks.length} pageCount={pagesOf(blocks).length} meta={meta}
@@ -420,10 +428,10 @@ export default class LegalDesk extends React.Component<Props, State> {
         party={{ blockId: s.ourPartyBlock, quote: s.ourPartyQuote }} detail={stage === 'running' && r ? r.stage : undefined}
         onSelect={id => { this.select(id); this.setState({ pane: 'rail' }); }} onCompare={() => void this.run(this.showOriginal)}
         onParty={(ourPartyBlock, ourPartyQuote) => this.changeSetup({ ourPartyBlock, ourPartyQuote })} />
-      <aside className="lv-rail" aria-label="审查操作">
+      <aside className="lv-rail" aria-label={t("审查操作")}>
         {(legacy || c.warnings.length > 0) && <div className="lv-rail-notes">
-          {legacy && <p className="lv-note is-warn">该合同使用旧版脱敏，仅可查看历史报告；重新审查请重新上传。</p>}
-          {c.warnings.length > 0 && <details className="lv-disclosure"><summary>解析提示（{c.warnings.length}）</summary>
+          {legacy && <p className="lv-note is-warn">{t("该合同使用旧版脱敏，仅可查看历史报告；重新审查请重新上传。")}</p>}
+          {c.warnings.length > 0 && <details className="lv-disclosure"><summary>{t("解析提示（")}{c.warnings.length}）</summary>
             <div className="lv-disclosure-body">{c.warnings.map((w, i) => <p key={i}>{w}</p>)}</div></details>}
         </div>}
         {rail}
@@ -432,19 +440,20 @@ export default class LegalDesk extends React.Component<Props, State> {
   }
 
   render() {
+  const { t } = this.context;
     const s = this.state, c = s.contract, r = s.review;
     const canUpload = Boolean(s.workspace && s.caps?.encryption_configured && !s.busy && !s.loading);
     const dialogOpen = Boolean(s.pendingFile || s.confirmingRedaction || s.archivePolicy || s.exportFormat);
     const stage = c ? deskStage(c, r, s.view) : null;
     if (s.denied) return <div className="legal-v2 lv-gate"><main className="lv-gate-card">
       <ContractSheet size={56} intro={false} />
-      <h1>会员权限已变更</h1><p>合同审查为 Max 会员专享，合同内容已从页面移除。</p>
-      <div className="lv-gate-actions"><a className="lv-primary" href="/agent">返回研究工作台</a></div>
+      <h1>{t("会员权限已变更")}</h1><p>{t("合同审查为 Max 会员专享，合同内容已从页面移除。")}</p>
+      <div className="lv-gate-actions"><a className="lv-primary" href="/agent">{t("返回研究工作台")}</a></div>
     </main></div>;
     const matterName = s.matters.find(m => m.id === s.workspace?.matter_id)?.name;
     return <div className="legal-v2">
-      <a className="lv-skip" href="#legal-main">跳到工作区</a>
-      <TopBar section={s.tab === 'policies' ? '公司规范' : c ? fileTitle(c.name) : undefined}
+      <a className="lv-skip" href="#legal-main">{t("跳到工作区")}</a>
+      <TopBar section={s.tab === 'policies' ? t('公司规范') : c ? fileTitle(c.name) : undefined}
         steps={c && stage && s.tab === 'review' ? this.steps(c, stage) : undefined} policyCount={s.policies.length} policiesOpen={s.tab === 'policies'}
         onHome={this.clear} onPolicies={() => this.setState(state => ({ tab: state.tab === 'policies' ? 'review' : 'policies' }))}
         user={this.props.user} matters={s.matters} workspace={s.workspace} busy={s.busy} onLogout={this.props.logout}
@@ -452,14 +461,14 @@ export default class LegalDesk extends React.Component<Props, State> {
           const m = s.matters.find(x => x.id === id); if (!m) return;
           void this.run(async () => { this.clear(); const workspace = { matter_id: m.id, org_id: m.org_id }; this.setState({ workspace }); await this.refreshList(workspace); });
         }} />
-      {s.error && !dialogOpen && <div className="lv-banner lv-error" role="alert"><AlertCircle {...ic} /><span>{s.error}</span><button className="lv-icon" aria-label="关闭错误" onClick={() => this.setState({ error: '' })}><X {...ic} /></button></div>}
-      {s.caps && !s.caps.encryption_configured && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>安全存储未配置，暂不可上传，请联系管理员。</span></div>}
-      {s.modelError && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>{s.modelError}</span><button className="lv-text-button" onClick={() => void this.loadModels()}>重新加载</button></div>}
+      {s.error && !dialogOpen && <div className="lv-banner lv-error" role="alert"><AlertCircle {...ic} /><span>{t(s.error)}</span><button className="lv-icon" aria-label={t("关闭错误")} onClick={() => this.setState({ error: '' })}><X {...ic} /></button></div>}
+      {s.caps && !s.caps.encryption_configured && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>{t("安全存储未配置，暂不可上传，请联系管理员。")}</span></div>}
+      {s.modelError && <div className="lv-banner lv-warning"><AlertCircle {...ic} /><span>{t(s.modelError)}</span><button className="lv-text-button" onClick={() => void this.loadModels()}>{t("重新加载")}</button></div>}
       <input ref={el => { this.uploadInput = el; }} type="file" accept=".docx,.pdf,.txt" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; this.queueUpload(file); }} />
-      {s.loading ? <main className="lv-skeleton" role="status"><span className="lv-sr">加载中…</span>
+      {s.loading ? <main className="lv-skeleton" role="status"><span className="lv-sr">{t("加载中…")}</span>
           <span className="lv-sk lv-sk-title" /><span className="lv-sk lv-sk-line" /><span className="lv-sk lv-sk-card" /><span className="lv-sk lv-sk-row" /><span className="lv-sk lv-sk-row" /></main>
-        : !s.workspace ? <main id="legal-main" className="lv-loading"><AlertCircle {...ic} size={22} /><h1>工作空间加载失败</h1>
-          <p>请检查网络后重试。</p><button className="lv-primary" onClick={() => void this.initialize()}>重试</button></main>
+        : !s.workspace ? <main id="legal-main" className="lv-loading"><AlertCircle {...ic} size={22} /><h1>{t("工作空间加载失败")}</h1>
+          <p>{t("请检查网络后重试。")}</p><button className="lv-primary" onClick={() => void this.initialize()}>{t("重试")}</button></main>
         : s.tab === 'policies' ? <PolicyEditor catalog={s.caps?.scenario_catalog} policies={s.policies} busy={s.busy}
           onSave={(draft, existing) => void this.run(async () => {
             if (!s.workspace) return;
@@ -475,36 +484,36 @@ export default class LegalDesk extends React.Component<Props, State> {
             this.queueUpload(files[0]);
           }} />
         : this.renderWorkspace(c, stage)}
-      {s.pendingFile && <ConfirmDialog title="上传确认" confirmLabel="同意并上传" busyLabel="正在上传并脱敏…" busy={s.busy}
+      {s.pendingFile && <ConfirmDialog title={t("上传确认")} confirmLabel="同意并上传" busyLabel="正在上传并脱敏…" busy={s.busy}
         onCancel={() => this.setState({ pendingFile: null, error: '' })} onConfirm={() => void this.run(() => this.upload(s.pendingFile || undefined))}>
         <div className="lv-upload-file"><FileText {...ic} size={18} /><span>{s.pendingFile.name}<small>{(s.pendingFile.size / 1024).toFixed(1)} KB</small></span></div>
         <ol className="lv-dialog-points">
-          <li>原件将在服务器端解析、脱敏并加密存储</li>
-          <li>上传不会调用模型，审查前需另行授权</li>
-          <li>存储地域：{s.caps?.upload_disclosure?.storage_region}（运营方声明）</li>
+          <li>{t("原件将在服务器端解析、脱敏并加密存储")}</li>
+          <li>{t("上传不会调用模型，审查前需另行授权")}</li>
+          <li>{t("存储地域：")}{s.caps?.upload_disclosure?.storage_region}{t("（运营方声明）")}</li>
         </ol>
-        <details className="lv-disclosure-text"><summary>《原件处理说明》</summary><p>{s.caps?.upload_disclosure?.notice}</p></details>
-        {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
+        <details className="lv-disclosure-text"><summary>{t("《原件处理说明》")}</summary><p>{s.caps?.upload_disclosure?.notice}</p></details>
+        {s.error && <p role="alert" className="lv-note is-error">{t(s.error)}</p>}
       </ConfirmDialog>}
-      {s.confirmingRedaction && <ConfirmDialog title="确认脱敏结果" confirmLabel="确认并继续" busyLabel="正在锁定脱敏结果…" busy={s.busy}
+      {s.confirmingRedaction && <ConfirmDialog title={t("确认脱敏结果")} confirmLabel="确认并继续" busyLabel="正在锁定脱敏结果…" busy={s.busy}
         onCancel={() => this.setState({ confirmingRedaction: false, error: '' })} onConfirm={() => void this.run(() => this.redact(true))}>
-        <p>确认后脱敏结果将锁定，模型分析需在下一步单独授权。</p>
-        {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
+        <p>{t("确认后脱敏结果将锁定，模型分析需在下一步单独授权。")}</p>
+        {s.error && <p role="alert" className="lv-note is-error">{t(s.error)}</p>}
       </ConfirmDialog>}
-      {s.exportFormat && <ConfirmDialog title="导出确认" confirmLabel="确认导出" busyLabel="正在生成文件…" busy={s.busy}
+      {s.exportFormat && <ConfirmDialog title={t("导出确认")} confirmLabel="确认导出" busyLabel="正在生成文件…" busy={s.busy}
         onCancel={() => this.setState({ exportFormat: null, error: '' })} onConfirm={() => { const format = s.exportFormat; if (format) void this.run(() => this.download(format, true)); }}>
-        <p>修订版包含未脱敏的真实信息及删除内容，请确认接收范围。导出不会签署合同或覆盖原文件。</p>
-        {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
+        <p>{t("修订版包含未脱敏的真实信息及删除内容，请确认接收范围。导出不会签署合同或覆盖原文件。")}</p>
+        {s.error && <p role="alert" className="lv-note is-error">{t(s.error)}</p>}
       </ConfirmDialog>}
-      {s.archivePolicy && <ConfirmDialog title="归档规范" confirmLabel="确认归档" busyLabel="正在归档…" busy={s.busy}
+      {s.archivePolicy && <ConfirmDialog title={t("归档规范")} confirmLabel="确认归档" busyLabel="正在归档…" busy={s.busy}
         onCancel={() => this.setState({ archivePolicy: null, error: '' })} onConfirm={() => void this.run(async () => {
           const policy = this.state.archivePolicy; const workspace = this.state.workspace; if (!policy || !workspace) return;
           await this.api(`/legal/policies/${policy.id}?org_id=${encodeURIComponent(workspace.org_id)}&version=${policy.version}`, { method: 'DELETE' });
           if (this.live) this.setState({ archivePolicy: null, notice: '规范已归档' });
           await this.refreshList(workspace);
         })}>
-        <p>“{s.archivePolicy.title}”归档后不再用于新审查，历史报告不受影响。</p>
-        {s.error && <p role="alert" className="lv-note is-error">{s.error}</p>}
+        <p>“{s.archivePolicy.title}{t("”归档后不再用于新审查，历史报告不受影响。")}</p>
+        {s.error && <p role="alert" className="lv-note is-error">{t(s.error)}</p>}
       </ConfirmDialog>}
       {s.notice && <Toast key={`n-${s.notice}`} text={s.notice} done onDone={() => this.setState({ notice: '' })} />}
       {!s.notice && s.hint && <Toast key={`h-${s.hint}`} text={s.hint} onDone={() => this.setState({ hint: '' })} />}

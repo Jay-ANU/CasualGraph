@@ -1,6 +1,8 @@
+import { useI18n } from './i18n/useI18n';
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import LocaleProvider from './i18n/LocaleProvider';
 import Home from './pages/Home';
 import CausalInference from './pages/CausalInference';
 import Agent from './pages/Agent';
@@ -34,13 +36,13 @@ const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 const NotFound: React.FC = () => {
-  useDocumentTitle('Page not found');
+  const { t } = useI18n();
+  useDocumentTitle(t('Page not found'));
   return (
     <div className="mx-auto max-w-content px-5 py-32 sm:px-8">
       <p className="font-mono text-sm text-ink-4">404</p>
-      <h1 className="display mt-3 text-display-md">This page doesn’t exist.</h1>
-      <p className="mt-4 text-ink-3">
-        The link may be out of date. <Link to="/" className="text-link text-ink">Go to the homepage</Link>.
+      <h1 className="display mt-3 text-display-md">{t("This page doesn’t exist.")}</h1>
+      <p className="mt-4 text-ink-3">{t("The link may be out of date.")}{' '}<Link to="/" className="text-link text-ink">{t("Go to the homepage")}</Link>.
       </p>
     </div>
   );
@@ -61,6 +63,8 @@ const Shell: React.FC = () => {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/home" element={<Home />} />
+            <Route path="/zh" element={<Home />} />
+            <Route path="/en" element={<Home />} />
             <Route path="/login" element={<Login />} />
             <Route path="/esg-demo" element={<EsgDemo />} />
             <Route path="/causal-inference" element={<CausalInference />} />
@@ -86,7 +90,7 @@ function App() {
   return (
     <AuthProvider>
       <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <Shell />
+        <LocaleProvider><Shell /></LocaleProvider>
       </Router>
     </AuthProvider>
   );
