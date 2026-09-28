@@ -9,6 +9,7 @@
 html[lang=en] .lv-stepper { gap:12px; }
 html[lang=en] .lv-policy-label { display:none; }
 html[lang=en] .lv-rail-label { letter-spacing:0; }
-@media(max-width:1150px) { .lv-topbar { flex-wrap:wrap; } .lv-topbar-mid { order:3; width:100%; } }
+@media(max-width:1150px) { .legal-v2 .lv-topbar { display:flex; height:auto; min-height:52px; flex-wrap:wrap; padding-block:6px; } .lv-topbar-start { flex:1; } .lv-topbar-mid { order:3; width:100%; } .lv-topbar-mid:empty { display:none; } }
+@media(max-width:760px) { .lv-topbar-mid { display:none; } }
 @media(max-width:767px) { .lv-motion-welcome { padding:18px 20px 8px; gap:0; flex-direction:column; text-align:center; } .lv-motion-welcome h2 { font-size:28px; } .lv-motion-welcome .cg-legal-motion { width:100%; max-width:260px; max-height:170px; align-self:center; } }
 @media(max-width:520px) { .lv-topbar { padding:8px 12px; gap:8px; } .lv-topbar-start { flex:1 1 100%; } .lv-topbar-end { width:100%; justify-content:flex-end; } .lv-topbar-end .cg-language { margin-right:auto; } .lv-topbar-mid { overflow:auto; } .lv-stepper { justify-content:space-between; } html[lang=en] .lv-stepper { gap:9px; font-size:10px; } .lv-stepper li { white-space:nowrap; } }
