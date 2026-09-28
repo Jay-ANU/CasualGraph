@@ -1,198 +1,88 @@
-import React, { useState } from 'react';
-import { ArrowRight, ArrowUp } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { ArrowDown, ArrowRight, Check, FileCheck2, Fingerprint, GitCompare, Lock, ShieldCheck, Sparkles } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo';
-import { githubRepositoryUrl } from '../config/downloads';
+import { useI18n } from '../i18n/useI18n';
+import LegalMotion from '../motion/LegalMotion';
 import useDocumentTitle from '../utils/useDocumentTitle';
+import './LegalHome.css';
 
-const EXAMPLE_QUESTIONS = [
-  'Compare climate commitments across my reports',
-  'What evidence supports the emissions targets?',
-  'Find gaps in Scope 3 reporting',
+const SCENES = [
+  { id: 'purchase', label: '采购合同', topic: '交付与验收', before: '验收标准由甲方另行确定。', after: '验收标准及异议期限应由双方书面确认。', note: '把单方决定，改为双方确认。' },
+  { id: 'service', label: '服务合同', topic: '服务范围', before: '乙方应提供甲方要求的其他服务。', after: '新增服务的范围、费用与期限，应由双方另行书面约定。', note: '把模糊义务，写成清晰边界。' },
+  { id: 'sales', label: '销售合同', topic: '付款安排', before: '甲方在内部审批完成后支付款项。', after: '双方应约定明确的付款期限与付款条件。', note: '把不确定等待，改为明确约定。' },
+  { id: 'nda', label: '保密协议', topic: '保密边界', before: '一切相关信息均属于保密信息。', after: '双方应明确保密信息范围、例外情形及保密期限。', note: '让需要保护的内容，有明确范围。' },
 ];
-
 const STEPS = [
-  {
-    title: 'Bring the reports',
-    body: 'Upload sustainability reports as PDF, Word or plain text. Each one is split into passages, indexed for search, and read for the entities and relationships it describes.',
-  },
-  {
-    title: 'Ask in plain language',
-    body: 'Fast mode answers from the most relevant passages. Deep mode plans a search, reads further, and checks whether the evidence covers the question before it writes — each step stays visible.',
-  },
-  {
-    title: 'Follow the relationships',
-    body: 'Targets, metrics, policies and the people who oversee them become a graph you can explore. Each relationship keeps the evidence it was extracted from.',
-  },
+  { icon: Fingerprint, name: '先检查隐私', detail: '上传后核对脱敏结果。模型分析前，另行确认授权。' },
+  { icon: ShieldCheck, name: '再确认立场', detail: '选择我方身份、合同场景和交易背景，让审查有明确方向。' },
+  { icon: GitCompare, name: '逐条看清风险', detail: '回到合同原文，查看风险、依据和修改建议，而不只读一份摘要。' },
+  { icon: FileCheck2, name: '由你决定修改', detail: '逐项采纳、保留或编辑；完成核验后，导出带修订痕迹的 Word。' },
 ];
-
-const EXAMPLE_SOURCES = [
-  { title: 'Orbis Materials Sustainability Report 2024', where: 'p. 42' },
-  { title: 'Orbis Materials Sustainability Report 2024', where: 'p. 44' },
-  { title: 'Halden Foods Climate Transition Plan', where: 'p. 9' },
-];
-
-const Cite: React.FC<{ n: number }> = ({ n }) => <span className="cg-cite">{n}</span>;
 
 export default function Home() {
-  const [question, setQuestion] = useState('');
-  const navigate = useNavigate();
-  useDocumentTitle();
-  const openQuestion = (prompt: string) => navigate(`/agent?prompt=${encodeURIComponent(prompt.trim())}`);
-
-  return (
-    <div className="bg-paper">
-      <section className="mx-auto max-w-content px-5 pb-20 pt-16 sm:px-8 sm:pb-28 sm:pt-24 lg:pt-28">
-        <h1 className="display max-w-[980px] text-balance text-[42px] leading-[1.04] sm:text-display-lg lg:text-display-xl">
-          Answers from sustainability reports, with the page they came from.
-        </h1>
-        <p className="mt-6 max-w-[34rem] text-[17px] leading-relaxed text-ink-3 sm:text-lg">
-          CausalGraph reads ESG disclosures, maps how claims, metrics and policies connect, and answers your
-          questions with citations back to the source passage.
-        </p>
-
-        <form
-          className="mt-10 flex max-w-[40rem] items-center gap-2 rounded-xl border border-line-strong bg-white p-1.5 pl-4 shadow-sm transition-[border-color,box-shadow] focus-within:border-ink-4 focus-within:shadow-md"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (question.trim()) openQuestion(question);
-          }}
-        >
-          <input
-            aria-label="Ask a research question"
-            placeholder="Ask about targets, emissions, suppliers or oversight…"
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            maxLength={2000}
-            className="h-10 min-w-0 flex-1 bg-transparent text-[16px] text-ink outline-none placeholder:text-ink-5"
-          />
-          <button
-            type="submit"
-            aria-label="Start research"
-            disabled={!question.trim()}
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ink text-white transition-colors hover:bg-ink-2 disabled:cursor-not-allowed disabled:bg-paper-hover disabled:text-ink-5"
-          >
-            <ArrowUp className="h-[18px] w-[18px]" />
-          </button>
-        </form>
-
-        <div className="mt-5 max-w-[40rem]">
-          <div className="section-label">Try asking</div>
-          <ul className="mt-2 space-y-1">
-            {EXAMPLE_QUESTIONS.map((prompt) => (
-              <li key={prompt}>
-                <button
-                  type="button"
-                  onClick={() => openQuestion(prompt)}
-                  className="group inline-flex items-center gap-2 py-0.5 text-left text-[15px] text-ink-3 transition-colors hover:text-ink"
-                >
-                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ink-5 transition-colors group-hover:text-ink" />
-                  {prompt}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-
-      <section className="border-t border-line">
-        <div className="mx-auto grid max-w-content gap-10 px-5 py-20 sm:px-8 sm:py-24 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-16">
-          <div className="lg:pt-2">
-            <h2 className="display text-display-sm sm:text-display-md">Every claim points to a passage.</h2>
-            <p className="mt-5 max-w-md leading-relaxed text-ink-3">
-              Answers cite the report passages they rely on. Open a citation to read the passage itself, and see
-              where the reports end and general analysis begins.
-            </p>
-            <Link to="/agent" className="mt-7 inline-flex items-center gap-1.5 text-sm font-medium text-ink hover:gap-2.5 transition-[gap]">
-              Open the research desk <ArrowRight className="h-4 w-4" />
-            </Link>
+  const { t, locale } = useI18n();
+  const [sceneId, setSceneId] = useState('purchase');
+  const scene = SCENES.find(item => item.id === sceneId)!;
+  useDocumentTitle(t('法务 Agent · 合同审查'));
+  return <div className="cg-legal-home" lang={locale}>
+    <section className="cg-hero" aria-labelledby="cg-hero-title">
+      <div className="cg-hero-inner">
+        <div className="cg-hero-copy">
+          <p className="cg-eyebrow"><span />{t('CAUSALGRAPH / 法务 Agent')}</p>
+          <h1 id="cg-hero-title">{t('让每一份合同，')}<br /><em>{t('签得更有底气。')}</em></h1>
+          <p className="cg-hero-description">{t('从隐私核对到逐条审查，把风险、依据与修改建议放回原文。最后的决定，始终由你作出。')}</p>
+          <div className="cg-hero-actions">
+            <Link to="/legal" className="cg-cta">{t('开始审查合同')}<ArrowRight size={17} /></Link>
+            <a href="#legal-workflow" className="cg-text-link">{t('看看如何工作')}<ArrowDown size={15} /></a>
           </div>
-
-          <figure className="m-0">
-            <div className="panel p-5 sm:p-7">
-              <p className="ml-auto w-fit max-w-[90%] rounded-2xl bg-paper-hover px-4 py-2.5 text-[15px] text-ink">
-                How credible are the Scope 2 reduction claims in these two reports?
-              </p>
-              <div className="cg-prose mt-6">
-                <p>
-                  <strong>Orbis Materials</strong> reports a 14% fall in market-based Scope 2 emissions against 2021,
-                  attributed to renewable electricity contracts at eleven sites <Cite n={1} />. Its Scope 3 category 1
-                  figure is spend-based, so year-on-year changes may reflect purchasing volume rather than supplier
-                  progress <Cite n={2} />.
-                </p>
-                <p>
-                  <strong>Halden Foods</strong> sets a 42% absolute reduction target for Scope 1 and 2 by 2030{' '}
-                  <Cite n={3} />, but does not disclose interim progress. Neither report gives location-based figures,
-                  which makes the two claims hard to compare.
-                </p>
-              </div>
-              <div className="mt-6 border-t border-line pt-4">
-                <div className="section-label mb-2">Sources</div>
-                <ol className="space-y-1.5 text-sm">
-                  {EXAMPLE_SOURCES.map((source, index) => (
-                    <li key={`${source.title}-${source.where}`} className="flex min-w-0 items-baseline gap-3">
-                      <span className="w-4 shrink-0 font-mono text-xs text-ink-4">{index + 1}</span>
-                      <span className="truncate text-ink-2">{source.title}</span>
-                      <span className="shrink-0 font-mono text-xs text-ink-4">{source.where}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            </div>
-            <figcaption className="mt-3 text-xs text-ink-4">Example answer. The companies and figures are fictional.</figcaption>
-          </figure>
+          <p className="cg-hero-small"><Lock size={12} aria-hidden="true" />{t('先核对脱敏，再授权模型分析')}</p>
         </div>
-      </section>
+        <div className="cg-hero-visual">
+          <LegalMotion />
+          <div className="cg-evidence-tag"><span className="cg-tag-icon"><Check size={13} /></span><div>{t('看得见原文')}<small>{t('每一条意见，都有上下文')}</small></div></div>
+          <div className="cg-human-tag"><span className="cg-tag-icon"><Fingerprint size={16} /></span><div>{t('决定权在你')}<small>{t('逐项确认，而非自动改写')}</small></div></div>
+        </div>
+      </div>
+      <div className="cg-hero-bottom"><span>{t('为真实的合同工作而设计')}</span><span>{t('采购 / 销售 / 服务 / 保密及更多场景')}</span><a href="#legal-workflow" aria-label={t('了解合同审查流程')}><ArrowDown size={16} /></a></div>
+    </section>
 
-      <section className="border-t border-line">
-        <div className="mx-auto max-w-content px-5 py-20 sm:px-8 sm:py-24">
-          <h2 className="display text-display-sm sm:text-display-md">How it works</h2>
-          <dl className="mt-10 border-t border-line">
-            {STEPS.map((step) => (
-              <div key={step.title} className="grid gap-2 border-b border-line py-6 md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] md:gap-16">
-                <dt className="text-[17px] font-medium text-ink">{step.title}</dt>
-                <dd className="m-0 max-w-[38rem] leading-relaxed text-ink-3">{step.body}</dd>
-              </div>
-            ))}
-          </dl>
-          <div className="mt-10 flex flex-wrap gap-3">
-            <Link to="/agent" className="btn btn-primary">Open the research desk</Link>
-            <Link to="/causal-inference" className="btn btn-secondary">Explore the graph</Link>
+    <section className="cg-workflow cg-home-section" id="legal-workflow" aria-labelledby="workflow-title">
+      <div className="cg-section-heading"><p className="cg-eyebrow">{t('从上传，到交付')}</p><h2 id="workflow-title">{t('复杂的合同，清楚地处理。')}</h2><p>{t('不用在聊天记录里翻找结论。每一步，都知道接下来该做什么。')}</p></div>
+      <div className="cg-steps">{STEPS.map((step, index) => <article key={step.name} className="cg-step">
+        <div className="cg-step-top"><span>0{index+1}</span><step.icon size={23} strokeWidth={1.25} /></div>
+        <h3>{t(step.name)}</h3><p>{t(step.detail)}</p><span className="cg-step-rule" aria-hidden="true" />
+      </article>)}</div>
+    </section>
+
+    <section className="cg-example-section" aria-labelledby="example-title">
+      <div className="cg-home-section cg-example-inner">
+        <div className="cg-example-copy"><p className="cg-eyebrow">{t('不止是一份风险摘要')}</p>
+          <h2 id="example-title">{t('看清问题，')}<br /><em>{t('再落到每一个字。')}</em></h2>
+          <p>{t('原文、风险与建议并排呈现。你可以追问依据，也可以保留原文、手动编辑，按自己的判断推进。')}</p>
+          <div className="cg-scenario-tabs" role="group" aria-label={t('合同场景示例')}>{SCENES.map(item => <button key={item.id} type="button" aria-pressed={item.id === sceneId} onClick={() => setSceneId(item.id)}>{t(item.label)}</button>)}</div>
+          <p className="cg-demo-note">{t('以下仅为交互示例，不是针对具体合同的法律意见。')}</p>
+        </div>
+        <figure className="cg-review-demo">
+          <div className="cg-demo-bar"><span><i />{t('逐条审查')}</span><span>{t('交互示例')}</span></div>
+          <div className="cg-demo-paper" key={scene.id}>
+            <div className="cg-demo-doc"><FileCheck2 size={17} /><span>{t(scene.label)}</span><small>04</small></div>
+            <h3>{t(scene.topic)}</h3><p className="cg-original-label">{t('原条款')}</p><blockquote>{t(scene.before)}</blockquote>
+            <div className="cg-revision"><span><Sparkles size={13} />{t('修改方向')}</span><p>{t(scene.after)}</p></div>
+            <div className="cg-demo-insight"><span />{t(scene.note)}</div>
           </div>
-        </div>
-      </section>
+          <figcaption><Fingerprint size={14} /><span>{t('实际审查中，修改建议需由你逐项确认。')}</span></figcaption>
+        </figure>
+      </div>
+    </section>
 
-      <section className="border-t border-line bg-paper-sunken">
-        <div className="mx-auto flex max-w-content flex-col gap-6 px-5 py-14 sm:px-8 md:flex-row md:items-center md:justify-between">
-          <div className="max-w-xl">
-            <h2 className="text-lg font-medium text-ink">CausalGraph Pet for Mac</h2>
-            <p className="mt-1.5 leading-relaxed text-ink-3">
-              A small desktop assistant. Drop a report or a screenshot on it and ask a question without leaving what
-              you are working on.
-            </p>
-          </div>
-          <Link to="/desktop" className="btn btn-secondary shrink-0 self-start md:self-auto">
-            Download for macOS
-          </Link>
-        </div>
-      </section>
-
-      <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-content flex-col gap-6 px-5 py-10 text-sm sm:px-8 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3 text-ink-4">
-            <BrandLogo size="sm" showText={false} />
-            <span>CausalGraph · Built in Australia</span>
-          </div>
-          <nav className="flex flex-wrap gap-x-6 gap-y-2 text-ink-3" aria-label="Footer">
-            <Link to="/agent" className="hover:text-ink">Research desk</Link>
-            <Link to="/causal-inference" className="hover:text-ink">Graph</Link>
-            <Link to="/desktop" className="hover:text-ink">Desktop</Link>
-            <Link to="/legal" className="hover:text-ink">法务 Agent</Link>
-            <Link to="/about" className="hover:text-ink">Company</Link>
-            <a href={githubRepositoryUrl} target="_blank" rel="noreferrer" className="hover:text-ink">GitHub</a>
-          </nav>
-        </div>
-      </footer>
-    </div>
-  );
+    <section className="cg-home-section cg-trust" aria-labelledby="trust-title">
+      <div><p className="cg-eyebrow">{t('谨慎，不妨碍高效')}</p><h2 id="trust-title">{t('让 AI 做协助，')}<br />{t('让专业判断留在人手中。')}</h2></div>
+      <div className="cg-trust-details"><article><Lock size={20} /><div><h3>{t('授权有边界')}</h3><p>{t('原件处理与模型分析分别确认。切换模型，也需要重新确认授权。')}</p></div></article>
+        <article><GitCompare size={20} /><div><h3>{t('修改可追溯')}</h3><p>{t('保留原文与修订对照，不覆盖原文件，也不会替你签署合同。')}</p></div></article>
+        <article><ShieldCheck size={20} /><div><h3>{t('未确认，不装作确定')}</h3><p>{t('待核实的依据、缺失的交易信息和未完成的审查，分别展示。')}</p></div></article></div>
+    </section>
+    <section className="cg-home-cta"><div><p className="cg-eyebrow">{t('下一份合同，从这里开始')}</p><h2>{t('把时间，留给真正需要判断的事。')}</h2></div><Link to="/legal" className="cg-cta">{t('进入法务工作台')}<ArrowRight size={17} /></Link></section>
+    <footer className="cg-home-footer"><Link to="/" aria-label={t('返回首页')}><BrandLogo size="sm" /></Link><p>{t('审查结果仅供参考，不构成法律意见。')}</p><nav aria-label={t('页脚导航')}><Link to="/agent">{t('研究工作台')}</Link><Link to="/desktop">{t('桌面应用')}</Link><Link to="/about">{t('关于我们')}</Link></nav></footer>
+  </div>;
 }
