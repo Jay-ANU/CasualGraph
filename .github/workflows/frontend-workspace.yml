@@ -1,0 +1,30 @@
+name: Frontend workspace
+on:
+  push:
+    branches: [feat/legal-motion-bilingual]
+    paths: [.github/workflows/frontend-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - name: Package tracked source and installed frontend tooling
+        run: |
+          git archive HEAD > /tmp/source.tar
+          tar -rf /tmp/source.tar frontend/node_modules
+          gzip /tmp/source.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-workspace
+          path: /tmp/source.tar.gz
+          retention-days: 1
