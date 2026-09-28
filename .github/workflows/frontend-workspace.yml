@@ -1,30 +1,73 @@
-name: Frontend workspace
+name: Legal motion implementation and browser verification
 on:
   push:
     branches: [feat/legal-motion-bilingual]
     paths: [.github/workflows/frontend-workspace.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  workspace:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: feat/legal-motion-bilingual
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci --no-audit --no-fund
-        working-directory: frontend
-      - name: Package tracked source and installed frontend tooling
-        run: |
-          git archive HEAD > /tmp/source.tar
-          tar -rf /tmp/source.tar frontend/node_modules
-          gzip /tmp/source.tar
-      - uses: actions/upload-artifact@v4
+      - uses: actions/setup-python@v5
         with:
-          name: frontend-workspace
-          path: /tmp/source.tar.gz
-          retention-days: 1
+          python-version: '3.11'
+      - name: Apply checksum-verified frontend patch
+        run: python .ui-update/apply.py
+      - name: Install renderer and browser runtime
+        run: |
+          pip install pillow numpy playwright==1.58.0
+          python -m playwright install --with-deps chromium
+          command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Render original silent legal video and poster
+        run: python scripts/render_legal_motion.py
+      - name: Build and unit verification
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run lint
+          npm test -- --run
+          npm run build
+      - name: Commit implementation to feature branch and remove temporary transport
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -r .ui-update .github/workflows/frontend-workspace.yml
+          git add frontend scripts/legal_motion_locale_smoke.py scripts/render_legal_motion.py .github/workflows/ci.yml
+          git commit -m 'feat: legal motion video, Chinese-first interface and persistent English switching'
+          git push origin HEAD:feat/legal-motion-bilingual
+      - name: Legal motion and language browser checks
+        id: motion
+        continue-on-error: true
+        run: python scripts/legal_motion_locale_smoke.py
+      - name: Existing legal browser regression
+        id: legal
+        continue-on-error: true
+        run: python scripts/legal_ui_smoke.py
+      - name: Existing research browser regression
+        id: research
+        continue-on-error: true
+        run: python scripts/research_ui_smoke.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legal-motion-browser-verification
+          path: ui-artifacts
+          retention-days: 7
+      - name: Require all browser suites
+        if: always()
+        env:
+          MOTION: ${{ steps.motion.outcome }}
+          LEGAL: ${{ steps.legal.outcome }}
+          RESEARCH: ${{ steps.research.outcome }}
+        run: test "$MOTION" = success && test "$LEGAL" = success && test "$RESEARCH" = success

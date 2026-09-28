@@ -1,0 +1,14 @@
+/* Language controls are part of the workspace, not a remounting overlay. */
+.lv-topbar-end .cg-language { flex-shrink:0; color:var(--lv-ink,#243b34); }
+.lv-motion-welcome { display:flex; align-items:center; justify-content:space-between; gap:28px; margin:0 0 28px; padding:12px 24px 12px 32px; border-radius:12px; color:#f8f7f2; background:#132621; overflow:hidden; }
+.lv-motion-welcome>div:first-child { min-width:0; }
+.lv-motion-welcome .lv-welcome-kicker { font-size:11px; color:#c0cabd; letter-spacing:.09em; margin:0 0 12px; }
+.lv-motion-welcome h2 { margin:0 0 10px; font-family:'Newsreader Variable','Songti SC','Noto Serif CJK SC',serif; font-size:30px; font-weight:400; letter-spacing:.04em; }
+.lv-motion-welcome p { font-size:12px; line-height:1.8; margin:0; color:#bfc8ba; }
+.lv-motion-welcome .cg-legal-motion { max-height:185px; width:220px; }
+html[lang=en] .lv-stepper { gap:12px; }
+html[lang=en] .lv-policy-label { display:none; }
+html[lang=en] .lv-rail-label { letter-spacing:0; }
+@media(max-width:1150px) { .lv-topbar { flex-wrap:wrap; } .lv-topbar-mid { order:3; width:100%; } }
+@media(max-width:767px) { .lv-motion-welcome { padding:18px 20px 8px; gap:0; flex-direction:column; text-align:center; } .lv-motion-welcome h2 { font-size:28px; } .lv-motion-welcome .cg-legal-motion { width:100%; max-width:260px; max-height:170px; align-self:center; } }
+@media(max-width:520px) { .lv-topbar { padding:8px 12px; gap:8px; } .lv-topbar-start { flex:1 1 100%; } .lv-topbar-end { width:100%; justify-content:flex-end; } .lv-topbar-end .cg-language { margin-right:auto; } .lv-topbar-mid { overflow:auto; } .lv-stepper { justify-content:space-between; } html[lang=en] .lv-stepper { gap:9px; font-size:10px; } .lv-stepper li { white-space:nowrap; } }

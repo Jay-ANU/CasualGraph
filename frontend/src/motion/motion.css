@@ -1,0 +1,11 @@
+.cg-legal-motion { position:relative; min-width:0; overflow:hidden; isolation:isolate; aspect-ratio:6/5; background:#132621; border-radius:2px; }
+.cg-motion-poster,.cg-motion-video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.cg-motion-video { opacity:0; transition:opacity .5s ease; }
+.cg-legal-motion.is-playing .cg-motion-video { opacity:1; }
+.cg-motion-caption { position:absolute; z-index:2; inset:auto 22px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; color:#c2c9bb; font-size:10px; letter-spacing:.09em; }
+.cg-motion-caption button { display:inline-flex; align-items:center; gap:5px; min-height:44px; padding:0 10px; color:#e7e7d9; background:rgba(17,32,29,.8); border:1px solid #617064; border-radius:5px; cursor:pointer; letter-spacing:.02em; }
+.cg-motion-caption button:focus-visible { outline:2px solid #d6bd86; outline-offset:3px; }
+.cg-legal-motion.is-compact { width:240px; align-self:stretch; flex-shrink:0; border-radius:10px; }
+.cg-legal-motion.is-compact .cg-motion-caption { inset:auto 12px 8px; }
+.cg-legal-motion.is-compact .cg-motion-caption>span:first-child { max-width:110px; font-size:9px; }
+@media(prefers-reduced-motion:reduce) { .cg-motion-video { transition:none; } }
