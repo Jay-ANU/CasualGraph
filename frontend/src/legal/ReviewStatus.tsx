@@ -5,8 +5,7 @@ import { agentStatusLabel, failedSteps, researchGaps, reviewOutcome, tierLabel, 
 import { agentLine, formatClock, phaseDetail, phaseSteps, remainingLabel, remainingSeconds, reviewPhase } from './reviewActivity';
 import type { Agent } from './reviewActivity';
 import { useLiveReview, useNow } from './useLive';
-import { ReviewingSheet } from './art';
-import { DrawnCheck, Spinner } from './ui';
+import { DrawnCheck, ProgressRing, Spinner } from './ui';
 import { ic } from './icon';
 import { useI18n } from '../i18n/core';
 import { plural, serverText } from './i18n';
@@ -67,7 +66,7 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
   return <section className="lv-rail-panel lv-live" aria-label={tx('审查进度', 'Review progress')}>
     <div className="lv-rail-head">
       <div className="lv-live-head">
-        <ReviewingSheet paused={queued} size={26} />
+        <ProgressRing percent={live.percent} paused={queued} />
         <div className="lv-live-title">
           <h2>{queued ? tx('排队中', 'Queued') : tx('审查中', 'Reviewing')}</h2>
           <p>{tierLabel(tierOf(review))}{tx(' · 发现的意见会直接标在正文上', ' · findings are marked on the text as they come in')}</p>

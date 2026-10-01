@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Policy, ScenarioCatalog } from './types';
 import { ScenarioOptions } from './ScenarioPicker';
 import { currentScenario, usableCatalog } from './scenarioInput';
-import { PolicySheet } from './art';
+import { BookOpen } from 'lucide-react';
 import { useI18n } from '../i18n/core';
 
 type Draft = { title: string; text: string; contract_type: string; our_roles: string[] };
@@ -23,7 +23,7 @@ export function PolicyEditor({ catalog, policies, busy, onSave, onArchive }: {
       <p className="lv-page-meta">{tx('审查时逐条对照', 'Checked one by one in every review')}<span className="lv-sep" aria-hidden="true">·</span><span className="lv-mono">{policies.length}</span>{tx(' 条启用', ' active')}<span className="lv-sep" aria-hidden="true">·</span>{tx('仅组织管理员可编辑', 'Only organisation admins can edit')}</p>
       <div className="lv-policy-layout">
         <section className="lv-policy-list" aria-label={tx('已启用规范', 'Active policies')}>
-          {!policies.length && <div className="lv-policy-empty"><PolicySheet /><p>{tx('暂无公司规范', 'No company policies yet')}</p></div>}
+          {!policies.length && <div className="lv-policy-empty"><span className="lv-tile is-gray" aria-hidden="true"><BookOpen size={28} strokeWidth={1.5} /></span><p>{tx('暂无公司规范', 'No company policies yet')}</p></div>}
           {policies.map(p => <article key={p.id}>
             <span className="lv-mono lv-policy-version">v{p.version}</span>
             <div className="lv-policy-main">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { ArrowRight, ChevronDown } from 'lucide-react';
+import { ArrowRight, ChevronDown, FileSearch } from 'lucide-react';
 import type { Answer, Block, Finding, Review } from './types';
 import { revisionState } from './findingStatus';
 import { pendingDecisions } from './deskLogic';
@@ -12,7 +12,6 @@ import { FollowUp } from './FollowUp';
 import { ReviewDetails } from './ReviewDetails';
 import { ReviewIssue } from './ReviewStatus';
 import { CountUp, RichText } from './ui';
-import { NoMatchSheet } from './art';
 import { ic } from './icon';
 import { pick, useI18n } from '../i18n/core';
 import { plural } from './i18n';
@@ -85,7 +84,7 @@ function Notes(p: Props & { done: boolean }) {
           onDecision={(value, text, legalBasis, manualEdit) => p.onDecision(item.finding, value, text, legalBasis, manualEdit)} />)}
       </ol>}
       {!p.open.length && <div className="lv-empty-result">
-        <NoMatchSheet />
+        <span className="lv-tile is-gray" aria-hidden="true"><FileSearch size={28} strokeWidth={1.5} /></span>
         <p>{p.done ? tx('未形成可采纳的修改意见。该结果不代表合同不存在风险。', 'No edits were proposed for adoption. This does not mean the contract carries no risk.') : tx('暂无审查意见。', 'No findings yet.')}</p>
       </div>}
       {p.open.length > 0 && !shown.length && <div className="lv-empty-result"><p>{tx('没有符合条件的批注', 'No notes match this filter')}</p>

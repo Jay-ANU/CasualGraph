@@ -402,7 +402,7 @@ function seek(t) {
     chip.style.transform = `scale(${lerp(0.9, 1, pop)})`;
     chip.style.opacity = pop;
     // a highlight sweeps over the original just before it becomes a placeholder
-    orig.style.background = sweep > 0 ? `linear-gradient(rgba(201,138,27,.28), rgba(201,138,27,.28)) no-repeat 0 0 / ${(sweep * 100).toFixed(1)}% 100%` : '';
+    orig.style.background = sweep > 0 ? `linear-gradient(rgba(255,149,0,.28), rgba(255,149,0,.28)) no-repeat 0 0 / ${(sweep * 100).toFixed(1)}% 100%` : '';
     $('tk' + i).classList.toggle('on', t >= start + 0.42);
     if (swap) redacted++;
   }
@@ -438,7 +438,7 @@ function seek(t) {
   order.forEach(li => feed.appendChild(li));
   READ_AT.forEach((at, i) => {
     const p = seg(t, at, 0.35, easeOut) * (1 - seg(t, at + 0.75, 0.45, easeInOut));
-    $('cl' + (i + 1)).style.background = p > 0.01 ? `rgba(201,138,27,${(p * 0.13).toFixed(3)})` : '';
+    $('cl' + (i + 1)).style.background = p > 0.01 ? `rgba(255,149,0,${(p * 0.13).toFixed(3)})` : '';
     $('ol' + (i + 1)).classList.toggle('is-reading', p > 0.3);
   });
 

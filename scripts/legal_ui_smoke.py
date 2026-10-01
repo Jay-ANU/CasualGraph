@@ -152,6 +152,9 @@ try:
             start=len(calls);page.goto('http://127.0.0.1:4173/legal');page.wait_for_timeout(800)
             expect(page.get_by_role('button',name='选择文件',exact=True)).to_have_count(0)
             assert not any(path in ('/legal/workspace','/legal/models','/legal/contracts') for _,path in calls[start:])
+            if plan=='pro':
+                page.set_viewport_size({'width':1440,'height':900});page.wait_for_timeout(600)
+                page.screenshot(path=str(OUT/'legal-gate.png'))
             context.close()
         allowed.update(value=True,plan='max',unavailable=False)
         context=browser.new_context(viewport={'width':1440,'height':1000})
@@ -354,6 +357,14 @@ try:
             page.wait_for_timeout(80)
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 2'), ('legal-en', width)
         page.screenshot(path=str(OUT/'legal-en-welcome.png'),full_page=True)
+        # The finished review, in English: the desk's own labels switch; contract text and findings stay as written.
+        page.goto('http://127.0.0.1:4173/legal?contract=c1')
+        page.get_by_role('tablist',name='Result views').wait_for(timeout=15000)
+        expect(page.get_by_role('list',name='Contract review steps').locator('[aria-current="step"]')).to_have_text('4Resolve')
+        page.wait_for_timeout(600)
+        page.screenshot(path=str(OUT/'legal-en-results.png'))
+        page.goto('http://127.0.0.1:4173/legal')
+        page.get_by_role('heading',name='Contract library').wait_for()
         page.get_by_role('group',name='Interface language').get_by_role('button',name='中文').click()
         expect(page.get_by_role('heading',name='合同库')).to_be_visible()
         assert not errors,errors

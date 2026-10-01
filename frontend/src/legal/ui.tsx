@@ -96,6 +96,16 @@ export function ConfirmDialog({ title, children, confirmLabel, busyLabel, busy, 
   </dialog>;
 }
 
+/** A ring that fills as a review progresses; grey while the review is still queued. */
+export function ProgressRing({ percent, size = 40, paused = false }: { percent: number; size?: number; paused?: boolean }) {
+  const radius = (size - 4) / 2, length = 2 * Math.PI * radius;
+  const share = Math.max(0, Math.min(100, percent)) / 100;
+  return <svg className={`lv-ring${paused ? ' is-paused' : ''}`} width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true" focusable="false">
+    <circle className="lv-ring-track" cx={size / 2} cy={size / 2} r={radius} />
+    <circle className="lv-ring-value" cx={size / 2} cy={size / 2} r={radius} strokeDasharray={length} strokeDashoffset={length * (1 - share)} />
+  </svg>;
+}
+
 export function ModelSelect({ catalog, value, loading, disabled, onChange, onRefresh }: {
   catalog: Catalog | null; value: string; loading: boolean; disabled: boolean;
   onChange: (id: string) => void; onRefresh: () => void;

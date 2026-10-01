@@ -1,9 +1,10 @@
 import React from 'react';
-import { AlertCircle, FileText, X } from 'lucide-react';
+import { AlertCircle, FileText, Lock, X } from 'lucide-react';
 import { apiFetch, jsonRequest, readApiError, withAuth } from '../api/client';
 import { apiBase } from '../api/config';
 import type { Answer, Api, Block, Capabilities, Catalog, Contract, ContractSummary, Decision, Finding, Matter, Policy, Review, ReviewTier, User, Workspace } from './types';
 import './LegalDesk.css';
+import '@fontsource-variable/inter/wght.css';
 import { uploadIssue } from './deskLogic';
 import { emptyTransactionInputs, transactionAmount } from './transactionInput';
 import { changeScenario, currentScenario, scenarioRoleValid } from './scenarioInput';
@@ -30,7 +31,6 @@ import { ResultsPanel } from './ResultsPanel';
 import type { RailTab } from './ResultsPanel';
 import { ReleasePanel } from './ReleasePanel';
 import { PolicyEditor } from './PolicyEditor';
-import { ContractSheet } from './art';
 
 type Props = { user: User | null; logout: () => void; request?: Api };
 type State = {
@@ -84,6 +84,7 @@ export default class LegalDesk extends React.Component<Props, State> {
   private locateCount = 0;
   private timer?: ReturnType<typeof setInterval>;
   private priorTitle = '';
+  private priorTheme = '';
   private uploadInput: HTMLInputElement | null = null;
   private api: Api = <T,>(path: string, init?: RequestInit) => (this.props.request || apiFetch)<T>(path, init);
 
@@ -91,6 +92,10 @@ export default class LegalDesk extends React.Component<Props, State> {
     this.live = true;
     this.priorTitle = document.title;
     document.title = deskTitle();
+    // White browser chrome on phones while the desk is open.
+    const theme = document.querySelector('meta[name="theme-color"]');
+    this.priorTheme = theme?.getAttribute('content') ?? '';
+    theme?.setAttribute('content', '#ffffff');
     void this.initialize();
     this.timer = setInterval(() => void this.poll(), 2500);
     document.addEventListener('visibilitychange', this.refreshOnReturn);
@@ -101,6 +106,7 @@ export default class LegalDesk extends React.Component<Props, State> {
   }
   componentWillUnmount() {
     this.live = false; this.generation++; clearInterval(this.timer); document.title = this.priorTitle;
+    if (this.priorTheme) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', this.priorTheme);
     document.removeEventListener('visibilitychange', this.refreshOnReturn);
   }
   /** Background tabs throttle timers; catch up as soon as the page is visible again. */
@@ -458,7 +464,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     const dialogOpen = Boolean(s.pendingFile || s.confirmingRedaction || s.archivePolicy || s.exportFormat);
     const stage = c ? deskStage(c, r, s.view) : null;
     if (s.denied) return <div className={`${root} lv-gate`}><main className="lv-gate-card">
-      <ContractSheet size={56} intro={false} />
+      <span className="lv-tile lv-tile-lg is-gray" aria-hidden="true"><Lock size={32} strokeWidth={1.5} /></span>
       <h1>{pick('会员权限已变更', 'Your membership has changed')}</h1><p>{pick('合同审查为 Max 会员专享，合同内容已从页面移除。', 'Contract review is part of the Max plan. The contract has been removed from this page.')}</p>
       <div className="lv-gate-actions"><a className="lv-primary" href="/agent">{pick('返回研究工作台', 'Back to research desk')}</a></div>
     </main></div>;

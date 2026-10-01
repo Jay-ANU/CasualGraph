@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
-import { ChevronRight, Lock, Search, ShieldCheck, Upload, UserCheck } from 'lucide-react';
+import { ChevronRight, FileText, Lock, Search, ShieldCheck, Upload, UserCheck } from 'lucide-react';
 import type { ContractSummary } from './types';
 import { contractStatusLabel, fileTitle, formatDate } from './labels';
-import { ContractSheet } from './art';
 import { ic } from './icon';
 import { useI18n } from '../i18n/core';
 
@@ -39,7 +38,7 @@ export function Library({ contracts, matterName, loading, disabled, busy, query,
         onDragOver={e => { e.preventDefault(); if (!disabled && e.dataTransfer.types.includes('Files')) setDragging(true); }}
         onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
         onDrop={e => { e.preventDefault(); setDragging(false); if (!disabled) onDrop(e.dataTransfer.files); }}>
-        <ContractSheet size={54} active={dragging} />
+        <span className="lv-tile" aria-hidden="true"><FileText size={30} strokeWidth={1.5} /></span>
         <div className="lv-upload-copy">
           <p className="lv-upload-title">{dragging ? tx('松开以上传', 'Drop to upload') : tx('拖入合同，开始新的审查', 'Drop a contract here to start a review')}</p>
           <p className="lv-upload-spec">{tx('.docx、文本型 .pdf、.txt · 单个文件不超过 10 MB', '.docx, text-based .pdf or .txt · up to 10 MB per file')}</p>

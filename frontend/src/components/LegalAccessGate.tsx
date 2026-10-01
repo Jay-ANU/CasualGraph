@@ -1,9 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { FileDown, PenLine, ShieldCheck } from 'lucide-react';
+import { FileDown, FileText, PenLine, ShieldCheck } from 'lucide-react';
 import { apiFetch } from '../api/client';
 import '../legal/LegalDesk.css';
-import { ContractSheet } from '../legal/art';
 import { useI18n } from '../i18n/core';
 import LanguageSwitch from './LanguageSwitch';
 
@@ -44,7 +43,7 @@ export default function LegalAccessGate({ children }: { children: ReactNode }) {
         <Link to="/" className="lv-gate-brand"><img src="/brand/logo-mark.svg" alt="" width={22} height={22} />CausalGraph<span className="lv-rule-v" aria-hidden="true" /><span className="lv-gate-product">{tx('合同审查', 'Contract review')}</span></Link>
         <LanguageSwitch className="lv-lang" />
       </div>
-      <ContractSheet size={56} />
+      <span className="lv-tile lv-tile-lg is-blue" aria-hidden="true"><FileText size={34} strokeWidth={1.5} /></span>
       <h1>{checking ? tx('正在验证会员权限', 'Checking your membership') : error ? tx('服务暂不可用', 'Service unavailable') : tx('合同审查为 Max 会员专享', 'Contract review is part of the Max plan')}</h1>
       {access && !error && <ul>{BENEFITS.map(({ icon: Icon, zh, en }) => <li key={zh}><Icon size={16} strokeWidth={1.75} aria-hidden="true" />{tx(zh, en)}</li>)}</ul>}
       <p role="status">{error ? t(error) : checking ? tx('请稍候…', 'One moment…') : tx('如需开通，请联系管理员。', 'To get access, contact your administrator.')}</p>

@@ -81,12 +81,12 @@ export function ReleasePanel({ review, contract, open, busy, onCheck, onApprove,
     <div className="lv-rail-body">
       <div className="lv-export-list">
         <div className="lv-export-row">
-          <FileText {...ic} size={18} />
+          <span className="lv-tile is-gray"><FileText {...ic} size={18} /></span>
           <div><strong>{tx('审查报告', 'Review report')}</strong><span>{tx('意见、依据及处理结果 · Markdown', 'Findings, basis and decisions · Markdown')}</span></div>
           <button className="lv-secondary lv-btn-sm" disabled={busy} onClick={onReport}>{tx('导出报告', 'Export report')}</button>
         </div>
         <div className="lv-export-row">
-          <FileDown {...ic} size={18} />
+          <span className="lv-tile is-gray"><FileDown {...ic} size={18} /></span>
           <div><strong>{docx ? tx('Word 修订版', 'Tracked-changes Word') : tx('修订文本', 'Revised text')}</strong>
             <span>{docx ? tx('以修订痕迹写入原文件 · DOCX', 'Edits as tracked changes in the original · DOCX') : tx('纯文本，不含修订痕迹 · TXT', 'Plain text without tracked changes · TXT')}</span></div>
           <button className="lv-primary lv-btn-sm" disabled={busy || !review.draft_approval || !accepted} onClick={onDraft}>{docx ? tx('导出 Word 修订版', 'Export Word') : tx('导出修订文本', 'Export revised text')}</button>
