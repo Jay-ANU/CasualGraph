@@ -69,16 +69,16 @@ const Navbar: React.FC = () => {
   };
 
   const linkClass = ({ isActive }: { isActive: boolean }) => dark
-    ? `rounded-md px-3 py-1.5 text-sm transition-colors ${isActive ? 'font-medium text-white' : 'text-white/70 hover:text-white'}`
+    ? `rounded-md px-3 py-1.5 text-[13px] transition-colors ${isActive ? 'font-medium text-white' : 'text-white/80 hover:text-white'}`
     : `rounded-md px-3 py-1.5 text-sm transition-colors ${isActive ? 'font-medium text-ink' : 'text-ink-3 hover:text-ink'}`;
   const primaryLabel = isAuthenticated ? tx('进入法务工作台', 'Open legal desk') : tx('开始审查', 'Start a review');
   const shell = overlay
-    ? `fixed inset-x-0 top-0 z-40 border-b transition-[background-color,border-color,backdrop-filter] duration-300 ${scrolled || isOpen ? 'cg-nav-glass border-white/10' : 'border-transparent bg-transparent'}`
+    ? `fixed inset-x-0 top-0 z-40 cg-nav-glass ${scrolled || isOpen ? 'is-scrolled' : ''}`
     : 'sticky top-0 z-40 border-b border-line bg-paper';
 
   return (
     <header className={shell}>
-      <div className="mx-auto flex h-[64px] max-w-[1320px] items-center gap-6 px-5 sm:px-8">
+      <div className={`mx-auto flex max-w-[1320px] items-center gap-6 px-5 sm:px-8 ${overlay ? 'h-[52px]' : 'h-[64px]'}`}>
         <Link to="/" className="shrink-0 rounded-md" aria-label={tx('CausalGraph 首页', 'CausalGraph home')}>
           <BrandLogo size="md" tone={dark ? 'dark' : 'light'} />
         </Link>

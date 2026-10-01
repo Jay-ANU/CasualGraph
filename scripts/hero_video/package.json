@@ -1,14 +1,18 @@
 {
-  "name": "causalgraph-hero-video",
+  "name": "causalgraph-hero-film",
   "private": true,
-  "description": "Renders the landing page's original hero film (Three.js in headless Chromium, encoded with ffmpeg).",
+  "description": "Renders the landing page's product film: a replica of the contract review desk driven by a timeline, drawn frame by frame in headless Chromium and encoded with ffmpeg.",
   "type": "module",
   "scripts": {
-    "render": "node render.mjs --mode landscape --w 1920 --h 1080 --out out/landscape.mkv && node render.mjs --mode portrait --w 720 --h 1280 --out out/portrait.mkv",
+    "render": "for lang in zh en; do for mode in landscape portrait; do node render_film.mjs --lang $lang --mode $mode --out out/$lang-$mode.mkv; done; done",
     "encode": "sh encode.sh"
   },
   "devDependencies": {
-    "playwright-core": "1.58.0",
-    "three": "0.180.0"
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/newsreader": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@fontsource/noto-sans-sc": "5.2.6",
+    "@fontsource/noto-serif-sc": "5.2.6",
+    "playwright-core": "1.58.0"
   }
 }

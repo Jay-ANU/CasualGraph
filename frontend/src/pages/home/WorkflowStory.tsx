@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, CheckCircle2, UploadCloud, Download, FileText, Lock, ShieldCheck } from 'lucide-react';
+import { Check, FileText, Lock, UploadCloud } from 'lucide-react';
 import type { COPY } from './copy';
 import { useInView, useScrollProgress } from './motion';
 
 type Workflow = (typeof COPY)['zh']['workflow'];
-type Agent = (typeof COPY)['zh']['agents']['list'][number];
+type Mock = Workflow['mock'];
 
 const WIDE = '(min-width: 960px)';
-const useWide = () => {
+function useWide() {
   const [wide, setWide] = useState(() => typeof window.matchMedia === 'function' && window.matchMedia(WIDE).matches);
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
@@ -17,114 +17,105 @@ const useWide = () => {
     return () => query.removeEventListener('change', update);
   }, []);
   return wide;
-};
+}
 
-function Scene({ index, copy, agents }: { index: number; copy: Workflow['mock']; agents: Agent[] }) {
+/** The five screens of the desk, drawn in its own visual language; each plays when active. */
+function Scene({ index, copy }: { index: number; copy: Mock }) {
   if (index === 0) return (
-    <div className="lp-scene-upload">
-      <div className="lp-drop">
-        <UploadCloud size={30} strokeWidth={1.4} aria-hidden="true" />
-        <span>DOCX · PDF · TXT</span>
-      </div>
-      <div className="lp-file">
-        <FileText size={20} strokeWidth={1.6} aria-hidden="true" />
-        <div className="lp-file-meta">
-          <strong>{copy.file}</strong>
-          <span className="lp-file-bar"><i /></span>
-          <span className="lp-file-status"><em>{copy.uploading}</em><b><Lock size={12} aria-hidden="true" />{copy.stored}</b></span>
+    <div className="ap-scene ap-scene-upload">
+      <div className="ap-drop"><UploadCloud size={28} strokeWidth={1.5} aria-hidden="true" /><span>DOCX · PDF · TXT</span></div>
+      <div className="ap-file">
+        <FileText size={18} strokeWidth={1.6} aria-hidden="true" />
+        <div className="ap-file-meta">
+          <b>{copy.file}</b>
+          <span className="ap-file-bar"><i /></span>
+          <span className="ap-file-status"><em>{copy.uploading}</em><strong><Lock size={11} aria-hidden="true" />{copy.stored}</strong></span>
         </div>
-        <span className="lp-file-size">186 KB</span>
+        <span className="ap-file-size">186 KB</span>
       </div>
     </div>
   );
   if (index === 1) return (
-    <div className="lp-scene-redact">
-      <div className="lp-scene-title"><ShieldCheck size={15} aria-hidden="true" />{copy.redactTitle}</div>
+    <div className="ap-scene ap-scene-redact">
+      <div className="ap-scene-title">{copy.redactTitle}</div>
       {copy.redactLines.map(([label, value, token], i) => (
         <p key={label} style={{ '--i': i } as React.CSSProperties}>
-          <span className="lp-redact-label">{label}</span>
-          <span className="lp-redact-slot"><span className="lp-redact-raw">{value}</span><span className="lp-redact-token">{token}</span></span>
+          <span className="ap-rl-label">{label}</span>
+          <span className="ap-rl-slot"><span className="ap-rl-raw">{value}</span><span className="ap-rl-token">{token}</span></span>
         </p>
       ))}
-      <div className="lp-scene-chip"><Check size={13} aria-hidden="true" />{copy.redactDone}</div>
+      <div className="ap-chip-ok"><Check size={12} strokeWidth={2.4} aria-hidden="true" />{copy.redactDone}</div>
     </div>
   );
   if (index === 2) return (
-    <div className="lp-scene-setup">
-      <div className="lp-setup-fields">
-        {copy.setupFields.map(([label, value]) => (
-          <div key={label}><span>{label}</span><strong>{value}</strong></div>
-        ))}
-      </div>
-      <span className="lp-setup-label">{copy.tierLabel}</span>
-      <div className="lp-tiers">{copy.tiers.map((tier, i) => <span key={tier} className={i === 2 ? 'is-on' : ''}>{tier}</span>)}<i /></div>
-      <span className="lp-setup-label">{copy.modelLabel}</span>
-      <div className="lp-models">{['GPT', 'Claude', 'DeepSeek', 'Kimi', 'GLM'].map((m, i) => <span key={m} className={i === 4 ? 'is-on' : ''}>{m}</span>)}</div>
-      <label className="lp-consent"><span><Check size={12} aria-hidden="true" /></span>{copy.consent}</label>
+    <div className="ap-scene ap-scene-setup">
+      <div className="ap-fields">{copy.setupFields.map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div>
+      <span className="ap-field-label">{copy.tierLabel}</span>
+      <div className="ap-seg">{copy.tiers.map((tier, i) => <span key={tier} className={i === 2 ? 'is-on' : ''}>{tier}</span>)}<i /></div>
+      <span className="ap-field-label">{copy.modelLabel}</span>
+      <div className="ap-models-row">{['GPT', 'Claude', 'DeepSeek', 'Kimi', 'GLM'].map((m, i) => <span key={m} className={i === 4 ? 'is-on' : ''}>{m}</span>)}</div>
+      <div className="ap-consent"><span><Check size={11} strokeWidth={3} aria-hidden="true" /></span>{copy.consent}</div>
     </div>
   );
   if (index === 3) return (
-    <div className="lp-scene-agents">
-      <div className="lp-scene-title"><span className="lp-feed-dot" />{copy.agentsTitle}</div>
-      {agents.map((agent, i) => (
-        <div key={agent.id} className={`lp-agent-row lp-tone-${agent.tone}`} style={{ '--i': i } as React.CSSProperties}>
-          <span>{agent.name}</span>
-          <span className="lp-agent-bar"><i /></span>
-          <CheckCircle2 size={15} aria-hidden="true" />
+    <div className="ap-scene ap-scene-agents">
+      <div className="ap-scene-title">{copy.agentsTitle}</div>
+      {copy.agents.map((name, i) => (
+        <div key={name} className="ap-agent-row" style={{ '--i': i } as React.CSSProperties}>
+          <span>{name}</span>
+          <span className="ap-agent-bar"><i /></span>
+          <span className="ap-agent-done"><Check size={11} strokeWidth={3} aria-hidden="true" /></span>
         </div>
       ))}
     </div>
   );
   return (
-    <div className="lp-scene-result">
-      <div className="lp-clause-head"><span>{copy.clause}</span><b>{copy.risk}</b></div>
-      <p className="lp-clause-text">
-        {copy.before}<del>{copy.deleted}</del><ins>{copy.inserted}</ins>{copy.after}
-      </p>
-      <div className="lp-clause-actions">{copy.actions.map((a, i) => <span key={a} className={i === 0 ? 'is-on' : ''}>{a}</span>)}</div>
-      <div className="lp-export">
-        <span className="lp-export-btn"><Download size={15} aria-hidden="true" />{copy.export}</span>
-        <span className="lp-export-done"><CheckCircle2 size={14} aria-hidden="true" />{copy.exported}</span>
+    <div className="ap-scene ap-scene-result">
+      <div className="ap-clause-head"><span>{copy.clause}</span><b>{copy.risk}</b></div>
+      <p className="ap-clause">{copy.before}<del>{copy.deleted}</del><ins>{copy.inserted}</ins>{copy.after}</p>
+      <div className="ap-clause-actions">{copy.actions.map((a, i) => <span key={a} className={i === 0 ? 'is-on' : ''}>{a}</span>)}</div>
+      <div className="ap-export">
+        <span className="ap-export-btn">{copy.export}</span>
+        <span className="ap-export-done"><Check size={12} strokeWidth={2.6} aria-hidden="true" />{copy.exported}</span>
       </div>
     </div>
   );
 }
 
-function Screen({ index, active, copy, agents }: { index: number; active: boolean; copy: Workflow['mock']; agents: Agent[] }) {
+function Screen({ index, active, copy }: { index: number; active: boolean; copy: Mock }) {
   return (
-    <div className={`lp-screen ${active ? 'is-active' : ''}`} aria-hidden="true">
-      <div className="lp-screen-bar"><i /><i /><i /><span>CausalGraph · {index + 1}/5</span></div>
-      <div className="lp-screen-body"><Scene index={index} copy={copy} agents={agents} /></div>
+    <div className={`ap-screen ${active ? 'is-active' : ''}`} aria-hidden="true">
+      <div className="ap-screen-bar"><i /><i /><i /><span>CausalGraph · {index + 1}/5</span></div>
+      <div className="ap-screen-body"><Scene index={index} copy={copy} /></div>
     </div>
   );
 }
 
-function MobileStep({ index, step, copy, agents }: { index: number; step: Workflow['steps'][number]; copy: Workflow['mock']; agents: Agent[] }) {
+function MobileStep({ index, step, copy }: { index: number; step: Workflow['steps'][number]; copy: Mock }) {
   const [ref, inView] = useInView<HTMLLIElement>({ threshold: 0.35 });
   return (
-    <li ref={ref} className={`lp-mstep ${inView ? 'is-active' : ''}`}>
-      <span className="lp-step-num">{String(index + 1).padStart(2, '0')}</span>
+    <li ref={ref} className={`ap-mstep ${inView ? 'is-active' : ''}`}>
+      <span className="ap-step-num">{String(index + 1).padStart(2, '0')}</span>
       <h3>{step.title}</h3>
       <p>{step.body}</p>
-      <div className="lp-mstep-screen"><Screen index={index} active={inView} copy={copy} agents={agents} /></div>
+      <div className="ap-mstep-screen"><Screen index={index} active={inView} copy={copy} /></div>
     </li>
   );
 }
 
 /**
- * Apple-style pinned story on wide screens: the screen stays put while scrolling advances the
- * five steps. Narrow screens get the same scenes stacked, each playing as it scrolls in.
+ * On wide screens the window stays pinned while scrolling walks through the five steps;
+ * on narrow screens the steps stack, each screen playing as it arrives.
  */
-export default function WorkflowStory({ copy, agents }: { copy: Workflow; agents: Agent[] }) {
+export default function WorkflowStory({ copy }: { copy: Workflow }) {
   const wide = useWide();
   const section = useRef<HTMLDivElement>(null);
-  const rail = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const count = copy.steps.length;
 
   useScrollProgress(section, (progress) => {
     if (!wide) return;
-    rail.current?.style.setProperty('--p', progress.toFixed(4));
+    section.current?.style.setProperty('--p', progress.toFixed(4));
     const next = Math.min(count - 1, Math.floor(progress * count * 0.999));
     setActive(current => (current === next ? current : next));
   });
@@ -139,30 +130,27 @@ export default function WorkflowStory({ copy, agents }: { copy: Workflow; agents
 
   if (!wide) {
     return (
-      <ol className="lp-mstory">
-        {copy.steps.map((step, i) => <MobileStep key={step.title} index={i} step={step} copy={copy.mock} agents={agents} />)}
+      <ol className="ap-mstory">
+        {copy.steps.map((step, i) => <MobileStep key={step.title} index={i} step={step} copy={copy.mock} />)}
       </ol>
     );
   }
   return (
-    <div ref={section} className="lp-story" style={{ '--steps': count } as React.CSSProperties}>
-      <div className="lp-story-sticky">
-        <div className="lp-story-grid">
-          <div ref={rail} className="lp-story-rail">
-            <ol className="lp-story-steps">
-              {copy.steps.map((step, i) => (
-                <li key={step.title} className={i === active ? 'is-active' : i < active ? 'is-done' : ''}>
-                  <button type="button" onClick={() => jump(i)} aria-current={i === active ? 'step' : undefined}>
-                    <span className="lp-step-num">{String(i + 1).padStart(2, '0')}</span>
-                    <span className="lp-step-text"><strong>{step.title}</strong><span>{step.body}</span></span>
-                  </button>
-                </li>
-              ))}
-            </ol>
-            <span className="lp-story-track" aria-hidden="true"><i /></span>
-          </div>
-          <div className="lp-story-stage">
-            {copy.steps.map((step, i) => <Screen key={step.title} index={i} active={i === active} copy={copy.mock} agents={agents} />)}
+    <div ref={section} className="ap-story" style={{ '--steps': count } as React.CSSProperties}>
+      <div className="ap-story-sticky">
+        <div className="ap-story-grid">
+          <ol className="ap-story-steps">
+            {copy.steps.map((step, i) => (
+              <li key={step.title} className={i === active ? 'is-active' : i < active ? 'is-done' : ''}>
+                <button type="button" onClick={() => jump(i)} aria-current={i === active ? 'step' : undefined}>
+                  <span className="ap-step-num">{String(i + 1).padStart(2, '0')}</span>
+                  <span className="ap-step-text"><strong>{step.title}</strong><span>{step.body}</span></span>
+                </button>
+              </li>
+            ))}
+          </ol>
+          <div className="ap-story-stage">
+            {copy.steps.map((step, i) => <Screen key={step.title} index={i} active={i === active} copy={copy.mock} />)}
           </div>
         </div>
       </div>

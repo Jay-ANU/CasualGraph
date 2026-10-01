@@ -351,26 +351,25 @@
 .cg-lang-dark > button[aria-pressed='true'] { background: #fff; color: #0b0a16; }
 .cg-lang-dark > button:focus-visible { outline-color: #22d3ee; }
 
-/* ---------- Landing navigation over the hero ---------- */
+/* ---------- Landing navigation over the hero (Apple-style bar) ---------- */
 .cg-nav-glass {
-  background: rgba(5, 5, 11, 0.72);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
-  backdrop-filter: blur(18px) saturate(150%);
+  background: rgba(0, 0, 0, 0.8);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
 }
 .cg-nav-cta {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 15px;
-  border-radius: 999px;
-  background: #fff;
-  color: #0b0a16;
-  font-size: 13.5px;
-  font-weight: 600;
+  gap: 5px;
+  height: 30px;
+  padding: 0 13px;
+  border-radius: 980px;
+  background: #0071e3;
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 500;
   white-space: nowrap;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4), 0 8px 26px -8px rgba(139, 92, 246, 0.85);
-  transition: box-shadow 0.25s, transform 0.25s;
+  transition: background-color 0.2s;
 }
-.cg-nav-cta:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7), 0 10px 34px -8px rgba(139, 92, 246, 1); }
-.cg-nav-cta:focus-visible { outline: 2px solid #22d3ee; outline-offset: 3px; }
+.cg-nav-cta:hover { background: #0077ed; }
+.cg-nav-cta:focus-visible { outline: 2px solid #2997ff; outline-offset: 3px; }

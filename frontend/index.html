@@ -7,12 +7,12 @@
     <meta name="theme-color" content="#FBFAF8" />
     <meta
       name="description"
-      content="CausalGraph 法务 Agent：合同先自动脱敏，五个专业 Agent 并行审查法律风险、商业利益与公司规范，逐条给出依据与修改建议，确认后导出 Word 修订版。"
+      content="CausalGraph 法务 Agent：一支 AI 法务团队，审每一份合同。合同先自动脱敏，五个专业 Agent 并行审查，每条意见附依据与修改建议，确认后导出 Word 修订版。"
     />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="CausalGraph" />
     <meta property="og:title" content="CausalGraph 法务 Agent · 多 Agent 合同审查" />
-    <meta property="og:description" content="合同先脱敏，五个专业 Agent 逐条审查，依据与修改建议一目了然，导出 Word 修订版。" />
+    <meta property="og:description" content="一支 AI 法务团队，审每一份合同。先脱敏，再由五个专业 Agent 并行审查，确认后导出 Word 修订版。" />
     <meta property="og:image" content="https://casualgraphai.vercel.app/media/og-legal.jpg" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -27,9 +27,10 @@
         poster.rel = 'preload';
         poster.as = 'image';
         poster.type = 'image/webp';
-        poster.href = window.matchMedia('(max-aspect-ratio: 4/5)').matches
-          ? '/media/hero-legal-poster-portrait.webp'
-          : '/media/hero-legal-poster.webp';
+        var lang = 'zh';
+        try { lang = localStorage.getItem('causalgraph.lang') === 'en' ? 'en' : 'zh'; } catch (e) { /* storage blocked */ }
+        var portrait = window.matchMedia('(max-aspect-ratio: 4/5)').matches;
+        poster.href = '/media/film-' + lang + '-' + (portrait ? 'portrait' : 'landscape') + '-poster.webp';
         poster.setAttribute('fetchpriority', 'high');
         document.head.appendChild(poster);
       }

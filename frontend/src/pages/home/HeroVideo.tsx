@@ -1,69 +1,109 @@
 import { useEffect, useRef, useState } from 'react';
+import { Pause, Play, RotateCcw } from 'lucide-react';
 
-type Source = { webm: string; mp4: string; poster: string };
-const LANDSCAPE: Source = { webm: '/media/hero-legal-1080.webm', mp4: '/media/hero-legal-1080.mp4', poster: '/media/hero-legal-poster.webp' };
-const PORTRAIT: Source = { webm: '/media/hero-legal-portrait.webm', mp4: '/media/hero-legal-portrait.mp4', poster: '/media/hero-legal-poster-portrait.webp' };
+type Props = {
+  lang: 'zh' | 'en';
+  /** The hero is on screen and the tab is visible. */
+  active: boolean;
+  /** Motion is allowed: no reduced-motion preference and no Save-Data. */
+  motion: boolean;
+  labels: { film: string; replay: string; pause: string; play: string };
+};
+type Orientation = 'landscape' | 'portrait';
 const PORTRAIT_QUERY = '(max-aspect-ratio: 4/5)';
+const PAUSE_KEY = 'causalgraph.film-paused';
 
-const isPortrait = () => typeof window.matchMedia === 'function' && window.matchMedia(PORTRAIT_QUERY).matches;
+const orientationNow = (): Orientation =>
+  typeof window.matchMedia === 'function' && window.matchMedia(PORTRAIT_QUERY).matches ? 'portrait' : 'landscape';
+const src = (lang: string, o: Orientation, ext: string) => `/media/film-${lang}-${o}${ext}`;
+const savedPause = () => { try { return localStorage.getItem(PAUSE_KEY) === '1'; } catch { return false; } };
 
 /**
- * The full-bleed hero loop. The poster paints first; the video only plays while the hero is
- * on screen, the tab is visible and motion is allowed, and it never blocks the page.
+ * The product film: a real pass through the contract desk, from upload to a tracked-changes
+ * export. It plays once while the hero is on screen, then offers a replay. The poster paints
+ * first, the film fades in on its first frame, and nothing here can block the page.
  */
-export default function HeroVideo({ playing, onFirstFrame }: { playing: boolean; onFirstFrame?: () => void }) {
+export default function HeroVideo({ lang, active, motion, labels }: Props) {
   const video = useRef<HTMLVideoElement>(null);
-  const [source, setSource] = useState<Source>(() => (isPortrait() ? PORTRAIT : LANDSCAPE));
-  const [ready, setReady] = useState(false);
+  const [orientation, setOrientation] = useState<Orientation>(orientationNow);
+  const [paused, setPaused] = useState(savedPause);
+  const [state, setState] = useState<'poster' | 'playing' | 'ended'>('poster');
   const [failed, setFailed] = useState(false);
+  const shouldPlay = motion && active && !paused && state !== 'ended' && !failed;
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
     const query = window.matchMedia(PORTRAIT_QUERY);
-    const update = () => setSource(query.matches ? PORTRAIT : LANDSCAPE);
+    const update = () => setOrientation(query.matches ? 'portrait' : 'landscape');
     query.addEventListener('change', update);
     return () => query.removeEventListener('change', update);
   }, []);
 
+  // A new language or orientation is a new film: start it from the beginning.
   useEffect(() => {
     const element = video.current;
-    if (!element || failed) return;
-    // iOS needs the attribute, not only the property, before it allows inline autoplay.
+    if (!element) return;
+    element.load();
+    setState('poster');
+    setFailed(false);
+  }, [lang, orientation]);
+
+  useEffect(() => {
+    const element = video.current;
+    if (!element) return;
     element.muted = true;
     element.setAttribute('muted', '');
-    if (playing) {
-      if (element.dataset.src !== source.mp4) {
-        element.dataset.src = source.mp4;
-        element.load();
-      }
-      void element.play().catch(() => { /* autoplay refused: the poster stays */ });
-    } else {
-      element.pause();
-    }
-  }, [playing, source, failed]);
+    if (shouldPlay) void element.play().catch(() => { /* autoplay refused: the poster stays, the button still works */ });
+    else element.pause();
+  }, [shouldPlay, lang, orientation]);
 
+  const toggle = () => {
+    const element = video.current;
+    if (!element) return;
+    if (state === 'ended') {
+      element.currentTime = 0;
+      setState('poster');
+      setPaused(false);
+      try { localStorage.setItem(PAUSE_KEY, '0'); } catch { /* this visit only */ }
+      void element.play().catch(() => {});
+      return;
+    }
+    const next = !paused;
+    setPaused(next);
+    try { localStorage.setItem(PAUSE_KEY, next ? '1' : '0'); } catch { /* this visit only */ }
+    if (!next) void element.play().catch(() => {});
+  };
+
+  const label = state === 'ended' ? labels.replay : paused || !shouldPlay ? labels.play : labels.pause;
+  const Icon = state === 'ended' ? RotateCcw : paused || !shouldPlay ? Play : Pause;
   return (
-    <div className={`lp-hero-media ${ready ? 'is-ready' : ''}`} aria-hidden="true">
-      {/* React 18 does not know fetchPriority yet; the lowercase attribute passes through untouched. */}
-      <img className="lp-hero-poster" src={source.poster} alt="" decoding="async" {...{ fetchpriority: 'high' }} />
+    <figure className={`ap-film is-${orientation} ${state === 'playing' ? 'is-playing' : ''}`}>
+      <img className="ap-film-poster" src={src(lang, orientation, '-poster.webp')} alt="" decoding="async" {...{ fetchpriority: 'high' }} />
       {!failed && (
         <video
           ref={video}
-          className="lp-hero-video"
+          className="ap-film-video"
           muted
-          loop
           playsInline
-          preload="none"
+          preload={motion ? 'auto' : 'metadata'}
           disablePictureInPicture
           tabIndex={-1}
-          poster={source.poster}
-          onPlaying={() => { setReady(true); onFirstFrame?.(); }}
+          poster={src(lang, orientation, '-poster.webp')}
+          aria-label={labels.film}
+          onPlaying={() => setState('playing')}
+          onEnded={() => setState('ended')}
         >
-          <source src={source.webm} type="video/webm" />
-          {/* The last source failing means no format worked; keep the poster. */}
-          <source src={source.mp4} type="video/mp4" onError={() => setFailed(true)} />
+          <source src={src(lang, orientation, '.webm')} type="video/webm" />
+          {/* The last source failing means no format played; the poster stays. */}
+          <source src={src(lang, orientation, '.mp4')} type="video/mp4" onError={() => setFailed(true)} />
         </video>
       )}
-    </div>
+      {motion && !failed && (
+        <button type="button" className="ap-film-control" onClick={toggle} aria-label={label} title={label} data-state={state === 'ended' ? 'ended' : paused ? 'paused' : 'playing'}>
+          <Icon size={15} strokeWidth={2.2} aria-hidden="true" />
+        </button>
+      )}
+      <figcaption className="sr-only">{labels.film}</figcaption>
+    </figure>
   );
 }

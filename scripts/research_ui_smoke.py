@@ -105,7 +105,7 @@ try:
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
         # The site opens in Chinese and leads with the legal agent (landing_ui_smoke.py covers it in depth).
-        check('Home heading', page.get_by_role('heading', level=1, name='你的 AI 法务团队逐条守护每一份合同').count() == 1)
+        check('Home heading', '一支 AI 法务团队' in page.get_by_role('heading', level=1).first.inner_text())
         check('Independent Legal navigation', page.get_by_role('navigation', name='主导航').get_by_role('link', name='法务 Agent', exact=True).get_attribute('href') == '/legal')
         for path in ['/about', '/desktop']:
             # Assert the real restored page renders, without hard-coding copy that might evolve.
