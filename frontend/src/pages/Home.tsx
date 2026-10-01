@@ -1,196 +1,284 @@
-import React, { useState } from 'react';
-import { ArrowRight, ArrowUp } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowRight, ArrowUpRight, ChevronDown, Pause, Play } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo';
+import LanguageSwitch from '../components/LanguageSwitch';
 import { githubRepositoryUrl } from '../config/downloads';
+import { useI18n } from '../i18n/core';
 import useDocumentTitle from '../utils/useDocumentTitle';
+import AgentNetwork from './home/AgentNetwork';
+import Capabilities from './home/Capabilities';
+import { COPY } from './home/copy';
+import CountUp from './home/CountUp';
+import HeroVideo from './home/HeroVideo';
+import { useReducedMotion, useReveal, useScrollProgress } from './home/motion';
+import ScrambleWord from './home/ScrambleWord';
+import SparkField from './home/SparkField';
+import WorkflowStory from './home/WorkflowStory';
+import '@fontsource-variable/inter/wght.css';
+import './home/home.css';
 
-const EXAMPLE_QUESTIONS = [
-  'Compare climate commitments across my reports',
-  'What evidence supports the emissions targets?',
-  'Find gaps in Scope 3 reporting',
-];
+const MOTION_KEY = 'causalgraph.home-motion';
+const YEAR = new Date().getFullYear();
 
-const STEPS = [
-  {
-    title: 'Bring the reports',
-    body: 'Upload sustainability reports as PDF, Word or plain text. Each one is split into passages, indexed for search, and read for the entities and relationships it describes.',
-  },
-  {
-    title: 'Ask in plain language',
-    body: 'Fast mode answers from the most relevant passages. Deep mode plans a search, reads further, and checks whether the evidence covers the question before it writes — each step stays visible.',
-  },
-  {
-    title: 'Follow the relationships',
-    body: 'Targets, metrics, policies and the people who oversee them become a graph you can explore. Each relationship keeps the evidence it was extracted from.',
-  },
-];
+const savedPause = () => {
+  try { if (localStorage.getItem(MOTION_KEY) === 'paused') return true; } catch { /* default */ }
+  const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+  return Boolean(connection?.saveData);
+};
 
-const EXAMPLE_SOURCES = [
-  { title: 'Orbis Materials Sustainability Report 2024', where: 'p. 42' },
-  { title: 'Orbis Materials Sustainability Report 2024', where: 'p. 44' },
-  { title: 'Halden Foods Climate Transition Plan', where: 'p. 9' },
-];
+/** Chinese animates per character, English per word, so English never breaks mid-word. */
+function Split({ text, lang }: { text: string; lang: 'zh' | 'en' }) {
+  const parts = lang === 'zh' ? Array.from(text) : text.split(/(\s+)/);
+  let n = 0;
+  return <>{parts.map((part, i) => (/^\s+$/.test(part) ? ' ' : <span key={i} className="lp-ch" style={{ '--i': n++ } as React.CSSProperties}>{part}</span>))}</>;
+}
 
-const Cite: React.FC<{ n: number }> = ({ n }) => <span className="cg-cite">{n}</span>;
+/** Headlines carry their own line breaks ("\n") so Chinese never splits mid-phrase. */
+function Lines({ text }: { text: string }) {
+  const parts = text.split('\n');
+  return <>{parts.map((part, i) => <span key={i}>{i > 0 && <br />}{part}</span>)}</>;
+}
 
 export default function Home() {
-  const [question, setQuestion] = useState('');
-  const navigate = useNavigate();
-  useDocumentTitle();
-  const openQuestion = (prompt: string) => navigate(`/agent?prompt=${encodeURIComponent(prompt.trim())}`);
+  const { lang } = useI18n();
+  const copy = COPY[lang];
+  const reduced = useReducedMotion();
+  const [paused, setPaused] = useState(savedPause);
+  const [heroOnScreen, setHeroOnScreen] = useState(true);
+  const [pageVisible, setPageVisible] = useState(() => !document.hidden);
+  const root = useRef<HTMLDivElement>(null);
+  const hero = useRef<HTMLElement>(null);
+  const statement = useRef<HTMLDivElement>(null);
+  const motionOn = !reduced && !paused;
+  useDocumentTitle(copy.title);
+  useReveal(root, lang);
+
+  // Dark browser chrome on phones while the landing page is open.
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    const previous = meta?.getAttribute('content');
+    meta?.setAttribute('content', '#05050b');
+    return () => { if (previous) meta?.setAttribute('content', previous); };
+  }, []);
+
+  useEffect(() => {
+    const element = hero.current;
+    if (!element || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => setHeroOnScreen(entry.isIntersecting), { threshold: 0.02 });
+    observer.observe(element);
+    const onVisibility = () => setPageVisible(!document.hidden);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { observer.disconnect(); document.removeEventListener('visibilitychange', onVisibility); };
+  }, []);
+
+  // Hero: content lifts and fades, the film pushes in slightly, as the page scrolls away.
+  useEffect(() => {
+    const element = hero.current;
+    if (!element) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const p = Math.min(1, Math.max(0, -element.getBoundingClientRect().top / Math.max(1, element.offsetHeight)));
+      element.style.setProperty('--hp', p.toFixed(4));
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+    update();
+    window.addEventListener('scroll', schedule, { passive: true });
+    return () => { window.removeEventListener('scroll', schedule); if (frame) cancelAnimationFrame(frame); };
+  }, []);
+
+  useScrollProgress(statement, (progress) => {
+    statement.current?.style.setProperty('--p', progress.toFixed(4));
+  });
+
+  const toggleMotion = () => {
+    const next = !paused;
+    setPaused(next);
+    try { localStorage.setItem(MOTION_KEY, next ? 'paused' : 'playing'); } catch { /* this visit only */ }
+  };
+  // In-page links glide to their section (and jump straight there when motion is reduced).
+  const toSection = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    const target = document.getElementById(event.currentTarget.hash.slice(1));
+    if (!target) return;
+    event.preventDefault();
+    target.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+    // Keep the router's own history state; only the fragment changes.
+    history.replaceState(history.state, '', event.currentTarget.hash);
+  };
+  const onHeroPointer = (event: React.PointerEvent<HTMLElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.style.setProperty('--mx', `${event.clientX - box.left}px`);
+    event.currentTarget.style.setProperty('--my', `${event.clientY - box.top}px`);
+  };
+
+  const statementWords = lang === 'zh' ? Array.from(copy.statement.text) : copy.statement.text.split(/ |(?=\n)|(?<=\n)/).filter(Boolean);
+  const statementCount = statementWords.filter(word => word !== '\n').length;
 
   return (
-    <div className="bg-paper">
-      <section className="mx-auto max-w-content px-5 pb-20 pt-16 sm:px-8 sm:pb-28 sm:pt-24 lg:pt-28">
-        <h1 className="display max-w-[980px] text-balance text-[42px] leading-[1.04] sm:text-display-lg lg:text-display-xl">
-          Answers from sustainability reports, with the page they came from.
-        </h1>
-        <p className="mt-6 max-w-[34rem] text-[17px] leading-relaxed text-ink-3 sm:text-lg">
-          CausalGraph reads ESG disclosures, maps how claims, metrics and policies connect, and answers your
-          questions with citations back to the source passage.
-        </p>
+    <div ref={root} className={`lp ${motionOn ? '' : 'lp-still'}`} lang={lang === 'zh' ? 'zh-CN' : 'en'}>
+      <section ref={hero} className="lp-hero" aria-labelledby="lp-hero-title" onPointerMove={onHeroPointer}>
+        <HeroVideo playing={motionOn && heroOnScreen && pageVisible} />
+        <div className="lp-hero-shade" aria-hidden="true" />
+        <SparkField active={motionOn && heroOnScreen && pageVisible} />
+        <div className="lp-hero-grid" aria-hidden="true" />
+        <div className="lp-grain" aria-hidden="true" />
 
-        <form
-          className="mt-10 flex max-w-[40rem] items-center gap-2 rounded-xl border border-line-strong bg-white p-1.5 pl-4 shadow-sm transition-[border-color,box-shadow] focus-within:border-ink-4 focus-within:shadow-md"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (question.trim()) openQuestion(question);
-          }}
-        >
-          <input
-            aria-label="Ask a research question"
-            placeholder="Ask about targets, emissions, suppliers or oversight…"
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            maxLength={2000}
-            className="h-10 min-w-0 flex-1 bg-transparent text-[16px] text-ink outline-none placeholder:text-ink-5"
-          />
-          <button
-            type="submit"
-            aria-label="Start research"
-            disabled={!question.trim()}
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ink text-white transition-colors hover:bg-ink-2 disabled:cursor-not-allowed disabled:bg-paper-hover disabled:text-ink-5"
-          >
-            <ArrowUp className="h-[18px] w-[18px]" />
-          </button>
-        </form>
-
-        <div className="mt-5 max-w-[40rem]">
-          <div className="section-label">Try asking</div>
-          <ul className="mt-2 space-y-1">
-            {EXAMPLE_QUESTIONS.map((prompt) => (
-              <li key={prompt}>
-                <button
-                  type="button"
-                  onClick={() => openQuestion(prompt)}
-                  className="group inline-flex items-center gap-2 py-0.5 text-left text-[15px] text-ink-3 transition-colors hover:text-ink"
-                >
-                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ink-5 transition-colors group-hover:text-ink" />
-                  {prompt}
-                </button>
-              </li>
-            ))}
+        <div className="lp-hero-inner">
+          <a href="#agents" className="lp-badge" onClick={toSection}>
+            <span className="lp-badge-dot" aria-hidden="true" />
+            {copy.hero.badge}
+            <ArrowRight size={14} aria-hidden="true" />
+          </a>
+          <h1 id="lp-hero-title" className="lp-title" key={lang}>
+            <span className="sr-only">{copy.hero.line1}{lang === 'en' ? ' ' : ''}{copy.hero.line2}</span>
+            <span aria-hidden="true" className="lp-line"><Split text={copy.hero.line1} lang={lang} /></span>
+            <span aria-hidden="true" className="lp-line lp-wipe"><span className="lp-gradient-text">{copy.hero.line2}</span></span>
+          </h1>
+          <p className="lp-reviewing">
+            <span className="lp-live-dot" aria-hidden="true" />
+            <span>{copy.hero.reviewing}</span>
+            <ScrambleWord key={lang} words={copy.hero.words} lang={lang} still={!motionOn} />
+            <span className="sr-only">{copy.hero.words.join(lang === 'zh' ? '、' : ', ')}</span>
+          </p>
+          <p className="lp-sub">{copy.hero.sub}</p>
+          <div className="lp-actions">
+            <Link to="/legal" className="lp-btn lp-btn-primary">
+              <span>{copy.hero.primary}</span>
+              <ArrowRight size={17} aria-hidden="true" />
+            </Link>
+            <a href="#workflow" className="lp-btn lp-btn-ghost" onClick={toSection}>
+              <span className="lp-play" aria-hidden="true"><Play size={12} fill="currentColor" /></span>
+              {copy.hero.secondary}
+            </a>
+          </div>
+          <ul className="lp-chips">
+            {copy.hero.chips.map(chip => <li key={chip}>{chip}</li>)}
           </ul>
         </div>
-      </section>
 
-      <section className="border-t border-line">
-        <div className="mx-auto grid max-w-content gap-10 px-5 py-20 sm:px-8 sm:py-24 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-16">
-          <div className="lg:pt-2">
-            <h2 className="display text-display-sm sm:text-display-md">Every claim points to a passage.</h2>
-            <p className="mt-5 max-w-md leading-relaxed text-ink-3">
-              Answers cite the report passages they rely on. Open a citation to read the passage itself, and see
-              where the reports end and general analysis begins.
-            </p>
-            <Link to="/agent" className="mt-7 inline-flex items-center gap-1.5 text-sm font-medium text-ink hover:gap-2.5 transition-[gap]">
-              Open the research desk <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
-
-          <figure className="m-0">
-            <div className="panel p-5 sm:p-7">
-              <p className="ml-auto w-fit max-w-[90%] rounded-2xl bg-paper-hover px-4 py-2.5 text-[15px] text-ink">
-                How credible are the Scope 2 reduction claims in these two reports?
-              </p>
-              <div className="cg-prose mt-6">
-                <p>
-                  <strong>Orbis Materials</strong> reports a 14% fall in market-based Scope 2 emissions against 2021,
-                  attributed to renewable electricity contracts at eleven sites <Cite n={1} />. Its Scope 3 category 1
-                  figure is spend-based, so year-on-year changes may reflect purchasing volume rather than supplier
-                  progress <Cite n={2} />.
-                </p>
-                <p>
-                  <strong>Halden Foods</strong> sets a 42% absolute reduction target for Scope 1 and 2 by 2030{' '}
-                  <Cite n={3} />, but does not disclose interim progress. Neither report gives location-based figures,
-                  which makes the two claims hard to compare.
-                </p>
-              </div>
-              <div className="mt-6 border-t border-line pt-4">
-                <div className="section-label mb-2">Sources</div>
-                <ol className="space-y-1.5 text-sm">
-                  {EXAMPLE_SOURCES.map((source, index) => (
-                    <li key={`${source.title}-${source.where}`} className="flex min-w-0 items-baseline gap-3">
-                      <span className="w-4 shrink-0 font-mono text-xs text-ink-4">{index + 1}</span>
-                      <span className="truncate text-ink-2">{source.title}</span>
-                      <span className="shrink-0 font-mono text-xs text-ink-4">{source.where}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            </div>
-            <figcaption className="mt-3 text-xs text-ink-4">Example answer. The companies and figures are fictional.</figcaption>
-          </figure>
-        </div>
-      </section>
-
-      <section className="border-t border-line">
-        <div className="mx-auto max-w-content px-5 py-20 sm:px-8 sm:py-24">
-          <h2 className="display text-display-sm sm:text-display-md">How it works</h2>
-          <dl className="mt-10 border-t border-line">
-            {STEPS.map((step) => (
-              <div key={step.title} className="grid gap-2 border-b border-line py-6 md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] md:gap-16">
-                <dt className="text-[17px] font-medium text-ink">{step.title}</dt>
-                <dd className="m-0 max-w-[38rem] leading-relaxed text-ink-3">{step.body}</dd>
+        <div className="lp-hero-foot">
+          <dl className="lp-stats">
+            {copy.hero.stats.map(stat => (
+              <div key={stat.label}>
+                <dt>{stat.label}</dt>
+                <dd><CountUp value={stat.value} still={!motionOn} /></dd>
               </div>
             ))}
           </dl>
-          <div className="mt-10 flex flex-wrap gap-3">
-            <Link to="/agent" className="btn btn-primary">Open the research desk</Link>
-            <Link to="/causal-inference" className="btn btn-secondary">Explore the graph</Link>
-          </div>
+          <a href="#scenarios" className="lp-scroll" aria-label={copy.hero.scroll} onClick={toSection}>
+            <span>{copy.hero.scroll}</span>
+            <ChevronDown size={16} aria-hidden="true" />
+          </a>
+        </div>
+        {/* Outside the footer row: its entrance animation would otherwise anchor the button. */}
+        {!reduced && (
+          <button type="button" className="lp-motion" onClick={toggleMotion} aria-pressed={paused} aria-label={paused ? copy.hero.play : copy.hero.pause} title={paused ? copy.hero.play : copy.hero.pause}>
+            {paused ? <Play size={14} aria-hidden="true" /> : <Pause size={14} aria-hidden="true" />}
+          </button>
+        )}
+      </section>
+
+      <section id="scenarios" className="lp-section lp-scenarios">
+        <header className="lp-head" data-reveal>
+          <p className="lp-eyebrow">{copy.scenarios.eyebrow}</p>
+          <h2><Lines text={copy.scenarios.title} /></h2>
+          <p>{copy.scenarios.sub}</p>
+        </header>
+        <div className="lp-marquees" aria-hidden="true">
+          {[0, 1].map(row => {
+            const words = row ? [...copy.hero.words].reverse() : copy.hero.words;
+            return (
+              <div key={row} className={`lp-marquee ${row ? 'is-reverse' : ''}`}>
+                <div className="lp-marquee-track">
+                  {[...words, ...words].map((word, i) => <span key={i} className="lp-pill"><i />{word}</span>)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="sr-only">{copy.hero.words.join(lang === 'zh' ? '、' : ', ')}</p>
+      </section>
+
+      <section id="agents" className="lp-section lp-agents">
+        <header className="lp-head" data-reveal>
+          <p className="lp-eyebrow">{copy.agents.eyebrow}</p>
+          <h2><Lines text={copy.agents.title} /></h2>
+          <p>{copy.agents.sub}</p>
+        </header>
+        <div data-reveal>
+          <AgentNetwork agents={copy.agents.list} feed={copy.agents.feed} center={copy.agents.center}
+            feedTitle={copy.agents.feedTitle} caption={copy.agents.caption} still={!motionOn} />
         </div>
       </section>
 
-      <section className="border-t border-line bg-paper-sunken">
-        <div className="mx-auto flex max-w-content flex-col gap-6 px-5 py-14 sm:px-8 md:flex-row md:items-center md:justify-between">
-          <div className="max-w-xl">
-            <h2 className="text-lg font-medium text-ink">CausalGraph Pet for Mac</h2>
-            <p className="mt-1.5 leading-relaxed text-ink-3">
-              A small desktop assistant. Drop a report or a screenshot on it and ask a question without leaving what
-              you are working on.
+      <section id="workflow" className="lp-section lp-workflow">
+        <header className="lp-head" data-reveal>
+          <p className="lp-eyebrow">{copy.workflow.eyebrow}</p>
+          <h2><Lines text={copy.workflow.title} /></h2>
+        </header>
+        <WorkflowStory copy={copy.workflow} agents={copy.agents.list} />
+      </section>
+
+      <section id="capabilities" className="lp-section lp-capabilities">
+        <header className="lp-head" data-reveal>
+          <p className="lp-eyebrow">{copy.capabilities.eyebrow}</p>
+          <h2><Lines text={copy.capabilities.title} /></h2>
+        </header>
+        <Capabilities items={copy.capabilities.list} lang={lang} />
+      </section>
+
+      <section className="lp-statement-wrap" aria-label={copy.statement.text.replace('\n', lang === 'zh' ? '' : ' ')}>
+        <div ref={statement} className="lp-statement" style={{ '--n': statementCount } as React.CSSProperties}>
+          <div className="lp-statement-sticky">
+            <p className="lp-statement-text" aria-hidden="true">
+              {(() => {
+                let n = 0;
+                return statementWords.map((word, i) => (word === '\n'
+                  ? <br key={i} />
+                  : <span key={i} style={{ '--i': n++ } as React.CSSProperties}>{word}{lang === 'en' ? ' ' : ''}</span>));
+              })()}
             </p>
+            <p className="lp-statement-sub">{copy.statement.sub}</p>
           </div>
-          <Link to="/desktop" className="btn btn-secondary shrink-0 self-start md:self-auto">
-            Download for macOS
-          </Link>
         </div>
       </section>
 
-      <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-content flex-col gap-6 px-5 py-10 text-sm sm:px-8 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3 text-ink-4">
-            <BrandLogo size="sm" showText={false} />
-            <span>CausalGraph · Built in Australia</span>
+      <section className="lp-cta" aria-labelledby="lp-cta-title">
+        <div className="lp-aurora" aria-hidden="true"><i /><i /><i /></div>
+        <div className="lp-cta-inner" data-reveal>
+          <h2 id="lp-cta-title"><Lines text={copy.cta.title} /></h2>
+          <p>{copy.cta.sub}</p>
+          <div className="lp-actions is-center">
+            <Link to="/legal" className="lp-btn lp-btn-primary"><span>{copy.cta.primary}</span><ArrowRight size={17} aria-hidden="true" /></Link>
+            <Link to="/agent" className="lp-btn lp-btn-ghost">{copy.cta.secondary}<ArrowUpRight size={15} aria-hidden="true" /></Link>
           </div>
-          <nav className="flex flex-wrap gap-x-6 gap-y-2 text-ink-3" aria-label="Footer">
-            <Link to="/agent" className="hover:text-ink">Research desk</Link>
-            <Link to="/causal-inference" className="hover:text-ink">Graph</Link>
-            <Link to="/desktop" className="hover:text-ink">Desktop</Link>
-            <Link to="/legal" className="hover:text-ink">法务 Agent</Link>
-            <Link to="/about" className="hover:text-ink">Company</Link>
-            <a href={githubRepositoryUrl} target="_blank" rel="noreferrer" className="hover:text-ink">GitHub</a>
+        </div>
+      </section>
+
+      <footer className="lp-footer">
+        <div className="lp-footer-inner">
+          <div className="lp-footer-brand">
+            <Link to="/" aria-label="CausalGraph"><BrandLogo size="md" tone="dark" /></Link>
+            <p>{copy.footer.tagline}</p>
+            <LanguageSwitch tone="dark" />
+          </div>
+          <nav aria-label={copy.footer.product}>
+            <h3>{copy.footer.product}</h3>
+            <Link to="/legal">{copy.footer.links.legal}</Link>
+            <Link to="/agent">{copy.footer.links.research}</Link>
+            <Link to="/causal-inference">{copy.footer.links.graph}</Link>
+            <Link to="/desktop">{copy.footer.links.desktop}</Link>
           </nav>
+          <nav aria-label={copy.footer.company}>
+            <h3>{copy.footer.company}</h3>
+            <Link to="/about">{copy.footer.links.about}</Link>
+            <a href={githubRepositoryUrl} target="_blank" rel="noreferrer">GitHub</a>
+          </nav>
+        </div>
+        <div className="lp-footer-base">
+          <span>{copy.footer.disclaimer}</span>
+          <span>© {YEAR} CausalGraph · {copy.footer.built}</span>
         </div>
       </footer>
     </div>

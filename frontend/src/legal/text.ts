@@ -1,4 +1,5 @@
 import type { Block } from './types';
+import { currentLang, pick, type Lang } from '../i18n/core';
 
 /** Placeholders written by the backend redactor, e.g. 【脱敏1】 and 【补充脱敏2】. */
 const TOKEN = /【(?:补充)?脱敏\d+】/g;
@@ -35,10 +36,10 @@ export function truncateText(text: string, max: number): string {
 const HEADING = /^(第[一二三四五六七八九十百千零〇两\d]+[条章节款]|[一二三四五六七八九十]+[、.]|\d+(?:\.\d+)*[、.．])/;
 
 /** A reader-facing name for a paragraph: its clause heading when it has one. */
-export function clauseLabel(block: Pick<Block, 'id' | 'text'> | undefined, max = 18): string {
+export function clauseLabel(block: Pick<Block, 'id' | 'text'> | undefined, max = 18, lang: Lang = currentLang()): string {
   if (!block) return '';
   const first = block.text.trim().split('\n')[0].trim();
-  if (!first) return `第 ${block.id} 段`;
+  if (!first) return pick(`第 ${block.id} 段`, `Paragraph ${block.id}`, lang);
   if (HEADING.test(first)) return truncateText(first, 24);
   return truncateText(first, max);
 }

@@ -1,3 +1,4 @@
+import { setCurrentLang } from '../i18n/core';
 import { modelDisplayName, parseModelStatus } from './modelStatus';
 
 const valid = {
@@ -9,6 +10,9 @@ const valid = {
 };
 
 describe('model configuration, never an inferred connection', () => {
+  beforeEach(() => setCurrentLang('en'));
+  afterEach(() => setCurrentLang('zh'));
+
   it('accepts explicit false and true configuration states', () => {
     expect(parseModelStatus(valid)?.modes.deep.thinking).toBe(true);
     expect(parseModelStatus({ ...valid, configured: false })?.configured).toBe(false);
@@ -28,5 +32,10 @@ describe('model configuration, never an inferred connection', () => {
     expect(modelDisplayName('qwen-max')).toBe('Qwen Max');
     expect(modelDisplayName('constructor-x')).toBe('constructor-x');
     expect(modelDisplayName('-')).toBe('-');
+  });
+  it('keeps model names as they are in Chinese and translates only the missing state', () => {
+    setCurrentLang('zh');
+    expect(modelDisplayName('deepseek-v4-pro')).toBe('DeepSeek V4 Pro');
+    expect(modelDisplayName('')).toBe('未配置模型');
   });
 });

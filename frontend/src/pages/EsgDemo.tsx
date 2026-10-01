@@ -2,6 +2,7 @@ import { apiBase as restoredApiBase } from '../api/config';
 import { withAuth } from '../api/client';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { pick, useI18n } from '../i18n/core';
 import type { RagResponse, RagStreamEvent } from '../types/api';
 import useDocumentTitle from '../utils/useDocumentTitle';
 
@@ -20,12 +21,18 @@ The board's governance policy requires quarterly oversight of climate risk and d
 
 const SAMPLE_QUESTION = 'What renewable electricity target and emissions change did NVIDIA report?';
 
+// Service names are also the list keys, so the English name is stored and the Chinese one shown.
+const SERVICE_NAMES_ZH: Record<string, string> = {
+  'Evidence API': '证据 API',
+  'Application API': '应用 API',
+};
+
 const readSseEvents = async (
   response: Response,
   onEvent: (event: RagStreamEvent) => void,
 ): Promise<void> => {
   if (!response.body) {
-    throw new Error('Streaming response body is empty');
+    throw new Error(pick('流式响应内容为空', 'Streaming response body is empty'));
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -67,7 +74,8 @@ const EsgDemo: React.FC = () => {
   const [ragLoading, setRagLoading] = useState(false);
   const [ragResult, setRagResult] = useState<(Partial<RagResponse> & { error?: string; message?: string }) | null>(null);
   const [activeDemoTab, setActiveDemoTab] = useState<'ask' | 'extract'>('ask');
-  useDocumentTitle('Pipeline check');
+  const { tx } = useI18n();
+  useDocumentTitle(tx('链路检查', 'Pipeline check'));
 
   const serviceTargets = useMemo(
     () => [
@@ -115,7 +123,7 @@ const EsgDemo: React.FC = () => {
       });
       if (!response.ok) {
         const payload = await response.json();
-        throw new Error(payload?.message || payload?.error || 'Streaming request failed');
+        throw new Error(payload?.message || payload?.error || pick('流式请求失败', 'Streaming request failed'));
       }
       let partialAnswer = '';
       let latestPayload: Partial<RagResponse> = { answer: '', sources: [] };
@@ -149,7 +157,7 @@ const EsgDemo: React.FC = () => {
           return;
         }
         if (event.type === 'error') {
-          throw new Error(event.message || 'Streaming request failed');
+          throw new Error(event.message || pick('流式请求失败', 'Streaming request failed'));
         }
       });
     } catch (error) {
@@ -157,7 +165,7 @@ const EsgDemo: React.FC = () => {
         answer: '',
         sources: [],
         error: 'request_failed',
-        message: error instanceof Error ? error.message : 'Network error',
+        message: error instanceof Error ? error.message : pick('网络错误', 'Network error'),
       });
     } finally {
       setRagLoading(false);
@@ -165,25 +173,27 @@ const EsgDemo: React.FC = () => {
   };
 
   const statusDot = (ok: boolean | null) => (ok === null ? 'bg-line-strong' : ok ? 'bg-ok' : 'bg-err');
-  const statusText = (ok: boolean | null) => (ok === null ? 'Checking' : ok ? 'Online' : 'Offline');
+  const statusText = (ok: boolean | null) => (ok === null ? tx('检测中', 'Checking') : ok ? tx('在线', 'Online') : tx('离线', 'Offline'));
 
   return (
     <div className="mx-auto max-w-content px-5 pb-24 pt-10 sm:px-8 lg:pt-14">
       <header className="max-w-2xl">
-        <h1 className="page-title">Pipeline check</h1>
+        <h1 className="page-title">{tx('链路检查', 'Pipeline check')}</h1>
         <p className="mt-1 text-sm leading-6 text-ink-3">
-          Check that the services respond, open the research upload desk, and run an authenticated cited query
-          against the active report index. Intended for development and demos.
+          {tx(
+            '检查各项服务是否正常响应，进入研究工作台上传文档，并以登录身份对当前报告索引发起一次带引用的查询。仅用于开发和演示。',
+            'Check that the services respond, open the research upload desk, and run an authenticated cited query against the active report index. Intended for development and demos.',
+          )}
         </p>
       </header>
 
       <section className="mt-8">
-        <h2 className="text-base font-semibold text-ink">Services</h2>
+        <h2 className="text-base font-semibold text-ink">{tx('服务', 'Services')}</h2>
         <ul className="mt-3 divide-y divide-line border-y border-line">
           {health.map((item) => (
             <li key={item.label} className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 py-3 text-sm">
               <div className="min-w-0">
-                <div className="font-medium text-ink">{item.label}</div>
+                <div className="font-medium text-ink">{tx(SERVICE_NAMES_ZH[item.label] ?? item.label, item.label)}</div>
                 <div className="truncate font-mono text-xs text-ink-4">{item.url}</div>
               </div>
               <span className="inline-flex items-center gap-1.5 text-ink-2">
@@ -197,11 +207,11 @@ const EsgDemo: React.FC = () => {
 
       <section className="mt-12">
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <h2 className="text-base font-semibold text-ink">Try the pipeline</h2>
-          <div className="segmented" role="tablist" aria-label="Pipeline step">
+          <h2 className="text-base font-semibold text-ink">{tx('试运行链路', 'Try the pipeline')}</h2>
+          <div className="segmented" role="tablist" aria-label={tx('链路步骤', 'Pipeline step')}>
             {[
-              { id: 'ask', label: 'Ask a question' },
-              { id: 'extract', label: 'Extract entities' },
+              { id: 'ask', label: tx('提问', 'Ask a question') },
+              { id: 'extract', label: tx('抽取实体', 'Extract entities') },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -220,32 +230,37 @@ const EsgDemo: React.FC = () => {
           {activeDemoTab === 'extract' ? (
             <>
               <div>
-                <label className="field-label" htmlFor="demo-extract-text">Passage</label>
+                <label className="field-label" htmlFor="demo-extract-text">{tx('段落', 'Passage')}</label>
                 <textarea
                   id="demo-extract-text"
                   value={extractText}
                   onChange={(e) => setExtractText(e.target.value)}
                   className="input min-h-[260px] resize-y text-sm"
                 />
-                <p className="mt-4 text-sm text-ink-3">The old standalone extraction endpoint is no longer exposed. Use the authenticated research desk to upload and query reports.</p>
-                <a href="/agent" className="btn btn-primary mt-4">Open research desk</a>
+                <p className="mt-4 text-sm text-ink-3">
+                  {tx(
+                    '旧版独立抽取接口已不再开放。请在需要登录的研究工作台中上传并查询报告。',
+                    'The old standalone extraction endpoint is no longer exposed. Use the authenticated research desk to upload and query reports.',
+                  )}
+                </p>
+                <a href="/agent" className="btn btn-primary mt-4">{tx('打开研究工作台', 'Open research desk')}</a>
               </div>
               <div className="rounded-xl border border-line bg-white p-4">
-                <h3 className="text-sm font-medium text-ink">Result</h3>
+                <h3 className="text-sm font-medium text-ink">{tx('结果', 'Result')}</h3>
                 <dl className="mt-3 grid grid-cols-2 gap-4">
                   <div>
-                    <dt className="text-xs text-ink-4">Entities</dt>
+                    <dt className="text-xs text-ink-4">{tx('实体', 'Entities')}</dt>
                     <dd className="mt-0.5 text-2xl font-medium tabular-nums text-ink">{extractResult?.entities?.length || 0}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs text-ink-4">Relationships</dt>
+                    <dt className="text-xs text-ink-4">{tx('关系', 'Relationships')}</dt>
                     <dd className="mt-0.5 text-2xl font-medium tabular-nums text-ink">{extractResult?.relations?.length || 0}</dd>
                   </div>
                 </dl>
                 <details className="mt-4 border-t border-line pt-3">
-                  <summary className="cursor-pointer text-sm text-ink-3 hover:text-ink">Raw JSON</summary>
+                  <summary className="cursor-pointer text-sm text-ink-3 hover:text-ink">{tx('原始 JSON', 'Raw JSON')}</summary>
                   <pre className="mt-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-lg bg-paper-sunken p-3 text-xs leading-5 text-ink-2">
-                    {extractResult ? JSON.stringify(extractResult, null, 2) : 'Run the extraction to see the raw output.'}
+                    {extractResult ? JSON.stringify(extractResult, null, 2) : tx('运行抽取后即可查看原始输出。', 'Run the extraction to see the raw output.')}
                   </pre>
                 </details>
               </div>
@@ -253,7 +268,7 @@ const EsgDemo: React.FC = () => {
           ) : (
             <>
               <div>
-                <label className="field-label" htmlFor="demo-question">Question</label>
+                <label className="field-label" htmlFor="demo-question">{tx('问题', 'Question')}</label>
                 <textarea
                   id="demo-question"
                   value={question}
@@ -262,23 +277,26 @@ const EsgDemo: React.FC = () => {
                 />
                 <button type="button" onClick={runRag} disabled={ragLoading} className="btn btn-primary mt-4">
                   {ragLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {ragLoading ? 'Retrieving…' : 'Ask'}
+                  {ragLoading ? tx('检索中…', 'Retrieving…') : tx('提问', 'Ask')}
                 </button>
               </div>
               <div className="rounded-xl border border-line bg-white p-4">
                 <div className="flex items-baseline justify-between gap-3">
-                  <h3 className="text-sm font-medium text-ink">Answer</h3>
+                  <h3 className="text-sm font-medium text-ink">{tx('回答', 'Answer')}</h3>
                   <span className="text-xs text-ink-4">
-                    {Array.isArray(ragResult?.sources) ? ragResult.sources.length : 0} sources
+                    {tx(
+                      `${Array.isArray(ragResult?.sources) ? ragResult.sources.length : 0} 个来源`,
+                      `${Array.isArray(ragResult?.sources) ? ragResult.sources.length : 0} sources`,
+                    )}
                   </span>
                 </div>
                 <p className="mt-3 min-h-[120px] whitespace-pre-wrap text-sm leading-6 text-ink-2">
-                  {ragResult?.message || ragResult?.answer || 'Ask the sample question to see a cited answer.'}
+                  {ragResult?.message || ragResult?.answer || tx('提交示例问题，即可查看带引用的回答。', 'Ask the sample question to see a cited answer.')}
                 </p>
                 <details className="mt-4 border-t border-line pt-3">
-                  <summary className="cursor-pointer text-sm text-ink-3 hover:text-ink">Raw JSON</summary>
+                  <summary className="cursor-pointer text-sm text-ink-3 hover:text-ink">{tx('原始 JSON', 'Raw JSON')}</summary>
                   <pre className="mt-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-lg bg-paper-sunken p-3 text-xs leading-5 text-ink-2">
-                    {ragResult ? JSON.stringify(ragResult, null, 2) : 'Run a query to see the raw output.'}
+                    {ragResult ? JSON.stringify(ragResult, null, 2) : tx('运行查询后即可查看原始输出。', 'Run a query to see the raw output.')}
                   </pre>
                 </details>
               </div>

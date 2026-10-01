@@ -35,12 +35,14 @@ import {
   X,
 } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
+import LanguageSwitch from '../components/LanguageSwitch';
 import ModelStatus from '../components/ModelStatus';
 import WorkbenchWelcome from '../components/WorkbenchWelcome';
 import { ApiError, apiFetch, jsonRequest } from '../api/client';
 import { apiBase } from '../api/config';
 import { openEventStream, readSseEvents } from '../api/sse';
 import { useAuth } from '../contexts/AuthContext';
+import { currentLang, pick, useI18n } from '../i18n/core';
 import useDocumentTitle from '../utils/useDocumentTitle';
 import { DOCUMENT_CATEGORIES, documentCategoryLabel } from '../utils/documentCategories';
 import type {
@@ -84,6 +86,13 @@ import {
   formatAgentTraceSummary,
   mergeAgentTraceSteps,
 } from './agent/agentTraceUi';
+import {
+  formatDuplicateMatch,
+  formatUploadBanner,
+  formatUploadButtonLabel,
+  formatUploadMessage,
+  formatUploadProgress,
+} from './agent/uploadUi';
 
 type Document = DocumentSummary;
 
@@ -114,7 +123,7 @@ const getDocumentCompanyTerms = (doc: Document): Set<string> => new Set(extractQ
 
 const formatDocumentDate = (value?: string) => {
   const date = new Date(value || '');
-  return value && !Number.isNaN(date.getTime()) ? date.toLocaleDateString() : '—';
+  return value && !Number.isNaN(date.getTime()) ? date.toLocaleDateString(currentLang() === 'zh' ? 'zh-CN' : undefined) : '—';
 };
 
 const shouldPreferSelectedDocument = (query: string, selectedDocument: Document | null, documents: Document[]) => {
@@ -158,12 +167,12 @@ const isChatMemoryUnavailableError = (error: unknown) => {
   return message.toLowerCase().includes('chat_memory_unavailable') || message.toLowerCase().includes('chat memory is unavailable');
 };
 
-const FEEDBACK_REASON_OPTIONS: Array<{ tag: FeedbackReasonTag; label: string }> = [
-  { tag: 'missing_evidence', label: 'Missing evidence' },
-  { tag: 'wrong_citation', label: 'Wrong citation' },
-  { tag: 'hallucination', label: 'Hallucination' },
-  { tag: 'irrelevant', label: 'Irrelevant' },
-  { tag: 'other', label: 'Other' },
+const FEEDBACK_REASON_OPTIONS: Array<{ tag: FeedbackReasonTag; label: readonly [zh: string, en: string] }> = [
+  { tag: 'missing_evidence', label: ['缺少证据', 'Missing evidence'] },
+  { tag: 'wrong_citation', label: ['引用有误', 'Wrong citation'] },
+  { tag: 'hallucination', label: ['编造内容', 'Hallucination'] },
+  { tag: 'irrelevant', label: ['答非所问', 'Irrelevant'] },
+  { tag: 'other', label: ['其他', 'Other'] },
 ];
 
 interface FeedbackDraft {
@@ -228,6 +237,7 @@ const AnswerWarningBadge: React.FC<{
   partial?: boolean;
   partialReason?: string | null;
 }> = ({ partial, partialReason }) => {
+  useI18n();
   if (!partial) return null;
   return (
     <span
@@ -256,13 +266,16 @@ const formatTraceDuration = (step: AgentTraceStep) => {
 };
 
 // Short, human phrasing for each trace step: present tense while it runs,
-// past tense once it is done.
-const describeStep = (step: AgentTraceStep, running: string, done: string, failed?: string) => {
+// past tense once it is done. `zh` is the bare action ("检索文档"), which is
+// shown as 正在…, 已… or 待执行：… in Chinese.
+type StepPhrase = { zh: string; running: string; done: string; failed?: readonly [zh: string, en: string] };
+
+const describeStep = (step: AgentTraceStep, { zh, running, done, failed }: StepPhrase) => {
   const status = getTraceStatus(step);
-  if (status === 'running') return running;
-  if (status === 'failed') return failed || `${running} failed`;
-  if (status === 'planned' || status === 'pending') return `Queued: ${running.charAt(0).toLowerCase()}${running.slice(1)}`;
-  return done;
+  if (status === 'running') return pick(`正在${zh}`, running);
+  if (status === 'failed') return failed ? pick(...failed) : pick(`${zh}失败`, `${running} failed`);
+  if (status === 'planned' || status === 'pending') return pick(`待执行：${zh}`, `Queued: ${running.charAt(0).toLowerCase()}${running.slice(1)}`);
+  return pick(`已${zh}`, done);
 };
 
 const formatTraceEventTitle = (step: AgentTraceStep) => {
@@ -271,26 +284,32 @@ const formatTraceEventTitle = (step: AgentTraceStep) => {
   const tool = String(step.tool || '').trim();
   const expectedEntity = getTraceMetaValue(step, 'expected_entity');
 
-  if (stage === 'routing') return describeStep(step, 'Reading the question', 'Read the question');
-  if (stage === 'context_ready') return describeStep(step, 'Gathering passages', 'Gathered passages');
-  if (stage === 'planning') return describeStep(step, 'Planning the search', 'Planned the search');
-  if (stage === 'generating') return describeStep(step, 'Writing the answer', 'Wrote the answer');
+  if (stage === 'routing') return describeStep(step, { zh: '理解问题', running: 'Reading the question', done: 'Read the question' });
+  if (stage === 'context_ready') return describeStep(step, { zh: '收集段落', running: 'Gathering passages', done: 'Gathered passages' });
+  if (stage === 'planning') return describeStep(step, { zh: '规划检索', running: 'Planning the search', done: 'Planned the search' });
+  if (stage === 'generating') return describeStep(step, { zh: '撰写回答', running: 'Writing the answer', done: 'Wrote the answer' });
 
-  if (phase === 'plan') return 'Planned the search';
-  if (phase === 'thought' && tool === 'search_documents' && expectedEntity) return `Decided to search for ${expectedEntity}`;
-  if (phase === 'thought' && tool === 'search_documents') return 'Decided to search the documents';
-  if (phase === 'thought' && (tool === 'get_graph_context' || tool === 'query_neo4j')) return 'Decided to check the graph';
-  if (phase === 'thought' && tool === 'summarize_evidence') return 'Decided to summarise the evidence';
-  if (phase === 'thought') return 'Chose the next step';
+  if (phase === 'plan') return pick('已规划检索', 'Planned the search');
+  if (phase === 'thought' && tool === 'search_documents' && expectedEntity) return pick(`决定检索“${expectedEntity}”`, `Decided to search for ${expectedEntity}`);
+  if (phase === 'thought' && tool === 'search_documents') return pick('决定检索文档', 'Decided to search the documents');
+  if (phase === 'thought' && (tool === 'get_graph_context' || tool === 'query_neo4j')) return pick('决定核对图谱', 'Decided to check the graph');
+  if (phase === 'thought' && tool === 'summarize_evidence') return pick('决定汇总证据', 'Decided to summarise the evidence');
+  if (phase === 'thought') return pick('已确定下一步', 'Chose the next step');
 
-  if (tool === 'search_documents') return describeStep(step, 'Searching the documents', 'Searched the documents', 'Document search failed');
-  if (tool === 'read_chunks') return describeStep(step, 'Reading passages', 'Read passages', 'Reading passages failed');
-  if (tool === 'get_graph_context' || tool === 'query_neo4j') return describeStep(step, 'Checking the graph', 'Checked the graph', 'Graph check failed');
-  if (tool === 'summarize_evidence') return describeStep(step, 'Summarising the evidence', 'Summarised the evidence');
-  if (phase === 'reflexion') return 'Checked the evidence covers the question';
-  if (phase === 'replan') return 'Searched again for missing evidence';
-  if (phase === 'observation') return 'Noted what was found';
-  if (phase === 'final') return 'Finished the answer';
+  if (tool === 'search_documents') {
+    return describeStep(step, { zh: '检索文档', running: 'Searching the documents', done: 'Searched the documents', failed: ['文档检索失败', 'Document search failed'] });
+  }
+  if (tool === 'read_chunks') {
+    return describeStep(step, { zh: '阅读段落', running: 'Reading passages', done: 'Read passages', failed: ['段落阅读失败', 'Reading passages failed'] });
+  }
+  if (tool === 'get_graph_context' || tool === 'query_neo4j') {
+    return describeStep(step, { zh: '核对图谱', running: 'Checking the graph', done: 'Checked the graph', failed: ['图谱核对失败', 'Graph check failed'] });
+  }
+  if (tool === 'summarize_evidence') return describeStep(step, { zh: '汇总证据', running: 'Summarising the evidence', done: 'Summarised the evidence' });
+  if (phase === 'reflexion') return pick('已核对证据是否覆盖问题', 'Checked the evidence covers the question');
+  if (phase === 'replan') return pick('已补充检索缺失的证据', 'Searched again for missing evidence');
+  if (phase === 'observation') return pick('已记录检索结果', 'Noted what was found');
+  if (phase === 'final') return pick('已完成回答', 'Finished the answer');
   return formatAgentStageLabel(step);
 };
 
@@ -330,6 +349,8 @@ const getRoutingStrategy = (payload: Partial<RagResponse> & { routing?: Record<s
   String(payload.retrieval_strategy || payload.routing?.strategy || '').trim()
 );
 
+// These steps are saved with the answer, so their summaries are written in English
+// and translated when they are shown (formatAgentTraceSummary).
 const buildPipelineTraceStep = (
   payload: Partial<RagResponse> & { stream_stage?: string; routing?: Record<string, unknown> },
   stepNumber: number,
@@ -412,7 +433,7 @@ const buildPipelineTraceStep = (
     stage,
     tool: null,
     status: 'completed',
-    summary: formatAgentStageLabel({ step: stepNumber, stage, status: 'completed', summary: '' }),
+    summary: formatAgentStageLabel({ step: stepNumber, stage, status: 'completed', summary: '' }, 'en'),
     phase: stage,
   };
 };
@@ -421,6 +442,7 @@ const TraceEvents: React.FC<{
   steps: AgentTraceStep[];
   compact?: boolean;
 }> = ({ steps, compact = false }) => {
+  useI18n();
   const visibleSteps = getVisibleTraceSteps(steps, compact ? 6 : 16);
   if (visibleSteps.length === 0) return null;
 
@@ -494,11 +516,12 @@ const SourceStrip: React.FC<{
   sources: RagSource[];
   onOpen: (sourceNumber?: number) => void;
 }> = ({ sources, onOpen }) => {
+  const { tx } = useI18n();
   if (!sources.length) return null;
   const shown = sources.slice(0, 4);
   return (
     <div className="mt-5">
-      <div className="section-label mb-2">Sources</div>
+      <div className="section-label mb-2">{tx('来源', 'Sources')}</div>
       <div className="cg-scroll -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
         {shown.map((source, index) => (
           <button
@@ -509,7 +532,7 @@ const SourceStrip: React.FC<{
           >
             <span className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-ink-4">
               <span className="text-ink-2">{index + 1}</span>
-              <span className="truncate">{source.chunk_id || 'passage'}</span>
+              <span className="truncate">{source.chunk_id || tx('段落', 'passage')}</span>
             </span>
             <span className="mt-0.5 line-clamp-2 block text-[13px] leading-snug text-ink-2">
               {formatSourceDocumentLabel(source)}
@@ -522,7 +545,7 @@ const SourceStrip: React.FC<{
             onClick={() => onOpen()}
             className="shrink-0 rounded-lg border border-dashed border-line-strong px-3 text-[13px] text-ink-3 transition-colors hover:border-ink-5 hover:text-ink"
           >
-            All {sources.length} sources
+            {tx(`全部 ${sources.length} 个来源`, `All ${sources.length} sources`)}
           </button>
         )}
       </div>
@@ -541,6 +564,7 @@ const AgentWorkspaceDrawer: React.FC<{
   currentLoadingStep: string;
   highlightedSource: number | null;
 }> = ({ open, tab, onTabChange, onClose, steps, sources, isLoading, currentLoadingStep, highlightedSource }) => {
+  const { tx } = useI18n();
   const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open || tab !== 'files' || !highlightedSource) return;
@@ -557,16 +581,16 @@ const AgentWorkspaceDrawer: React.FC<{
     <>
       <button
         type="button"
-        aria-label="Close process drawer"
+        aria-label={tx('关闭过程面板', 'Close process drawer')}
         className="fixed inset-0 z-30 bg-ink/10 xl:hidden"
         onClick={onClose}
       />
       <aside className="fixed inset-y-0 right-0 z-40 flex w-[min(92vw,400px)] min-h-0 shrink-0 flex-col border-l border-line bg-paper shadow-lg xl:static xl:z-auto xl:w-[400px] xl:shadow-none">
         <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-line px-3">
-          <div className="segmented" role="tablist" aria-label="Answer details">
+          <div className="segmented" role="tablist" aria-label={tx('回答详情', 'Answer details')}>
             {([
-              ['process', 'Process'],
-              ['files', sources.length ? `Sources · ${sources.length}` : 'Sources'],
+              ['process', tx('过程', 'Process')],
+              ['files', sources.length ? tx(`来源 · ${sources.length}`, `Sources · ${sources.length}`) : tx('来源', 'Sources')],
             ] as const).map(([id, label]) => (
               <button
                 key={id}
@@ -579,7 +603,7 @@ const AgentWorkspaceDrawer: React.FC<{
               </button>
             ))}
           </div>
-          <button type="button" onClick={onClose} className="icon-btn" aria-label="Close process drawer" title="Close">
+          <button type="button" onClick={onClose} className="icon-btn" aria-label={tx('关闭过程面板', 'Close process drawer')} title={tx('关闭', 'Close')}>
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -594,22 +618,22 @@ const AgentWorkspaceDrawer: React.FC<{
                   <CheckCircle2 className="h-4 w-4 shrink-0 text-ok" />
                 )}
                 <span className="min-w-0 truncate text-sm font-medium text-ink">
-                  {isLoading ? (currentStep ? formatTraceEventTitle(currentStep) : currentLoadingStep) : 'Finished'}
+                  {isLoading ? (currentStep ? formatTraceEventTitle(currentStep) : currentLoadingStep) : tx('已完成', 'Finished')}
                 </span>
-                {stepCount > 0 && <span className="ml-auto shrink-0 text-xs text-ink-4">{stepCount} steps</span>}
+                {stepCount > 0 && <span className="ml-auto shrink-0 text-xs text-ink-4">{tx(`${stepCount} 个步骤`, `${stepCount} steps`)}</span>}
               </div>
 
               <div className="mt-5">
                 {steps.length > 0 ? (
                   <TraceEvents steps={steps} />
                 ) : (
-                  <p className="text-sm text-ink-4">Searching, reading and checking steps will appear here.</p>
+                  <p className="text-sm text-ink-4">{tx('检索、阅读和核对的步骤会显示在这里。', 'Searching, reading and checking steps will appear here.')}</p>
                 )}
               </div>
 
               {fileGroups.length > 0 && (
                 <div className="mt-6 border-t border-line pt-4">
-                  <div className="section-label mb-2">Documents used</div>
+                  <div className="section-label mb-2">{tx('参考文档', 'Documents used')}</div>
                   <ul className="space-y-2">
                     {fileGroups.map(group => (
                       <li key={group.key}>
@@ -620,7 +644,7 @@ const AgentWorkspaceDrawer: React.FC<{
                         >
                           <span className="truncate text-ink-2">{group.title}</span>
                           <span className="shrink-0 font-mono text-[11px] text-ink-4">
-                            {group.items.length} {group.items.length === 1 ? 'passage' : 'passages'}
+                            {tx(`${group.items.length} 个段落`, `${group.items.length} ${group.items.length === 1 ? 'passage' : 'passages'}`)}
                           </span>
                         </button>
                       </li>
@@ -630,7 +654,7 @@ const AgentWorkspaceDrawer: React.FC<{
               )}
             </>
           ) : sources.length === 0 ? (
-            <p className="text-sm text-ink-4">No sources cited yet.</p>
+            <p className="text-sm text-ink-4">{tx('暂无引用来源。', 'No sources cited yet.')}</p>
           ) : (
             <div className="space-y-6">
               {fileGroups.map(group => (
@@ -650,7 +674,7 @@ const AgentWorkspaceDrawer: React.FC<{
                       >
                         <div className="flex min-w-0 items-center gap-2 font-mono text-[11px] text-ink-4">
                           <span className="text-ink-2">{n}</span>
-                          <span className="truncate">{source.chunk_id || 'passage'}</span>
+                          <span className="truncate">{source.chunk_id || tx('段落', 'passage')}</span>
                         </div>
                         {source.text && (
                           <p className="mt-1.5 line-clamp-6 text-[13px] leading-5 text-ink-2">{source.text}</p>
@@ -684,11 +708,12 @@ type AnswerLinkProps = React.ComponentPropsWithoutRef<'a'> & { node?: unknown };
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- `node` is react-markdown's AST node; it must not reach the <a>
 const AnswerLink = ({ href, children, node, ...rest }: AnswerLinkProps) => {
   const openCitation = React.useContext(CitationContext);
+  const { tx } = useI18n();
   const citation = /^#cite-(\d+)$/.exec(href || '');
   if (citation) {
     const sourceNumber = Number(citation[1]);
     return (
-      <button type="button" className="cg-cite" onClick={() => openCitation(sourceNumber)} aria-label={`Source ${sourceNumber}`}>
+      <button type="button" className="cg-cite" onClick={() => openCitation(sourceNumber)} aria-label={tx(`来源 ${sourceNumber}`, `Source ${sourceNumber}`)}>
         {children}
       </button>
     );
@@ -712,6 +737,7 @@ const drawerFitsBesideConversation = () =>
 
 const Agent: React.FC = () => {
   const { isAuthenticated, token, user, logout } = useAuth();
+  const { lang, tx } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = (user?.role || '').toLowerCase() === 'admin';
   const accountPlanLabel = formatAccountPlanLabel(user);
@@ -937,7 +963,7 @@ const Agent: React.FC = () => {
         return;
       }
       console.error('Failed to load chat sessions:', error);
-      setChatSessionsError(error instanceof Error ? error.message : 'Unable to load chat sessions');
+      setChatSessionsError(error instanceof Error ? error.message : pick('无法加载对话记录', 'Unable to load chat sessions'));
       setChatSessions([]);
     } finally {
       setIsChatSessionsLoading(false);
@@ -1043,7 +1069,7 @@ const Agent: React.FC = () => {
       setSelectedDocument(current => (current?.id === detailed.id ? detailed : current));
     } catch (error) {
       console.error('Failed to load document detail:', error);
-      setDocumentsError(error instanceof Error ? error.message : 'Unable to load document detail');
+      setDocumentsError(error instanceof Error ? error.message : pick('无法加载文档详情', 'Unable to load document detail'));
     } finally {
       setLoadingDocumentId(current => (current === document.id ? null : current));
     }
@@ -1089,7 +1115,7 @@ const Agent: React.FC = () => {
         }
       } catch (error) {
         console.error('Failed to load documents from backend:', error);
-        setDocumentsError(error instanceof Error ? error.message : 'Unable to load documents');
+        setDocumentsError(error instanceof Error ? error.message : pick('无法加载文档', 'Unable to load documents'));
         setDocuments([]);
         setSelectedDocument(null);
         persistSelectedDocumentId();
@@ -1180,7 +1206,7 @@ const Agent: React.FC = () => {
           return;
         }
         console.error('Failed to load current chat session:', error);
-        setChatSessionsError(error instanceof Error ? error.message : 'Unable to load chat session');
+        setChatSessionsError(error instanceof Error ? error.message : pick('无法加载对话', 'Unable to load chat session'));
         setConversation([]);
       } finally {
         if (!cancelled) {
@@ -1251,20 +1277,21 @@ const Agent: React.FC = () => {
     const titleToUpload = uploadForm.title.trim();
 
     if (!titleToUpload || (!contentToUpload && !fileToUpload)) {
-      addAgentMessage("Add a title and a file or some text before indexing.", "error");
+      addAgentMessage(pick('请先填写标题，并添加文件或文本，再建立索引。', 'Add a title and a file or some text before indexing.'), "error");
       return;
     }
     if (!isAuthenticated) {
-      addAgentMessage("Sign in to upload documents.", "error");
+      addAgentMessage(pick('请先登录，再上传文档。', 'Sign in to upload documents.'), "error");
       return;
     }
     setIsUploading(true);
     clearUploadStatusTimer();
-    setUploadStatusTitle(fileToUpload?.name || titleToUpload || 'Uploaded document');
+    setUploadStatusTitle(fileToUpload?.name || titleToUpload || pick('已上传的文档', 'Uploaded document'));
     setUploadProgress(1);
     setUploadStage('queued');
+    // Job stages and messages are kept as the API writes them and translated when shown.
     setUploadMessage('Queued for processing');
-    addAgentMessage(`Indexing “${titleToUpload}”. You can keep working while it is processed.`, "processing");
+    addAgentMessage(pick(`正在为“${titleToUpload}”建立索引，处理期间可以继续其他操作。`, `Indexing “${titleToUpload}”. You can keep working while it is processed.`), "processing");
     try {
       const formData = new FormData();
       formData.append('title', titleToUpload);
@@ -1334,8 +1361,14 @@ const Agent: React.FC = () => {
       setUploadMessage(isDuplicate ? 'Duplicate detected; reusing existing document' : 'Document processing complete');
       scheduleUploadStatusDismiss();
       const successMessage = isDuplicate
-        ? `“${completedDocument.title}” is already in your library (matched by ${duplicateMatchedBy || 'content hash'}), so the existing copy will be used.`
-        : `“${completedDocument.title}” is indexed and ready to search: ${finalStats?.chunk_count || 0} passages.`;
+        ? pick(
+          `“${completedDocument.title}”已在文档库中（按${formatDuplicateMatch(duplicateMatchedBy)}匹配），将直接使用已有副本。`,
+          `“${completedDocument.title}” is already in your library (matched by ${formatDuplicateMatch(duplicateMatchedBy)}), so the existing copy will be used.`,
+        )
+        : pick(
+          `“${completedDocument.title}”已建立索引，可以检索了：共 ${finalStats?.chunk_count || 0} 个段落。`,
+          `“${completedDocument.title}” is indexed and ready to search: ${finalStats?.chunk_count || 0} passages.`,
+        );
       addAgentMessage(successMessage, "success");
       setActiveTab('documents');
       setSelectedDocument(completedDocument);
@@ -1350,8 +1383,8 @@ const Agent: React.FC = () => {
         setUploadProgress(current => Math.max(current, 100));
         addAgentMessage(
           rejected
-            ? `The upload was rejected: ${message}`
-            : `The upload didn’t finish: ${message}`,
+            ? pick(`上传被拒绝：${formatUploadMessage(message)}`, `The upload was rejected: ${message}`)
+            : pick(`上传未完成：${formatUploadMessage(message)}`, `The upload didn’t finish: ${message}`),
           "error"
         );
       } finally {
@@ -1583,7 +1616,7 @@ const Agent: React.FC = () => {
             }
             const finalAnswer = typeof event.payload.answer === 'string' && event.payload.answer.trim()
               ? event.payload.answer
-              : streamedAnswer || 'The system could not find enough grounded information to answer that question.';
+              : streamedAnswer || pick('系统未能找到足够的依据来回答这个问题。', 'The system could not find enough grounded information to answer that question.');
             updateStreamingMessage(finalAnswer, {
               mode: event.payload.mode || 'ask',
               backend: event.payload.backend,
@@ -1600,7 +1633,7 @@ const Agent: React.FC = () => {
             return;
           }
           if (event.type === 'error') {
-            throw new Error(event.message || 'RAG stream failed');
+            throw new Error(event.message || pick('RAG 流式响应失败', 'RAG stream failed'));
           }
         });
       } finally {
@@ -1611,7 +1644,7 @@ const Agent: React.FC = () => {
       }
 
       if (!finalPayload) {
-        throw new Error('RAG stream ended before completion');
+        throw new Error(pick('RAG 流式响应在完成前中断', 'RAG stream ended before completion'));
       }
 
       if (sessionId) {
@@ -1625,8 +1658,11 @@ const Agent: React.FC = () => {
     } catch (error) {
       console.error('RAG query error:', error);
       const content = error instanceof Error
-        ? `Couldn’t finish the answer: ${error.message}`
-        : `Couldn’t reach the research service at ${apiBase() || 'the configured API'}. Check that the API is running.`;
+        ? pick(`未能完成回答：${error.message}`, `Couldn’t finish the answer: ${error.message}`)
+        : pick(
+          `无法连接研究服务（${apiBase() || '已配置的 API'}），请确认 API 正在运行。`,
+          `Couldn’t reach the research service at ${apiBase() || 'the configured API'}. Check that the API is running.`,
+        );
       if (sessionId) {
         await addAgentMessageToSession(sessionId, content, 'error');
       } else {
@@ -1770,13 +1806,15 @@ const Agent: React.FC = () => {
     } catch (error) {
       console.error('Delete chat session failed:', error);
       addAgentMessage(
-        error instanceof Error ? `Couldn’t delete the conversation: ${error.message}` : 'Couldn’t delete the conversation.',
+        error instanceof Error
+          ? pick(`无法删除对话：${error.message}`, `Couldn’t delete the conversation: ${error.message}`)
+          : pick('无法删除对话。', 'Couldn’t delete the conversation.'),
         'error'
       );
     }
   };
   const deleteDocument = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this document?')) {
+    if (!window.confirm(pick('确定要删除这份文档吗？', 'Are you sure you want to delete this document?'))) {
       return;
     }
 
@@ -1793,11 +1831,13 @@ const Agent: React.FC = () => {
           void selectDocument(nextSelected);
         }
       }
-      addAgentMessage("Document deleted.");
+      addAgentMessage(pick('文档已删除。', 'Document deleted.'));
     } catch (error) {
       console.error('Delete document failed:', error);
       addAgentMessage(
-        error instanceof Error ? `Couldn’t delete the document: ${error.message}` : 'Couldn’t delete the document.',
+        error instanceof Error
+          ? pick(`无法删除文档：${error.message}`, `Couldn’t delete the document: ${error.message}`)
+          : pick('无法删除文档。', 'Couldn’t delete the document.'),
         "error"
       );
     }
@@ -1806,7 +1846,8 @@ const Agent: React.FC = () => {
     console.log('File upload triggered:', file.name, file.type, file.size);
     const maxSize = 50 * 1024 * 1024;
     if (file.size > maxSize) {
-      addAgentMessage(`That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 50 MB.`, "error");
+      const sizeMb = (file.size / 1024 / 1024).toFixed(1);
+      addAgentMessage(pick(`该文件大小为 ${sizeMb} MB，超过了 50 MB 的上限。`, `That file is ${sizeMb} MB. The limit is 50 MB.`), "error");
       return;
     }
 
@@ -1827,7 +1868,10 @@ const Agent: React.FC = () => {
 
       if (!supported) {
         console.log('Unsupported file type:', file.type);
-        throw new Error(`Unsupported file type: ${file.type}. Supported formats: PDF, Word (.doc/.docx), Text (.txt), RTF (.rtf)`);
+        throw new Error(pick(
+          `不支持的文件类型：${file.type}。支持的格式：PDF、Word（.doc/.docx）、纯文本（.txt）、RTF（.rtf）`,
+          `Unsupported file type: ${file.type}. Supported formats: PDF, Word (.doc/.docx), Text (.txt), RTF (.rtf)`,
+        ));
       }
 
       const preview = lowerName.endsWith('.txt') || file.type === 'text/plain'
@@ -1841,10 +1885,11 @@ const Agent: React.FC = () => {
           title: inferredTitle
         }));
       }
-      addAgentMessage(`“${file.name}” is ready. Select “Index this document” to process it.`, "success");
+      addAgentMessage(pick(`“${file.name}”已就绪，点击“建立索引”开始处理。`, `“${file.name}” is ready. Select “Index this document” to process it.`), "success");
     } catch (error) {
       console.error('File processing error:', error);
-      addAgentMessage(`Couldn’t read that file: ${error instanceof Error ? error.message : 'unknown error'}. Try a different file.`, "error");
+      const reason = error instanceof Error ? error.message : pick('未知错误', 'unknown error');
+      addAgentMessage(pick(`无法读取该文件：${reason}。请换一个文件再试。`, `Couldn’t read that file: ${reason}. Try a different file.`), "error");
       setUploadedFile(null);
     } finally {
       setIsProcessingFile(false);
@@ -1853,7 +1898,7 @@ const Agent: React.FC = () => {
 
   const handleUploadEntry = () => {
     if (!isAuthenticated) {
-      addAgentMessage("Sign in to upload documents.", "error");
+      addAgentMessage(pick('请先登录，再上传文档。', 'Sign in to upload documents.'), "error");
       return;
     }
     setActiveTab('upload');
@@ -1861,9 +1906,9 @@ const Agent: React.FC = () => {
 
   const totalDocuments = documents.length;
   const agentStarterCards: Array<{ title: string; prompt: string; tier: RagReasoningMode }> = [
-    { title: '总结', prompt: '总结这份合同的关键条款', tier: 'flash' },
-    { title: '评估风险', prompt: '违约责任条款有哪些风险？', tier: 'deep' },
-    { title: '对比', prompt: '对比两份合同的付款条件', tier: 'flash' },
+    { title: tx('总结', 'Summarise'), prompt: tx('总结这份合同的关键条款', 'Summarise the key terms of this contract'), tier: 'flash' },
+    { title: tx('评估风险', 'Assess risk'), prompt: tx('违约责任条款有哪些风险？', 'What risks do the liability-for-breach clauses carry?'), tier: 'deep' },
+    { title: tx('对比', 'Compare'), prompt: tx('对比两份合同的付款条件', 'Compare the payment terms of the two contracts'), tier: 'flash' },
   ];
   const selectedQueryDocuments = queryDocumentIds
     .map((id) => documents.find((doc) => doc.id === id))
@@ -1878,23 +1923,23 @@ const Agent: React.FC = () => {
   const scopedDocumentCount = effectiveQueryDocumentIds.length;
   const queryScopeLabel =
     queryScopeMode === 'all'
-      ? 'All documents'
+      ? tx('全部文档', 'All documents')
       : scopedDocumentCount > 0
-        ? `${scopedDocumentCount} selected`
-        : 'Current document';
+        ? tx(`已选 ${scopedDocumentCount} 份`, `${scopedDocumentCount} selected`)
+        : tx('当前文档', 'Current document');
   const queryScopeDetail =
     queryScopeMode === 'all'
-      ? `${totalDocuments} documents available`
+      ? tx(`共 ${totalDocuments} 份可用文档`, `${totalDocuments} documents available`)
       : selectedQueryDocuments.length > 0
-        ? selectedQueryDocuments.map((doc) => doc.title).join(', ')
-        : selectedDocument?.title || 'No document selected';
+        ? selectedQueryDocuments.map((doc) => doc.title).join(tx('、', ', '))
+        : selectedDocument?.title || tx('未选择文档', 'No document selected');
   const loadingSteps = getLoadingSteps(tier);
   const currentLoadingStep = loadingSteps[Math.min(loadingStepIndex, loadingSteps.length - 1)];
   const showLongWaitHint = isLoading && loadingElapsedMs >= 8000;
   const loadingHintText =
     loadingElapsedMs >= 15000
-      ? 'Still working. Large libraries can take a little longer.'
-      : 'Gathering evidence can take a few more seconds.';
+      ? tx('仍在处理中，文档库较大时可能需要更久。', 'Still working. Large libraries can take a little longer.')
+      : tx('收集证据可能还需要几秒钟。', 'Gathering evidence can take a few more seconds.');
   const sortedTaskSessions = [...chatSessions].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   const normalizedTaskSearch = taskSearchTerm.trim().toLowerCase();
   const filteredTaskSessions = sortedTaskSessions.filter((session) => {
@@ -1987,14 +2032,14 @@ const Agent: React.FC = () => {
     if (rating === 'down' && reasonTags.length === 0 && !reasonText) {
       setFeedbackDrafts(prev => ({
         ...prev,
-        [messageId]: { ...draft, rating, error: 'Choose a reason or add a note.' },
+        [messageId]: { ...draft, rating, error: pick('请选择原因或填写备注。', 'Choose a reason or add a note.') },
       }));
       return;
     }
     if (!token) {
       setFeedbackDrafts(prev => ({
         ...prev,
-        [messageId]: { ...draft, rating, error: 'Sign in to send feedback.' },
+        [messageId]: { ...draft, rating, error: pick('请先登录，再提交反馈。', 'Sign in to send feedback.') },
       }));
       return;
     }
@@ -2031,12 +2076,12 @@ const Agent: React.FC = () => {
           ...draft,
           rating,
           submitting: false,
-          error: error instanceof Error ? error.message : 'Unable to send feedback.',
+          error: error instanceof Error ? error.message : pick('无法提交反馈。', 'Unable to send feedback.'),
         },
       }));
     }
   };
-  const uploadDisplayTitle = uploadStatusTitle || uploadedFile?.name || uploadForm.title || 'Uploaded document';
+  const uploadDisplayTitle = uploadStatusTitle || uploadedFile?.name || uploadForm.title || tx('已上传的文档', 'Uploaded document');
   const latestAgentMessage = [...displayedConversation].reverse().find((message) => (
     message.type === 'agent' &&
     (
@@ -2063,13 +2108,13 @@ const Agent: React.FC = () => {
   const isEmptyChat = displayedConversation.length === 0 && !showPipelineStatus;
   const currentSession = chatSessions.find(session => session.id === currentSessionId);
   const sessionTitle = currentSession?.title?.trim() || deriveSessionTitle(conversation);
-  const accountLabel = user?.username || user?.email || 'Account';
+  const accountLabel = user?.username || user?.email || tx('账户', 'Account');
   const accountInitial = String(accountLabel).trim().charAt(0).toUpperCase() || '?';
   const mobileTitle =
-    activeTab === 'documents' ? 'Library'
-      : activeTab === 'upload' ? 'Upload'
-        : isEmptyChat ? 'New research' : sessionTitle;
-  useDocumentTitle(activeTab === 'chat' && isEmptyChat ? 'Research desk' : mobileTitle);
+    activeTab === 'documents' ? tx('文档库', 'Library')
+      : activeTab === 'upload' ? tx('上传', 'Upload')
+        : isEmptyChat ? tx('新建研究', 'New research') : sessionTitle;
+  useDocumentTitle(activeTab === 'chat' && isEmptyChat ? tx('研究工作台', 'Research desk') : mobileTitle);
   const searchShortcut =
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent) ? '⌘K' : 'Ctrl K';
 
@@ -2147,15 +2192,19 @@ const Agent: React.FC = () => {
   const renderSidebar = () => (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-14 shrink-0 items-center justify-between pl-4 pr-2">
-        <Link to="/" className="rounded-md" aria-label="CausalGraph home">
+        <Link to="/" className="rounded-md" aria-label={tx('CausalGraph 首页', 'CausalGraph home')}>
           <BrandLogo size="sm" />
         </Link>
-        <button type="button" onClick={closeMobileNav} className="icon-btn lg:hidden" aria-label="Close sidebar">
+        {/* Narrow screens have the switch in the top bar instead. */}
+        <div className="hidden lg:block">
+          <LanguageSwitch />
+        </div>
+        <button type="button" onClick={closeMobileNav} className="icon-btn lg:hidden" aria-label={tx('关闭侧边栏', 'Close sidebar')}>
           <X className="h-4 w-4" />
         </button>
       </div>
 
-      <nav className="space-y-0.5 px-2" aria-label="Workspace">
+      <nav className="space-y-0.5 px-2" aria-label={tx('工作区', 'Workspace')}>
         <button
           type="button"
           onClick={() => {
@@ -2165,7 +2214,7 @@ const Agent: React.FC = () => {
           className="nav-item font-medium text-ink"
         >
           <PenSquare className="h-4 w-4" />
-          New research
+          {tx('新建研究', 'New research')}
         </button>
         <button
           type="button"
@@ -2176,7 +2225,7 @@ const Agent: React.FC = () => {
           className="nav-item"
         >
           <Search className="h-4 w-4" />
-          Search
+          {tx('搜索', 'Search')}
           <span className="kbd ml-auto hidden lg:inline-flex">{searchShortcut}</span>
         </button>
         <button
@@ -2186,7 +2235,7 @@ const Agent: React.FC = () => {
           className="nav-item"
         >
           <MessageSquare className="h-4 w-4" />
-          Chat
+          {tx('对话', 'Chat')}
         </button>
         <button
           type="button"
@@ -2195,7 +2244,7 @@ const Agent: React.FC = () => {
           className="nav-item"
         >
           <Library className="h-4 w-4" />
-          Library
+          {tx('文档库', 'Library')}
           <span className="ml-auto text-xs tabular-nums text-ink-4">{totalDocuments}</span>
         </button>
         <button
@@ -2208,24 +2257,24 @@ const Agent: React.FC = () => {
           className="nav-item"
         >
           <FileUp className="h-4 w-4" />
-          Upload
+          {tx('上传', 'Upload')}
           {isUploading && <span className="ml-auto font-mono text-[11px] text-ink-4">{uploadProgress}%</span>}
         </button>
       </nav>
 
       <div className="cg-scroll mt-6 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        <div className="section-label px-2.5 pb-1.5">Recents</div>
+        <div className="section-label px-2.5 pb-1.5">{tx('最近', 'Recents')}</div>
         {isChatSessionsLoading && chatSessions.length === 0 && (
-          <p className="px-2.5 py-1 text-[13px] text-ink-4">Loading…</p>
+          <p className="px-2.5 py-1 text-[13px] text-ink-4">{tx('加载中…', 'Loading…')}</p>
         )}
         {chatSessionsError && <p className="px-2.5 py-1 text-[13px] text-err">{chatSessionsError}</p>}
         {!isChatSessionsLoading && !chatSessionsError && chatSessions.length === 0 && (
-          <p className="px-2.5 py-1 text-[13px] leading-5 text-ink-4">Your research sessions will appear here.</p>
+          <p className="px-2.5 py-1 text-[13px] leading-5 text-ink-4">{tx('你的研究记录会显示在这里。', 'Your research sessions will appear here.')}</p>
         )}
         <ul className="space-y-px">
           {sortedTaskSessions.map((session) => {
             const isActive = session.id === currentSessionId && activeTab === 'chat';
-            const title = session.title || 'Untitled research';
+            const title = session.title || tx('未命名研究', 'Untitled research');
             return (
               <li key={session.id} className="group/session relative">
                 <button
@@ -2244,13 +2293,13 @@ const Agent: React.FC = () => {
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (window.confirm('Delete this conversation?')) {
+                    if (window.confirm(tx('确定删除这段对话吗？', 'Delete this conversation?'))) {
                       handleDeleteSession(session.id);
                     }
                   }}
                   className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-ink-4 opacity-0 transition hover:bg-paper-pressed hover:text-err focus:opacity-100 group-hover/session:opacity-100"
-                  title="Delete"
-                  aria-label={`Delete ${title}`}
+                  title={tx('删除', 'Delete')}
+                  aria-label={tx(`删除“${title}”`, `Delete ${title}`)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -2265,7 +2314,7 @@ const Agent: React.FC = () => {
           <>
             <button
               type="button"
-              aria-label="Close account menu"
+              aria-label={tx('关闭账户菜单', 'Close account menu')}
               className="fixed inset-0 z-40 cursor-default"
               onClick={() => setIsAccountMenuOpen(false)}
             />
@@ -2277,12 +2326,12 @@ const Agent: React.FC = () => {
               <div className="menu-sep" />
               <Link to="/" className="menu-item" role="menuitem">
                 <Home className="h-4 w-4 text-ink-4" />
-                Home
+                {tx('首页', 'Home')}
               </Link>
               {isAdmin && (
                 <Link to="/admin" className="menu-item" role="menuitem">
                   <ShieldCheck className="h-4 w-4 text-ink-4" />
-                  Admin console
+                  {tx('管理后台', 'Admin console')}
                 </Link>
               )}
               <div className="menu-sep" />
@@ -2296,7 +2345,7 @@ const Agent: React.FC = () => {
                 role="menuitem"
               >
                 <LogOut className="h-4 w-4 text-ink-4" />
-                Sign out
+                {tx('退出登录', 'Sign out')}
               </button>
             </div>
           </>
@@ -2313,7 +2362,7 @@ const Agent: React.FC = () => {
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[13px] font-medium text-ink">{accountLabel}</span>
-            <span className="block text-xs text-ink-4">{accountPlanLabel} plan</span>
+            <span className="block text-xs text-ink-4">{tx(accountPlanLabel, `${accountPlanLabel} plan`)}</span>
           </span>
           <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-ink-4" />
         </button>
@@ -2332,7 +2381,7 @@ const Agent: React.FC = () => {
         onMouseDown={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Search research"
+        aria-label={tx('搜索研究', 'Search research')}
       >
         <div className="flex items-center gap-3 border-b border-line px-4">
           <Search className="h-4 w-4 shrink-0 text-ink-4" />
@@ -2340,8 +2389,8 @@ const Agent: React.FC = () => {
             ref={taskSearchInputRef}
             value={taskSearchTerm}
             onChange={(event) => setTaskSearchTerm(event.target.value)}
-            placeholder="Search your research"
-            aria-label="Search your research"
+            placeholder={tx('搜索你的研究', 'Search your research')}
+            aria-label={tx('搜索你的研究', 'Search your research')}
             className="h-12 min-w-0 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-ink-5"
           />
           <span className="kbd hidden sm:inline-flex">Esc</span>
@@ -2349,7 +2398,7 @@ const Agent: React.FC = () => {
             type="button"
             onClick={() => setIsSearchPaletteOpen(false)}
             className="icon-btn -mr-2 sm:hidden"
-            aria-label="Close search"
+            aria-label={tx('关闭搜索', 'Close search')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -2365,17 +2414,17 @@ const Agent: React.FC = () => {
             className="menu-item font-medium text-ink"
           >
             <PenSquare className="h-4 w-4 text-ink-4" />
-            New research
+            {tx('新建研究', 'New research')}
           </button>
           {isChatSessionsLoading && chatSessions.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-ink-4">Loading…</p>
+            <p className="px-3 py-6 text-center text-sm text-ink-4">{tx('加载中…', 'Loading…')}</p>
           ) : filteredTaskSessions.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-ink-4">
-              {normalizedTaskSearch ? 'Nothing matches that search.' : 'No research sessions yet.'}
+              {normalizedTaskSearch ? tx('没有匹配的结果。', 'Nothing matches that search.') : tx('暂无研究记录。', 'No research sessions yet.')}
             </p>
           ) : (
             <>
-              <div className="section-label px-2.5 pb-1 pt-3">{normalizedTaskSearch ? 'Results' : 'Recent'}</div>
+              <div className="section-label px-2.5 pb-1 pt-3">{normalizedTaskSearch ? tx('搜索结果', 'Results') : tx('最近', 'Recent')}</div>
               {filteredTaskSessions.map((session) => (
                 <button
                   key={session.id}
@@ -2388,7 +2437,7 @@ const Agent: React.FC = () => {
                   className="menu-item"
                 >
                   <MessageSquare className="h-4 w-4 shrink-0 text-ink-4" />
-                  <span className="min-w-0 flex-1 truncate">{session.title || 'Untitled research'}</span>
+                  <span className="min-w-0 flex-1 truncate">{session.title || tx('未命名研究', 'Untitled research')}</span>
                   <span className="shrink-0 text-xs text-ink-4">{formatRelativeTime(session.updatedAt)}</span>
                 </button>
               ))}
@@ -2420,8 +2469,8 @@ const Agent: React.FC = () => {
                       type="button"
                       onClick={() => setQueryDocumentIds((prev) => prev.filter((id) => id !== docId))}
                       className="-mr-1 rounded p-0.5 text-ink-4 transition-colors hover:text-ink"
-                      title="Remove from scope"
-                      aria-label={`Remove ${doc.title} from scope`}
+                      title={tx('移出范围', 'Remove from scope')}
+                      aria-label={tx(`将“${doc.title}”移出范围`, `Remove ${doc.title} from scope`)}
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -2434,14 +2483,14 @@ const Agent: React.FC = () => {
               onClick={() => setActiveTab('documents')}
               className="px-1 text-xs font-medium text-ink-3 underline decoration-line-strong underline-offset-2 transition-colors hover:text-ink"
             >
-              {effectiveQueryDocumentIds.length ? 'Change' : 'Choose documents'}
+              {effectiveQueryDocumentIds.length ? tx('更改', 'Change') : tx('选择文档', 'Choose documents')}
             </button>
           </div>
         )}
         <textarea
           ref={composerInputRef}
           id="research-question"
-          aria-label="Research question"
+          aria-label={tx('研究问题', 'Research question')}
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={(e) => {
@@ -2462,8 +2511,8 @@ const Agent: React.FC = () => {
           }}
           placeholder={
             tier === 'deep'
-              ? 'Ask something that needs several documents, a comparison or a chain of reasoning…'
-              : 'Ask about payment terms, liability, termination, confidentiality…'
+              ? tx('提出需要综合多份文档、对比或多步推理的问题…', 'Ask something that needs several documents, a comparison or a chain of reasoning…')
+              : tx('询问付款条款、违约责任、合同解除、保密义务等…', 'Ask about payment terms, liability, termination, confidentiality…')
           }
           rows={1}
           className="block max-h-[200px] min-h-[52px] w-full resize-none bg-transparent px-4 pb-2 pt-3.5 text-[15.5px] leading-6 text-ink outline-none placeholder:text-ink-5 disabled:cursor-not-allowed"
@@ -2475,8 +2524,8 @@ const Agent: React.FC = () => {
             onClick={handleUploadEntry}
             disabled={isUploading || isProcessingFile}
             className="icon-btn"
-            title="Upload document"
-            aria-label="Upload document"
+            title={tx('上传文档', 'Upload document')}
+            aria-label={tx('上传文档', 'Upload document')}
           >
             <Paperclip className="h-4 w-4" />
           </button>
@@ -2484,36 +2533,36 @@ const Agent: React.FC = () => {
             type="button"
             onClick={() => setQueryScopeMode(queryScopeMode === 'all' ? 'selected' : 'all')}
             className="inline-flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[13px] text-ink-3 transition-colors hover:bg-paper-hover hover:text-ink"
-            title={`Scope: ${queryScopeDetail}. Click to switch between all documents and selected documents.`}
+            title={tx(`范围：${queryScopeDetail}。点击可在全部文档与所选文档之间切换。`, `Scope: ${queryScopeDetail}. Click to switch between all documents and selected documents.`)}
           >
             <FolderOpen className="h-4 w-4 shrink-0" />
             <span className="truncate">{queryScopeLabel}</span>
           </button>
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            <div className="segmented" role="group" aria-label="Reasoning tier">
+            <div className="segmented" role="group" aria-label={tx('推理档位', 'Reasoning tier')}>
               <button
                 type="button"
                 onClick={() => setTier('flash')}
                 aria-pressed={tier === 'flash'}
-                title="Fast: answers directly from the most relevant passages"
+                title={tx('快速：直接根据最相关的段落作答', 'Fast: answers directly from the most relevant passages')}
               >
-                Fast
+                {tx('快速', 'Fast')}
               </button>
               <button
                 type="button"
                 onClick={() => setTier('deep')}
                 aria-pressed={tier === 'deep'}
-                title="Deep: plans a search, reads more evidence and checks coverage before answering"
+                title={tx('深度：先规划检索，阅读更多证据并核对覆盖情况，再作答', 'Deep: plans a search, reads more evidence and checks coverage before answering')}
               >
-                Deep
+                {tx('深度', 'Deep')}
               </button>
             </div>
             <button
               type="submit"
               disabled={!inputText.trim() || isLoading}
               className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-ink text-white transition-colors hover:bg-ink-2 disabled:cursor-not-allowed disabled:bg-paper-hover disabled:text-ink-5"
-              title="Send (Enter)"
-              aria-label="Send"
+              title={tx('发送（Enter）', 'Send (Enter)')}
+              aria-label={tx('发送', 'Send')}
             >
               {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
             </button>
@@ -2522,7 +2571,7 @@ const Agent: React.FC = () => {
       </form>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-1">
         <ModelStatus tier={tier} />
-        <span className="hidden text-xs text-ink-4 md:inline">Check the cited passages before relying on an answer.</span>
+        <span className="hidden text-xs text-ink-4 md:inline">{tx('采用回答前，请先核对引用的原文。', 'Check the cited passages before relying on an answer.')}</span>
       </div>
     </div>
   );
@@ -2531,7 +2580,7 @@ const Agent: React.FC = () => {
     <div className="mx-auto w-full max-w-[760px] px-4 pb-8 pt-6 sm:px-6 lg:pt-2">
       <div className="space-y-8">
         {displayedConversation.map((message, index) => {
-          const time = message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const time = message.timestamp.toLocaleTimeString(lang === 'zh' ? 'zh-CN' : [], { hour: '2-digit', minute: '2-digit' });
 
           if (message.type === 'user') {
             return (
@@ -2605,8 +2654,8 @@ const Agent: React.FC = () => {
                     type="button"
                     onClick={() => void copyMessage(feedbackMessageId, message.content)}
                     className="icon-btn h-7 w-7"
-                    aria-label="Copy answer"
-                    title="Copy"
+                    aria-label={tx('复制回答', 'Copy answer')}
+                    title={tx('复制', 'Copy')}
                   >
                     {copiedMessageKey === feedbackMessageId ? <Check className="h-3.5 w-3.5 text-ok" /> : <Copy className="h-3.5 w-3.5" />}
                   </button>
@@ -2617,8 +2666,8 @@ const Agent: React.FC = () => {
                         onClick={() => void submitFeedback(message, index, 'up')}
                         disabled={Boolean(feedbackRating || feedbackDraft?.submitting)}
                         aria-pressed={feedbackRating === 'up'}
-                        aria-label="Mark answer helpful"
-                        title="Helpful"
+                        aria-label={tx('标记为有帮助', 'Mark answer helpful')}
+                        title={tx('有帮助', 'Helpful')}
                         className={`icon-btn h-7 w-7 ${feedbackRating === 'up' ? 'text-ink disabled:opacity-100' : ''}`}
                       >
                         <ThumbsUp className="h-3.5 w-3.5" />
@@ -2628,15 +2677,15 @@ const Agent: React.FC = () => {
                         onClick={() => openDownvoteFeedback(message, index)}
                         disabled={Boolean(feedbackRating || feedbackDraft?.submitting)}
                         aria-pressed={feedbackRating === 'down'}
-                        aria-label="Mark answer unhelpful"
-                        title="Not helpful"
+                        aria-label={tx('标记为没有帮助', 'Mark answer unhelpful')}
+                        title={tx('没有帮助', 'Not helpful')}
                         className={`icon-btn h-7 w-7 ${feedbackRating === 'down' ? 'text-ink disabled:opacity-100' : ''}`}
                       >
                         <ThumbsDown className="h-3.5 w-3.5" />
                       </button>
                     </>
                   )}
-                  {feedbackRating && <span className="ml-1.5 text-xs text-ink-4">Thanks for the feedback</span>}
+                  {feedbackRating && <span className="ml-1.5 text-xs text-ink-4">{tx('感谢你的反馈', 'Thanks for the feedback')}</span>}
                   {feedbackDraft?.error && feedbackDraft.rating !== 'down' && (
                     <span className="ml-1.5 inline-flex items-center gap-1 text-xs text-err">
                       <AlertCircle className="h-3 w-3" />
@@ -2649,7 +2698,7 @@ const Agent: React.FC = () => {
 
               {feedbackDraft && feedbackDraft.rating === 'down' && !feedbackRating && (
                 <div className="mt-2 max-w-lg rounded-xl border border-line bg-white p-3">
-                  <p className="text-[13px] font-medium text-ink">What was wrong with this answer?</p>
+                  <p className="text-[13px] font-medium text-ink">{tx('这个回答有什么问题？', 'What was wrong with this answer?')}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {FEEDBACK_REASON_OPTIONS.map(option => {
                       const selected = feedbackDraft.tags.includes(option.tag);
@@ -2668,7 +2717,7 @@ const Agent: React.FC = () => {
                             onChange={() => toggleFeedbackTag(feedbackMessageId, option.tag)}
                             className="sr-only"
                           />
-                          {option.label}
+                          {tx(...option.label)}
                         </label>
                       );
                     })}
@@ -2678,8 +2727,8 @@ const Agent: React.FC = () => {
                       value={feedbackDraft.reasonText}
                       onChange={(event) => setFeedbackReasonText(feedbackMessageId, event.target.value)}
                       rows={2}
-                      placeholder="Add a note"
-                      aria-label="Feedback note"
+                      placeholder={tx('补充说明', 'Add a note')}
+                      aria-label={tx('反馈备注', 'Feedback note')}
                       className="input mt-2 min-h-[64px] resize-none text-[13px]"
                     />
                   )}
@@ -2701,7 +2750,7 @@ const Agent: React.FC = () => {
                       }}
                       className="btn btn-ghost btn-sm"
                     >
-                      Cancel
+                      {tx('取消', 'Cancel')}
                     </button>
                     <button
                       type="button"
@@ -2709,7 +2758,7 @@ const Agent: React.FC = () => {
                       disabled={feedbackDraft.submitting}
                       className="btn btn-primary btn-sm"
                     >
-                      {feedbackDraft.submitting ? 'Sending…' : 'Send feedback'}
+                      {feedbackDraft.submitting ? tx('提交中…', 'Sending…') : tx('提交反馈', 'Send feedback')}
                     </button>
                   </div>
                 </div>
@@ -2760,10 +2809,10 @@ const Agent: React.FC = () => {
                 }}
                 aria-pressed={agentDrawerOpen}
                 className={`btn btn-sm ml-auto gap-1.5 ${agentDrawerOpen ? 'bg-paper-hover text-ink' : 'btn-ghost'}`}
-                title="Show how the answer was researched"
+                title={tx('查看回答的研究过程', 'Show how the answer was researched')}
               >
                 <Network className="h-3.5 w-3.5" />
-                Process
+                {tx('过程', 'Process')}
               </button>
             )}
           </header>
@@ -2821,12 +2870,12 @@ const Agent: React.FC = () => {
     const syncEnabled = doc.neo4j_sync?.enabled !== false;
     const failed = syncEnabled && !synced && !loadingDetail && Boolean(doc.neo4j_sync?.reason);
     const label = loadingDetail
-      ? 'Loading details'
+      ? tx('正在加载详情', 'Loading details')
       : synced
-        ? 'Synced to Neo4j'
+        ? tx('已同步到 Neo4j', 'Synced to Neo4j')
         : failed
-          ? `Neo4j sync failed: ${doc.neo4j_sync?.reason}`
-          : 'Not synced to Neo4j';
+          ? tx(`Neo4j 同步失败：${doc.neo4j_sync?.reason}`, `Neo4j sync failed: ${doc.neo4j_sync?.reason}`)
+          : tx('未同步到 Neo4j', 'Not synced to Neo4j');
     return (
       <span className="inline-flex h-7 w-7 items-center justify-center" title={label} aria-label={label} role="img">
         {loadingDetail ? (
@@ -2839,23 +2888,23 @@ const Agent: React.FC = () => {
   };
 
   const renderDocumentDetail = (doc: Document) => (
-    <section className="min-w-0" aria-label="Document details">
+    <section className="min-w-0" aria-label={tx('文档详情', 'Document details')}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <h2 className="break-words text-xl font-semibold leading-snug text-ink">{doc.title}</h2>
           {doc.source && <p className="mt-1 truncate font-mono text-xs text-ink-4">{doc.source}</p>}
-          {loadingDocumentId === doc.id && <p className="mt-2 text-sm text-ink-3">Loading details…</p>}
+          {loadingDocumentId === doc.id && <p className="mt-2 text-sm text-ink-3">{tx('正在加载详情…', 'Loading details…')}</p>}
         </div>
         <button type="button" onClick={() => askAboutDocument(doc)} className="btn btn-primary btn-sm">
-          Ask about this document
+          {tx('就此文档提问', 'Ask about this document')}
         </button>
       </div>
 
       <dl className="mt-6 grid grid-cols-3 divide-x divide-line rounded-xl border border-line bg-white">
         {[
-          ['Passages', String(doc.chunk_count || 0)],
-          ['Category', documentCategoryLabel(doc.domain)],
-          ['Added', formatDocumentDate(doc.ingested_at)],
+          [tx('段落数', 'Passages'), String(doc.chunk_count || 0)],
+          [tx('类别', 'Category'), documentCategoryLabel(doc.domain)],
+          [tx('添加时间', 'Added'), formatDocumentDate(doc.ingested_at)],
         ].map(([label, value]) => (
           <div key={label} className="min-w-0 px-4 py-3">
             <dt className="text-xs text-ink-4">{label}</dt>
@@ -2870,12 +2919,12 @@ const Agent: React.FC = () => {
     <div className="mx-auto w-full max-w-[1200px] px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="page-title">Library</h1>
-          <p className="mt-1 text-sm text-ink-3">Documents you can search. Put up to three in scope to focus a question on them.</p>
+          <h1 className="page-title">{tx('文档库', 'Library')}</h1>
+          <p className="mt-1 text-sm text-ink-3">{tx('这里是可检索的文档。最多可将三份加入范围，让问题聚焦于它们。', 'Documents you can search. Put up to three in scope to focus a question on them.')}</p>
         </div>
         <button type="button" onClick={handleUploadEntry} className="btn btn-secondary btn-sm">
           <FileUp className="h-4 w-4" />
-          Upload document
+          {tx('上传文档', 'Upload document')}
         </button>
       </div>
 
@@ -2885,25 +2934,25 @@ const Agent: React.FC = () => {
       {isDocumentsLoading && (
         <div className="mt-5 flex items-center gap-2 text-sm text-ink-3">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Loading documents…
+          {tx('正在加载文档…', 'Loading documents…')}
         </div>
       )}
 
       {documents.length === 0 ? (
         !isDocumentsLoading && (
           <div className="mt-8 rounded-xl border border-dashed border-line-strong px-6 py-16 text-center">
-            <p className="font-medium text-ink">No documents yet</p>
+            <p className="font-medium text-ink">{tx('暂无文档', 'No documents yet')}</p>
             <p className="mx-auto mt-1 max-w-sm text-sm text-ink-3">
-              Upload a contract to start asking questions about it.
+              {tx('上传一份合同，即可开始就它提问。', 'Upload a contract to start asking questions about it.')}
             </p>
             <button type="button" onClick={handleUploadEntry} className="btn btn-primary btn-sm mt-5">
-              Upload a document
+              {tx('上传文档', 'Upload a document')}
             </button>
           </div>
         )
       ) : (
         <div className="mt-6 grid gap-8 xl:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] xl:items-start">
-          <ul className="panel divide-y divide-line overflow-hidden" aria-label="Documents">
+          <ul className="panel divide-y divide-line overflow-hidden" aria-label={tx('文档', 'Documents')}>
             {documents.map((doc) => {
               const inQueryScope = queryDocumentIds.includes(doc.id);
               const canAddToScope = inQueryScope || queryDocumentIds.length < 3;
@@ -2926,7 +2975,7 @@ const Agent: React.FC = () => {
                   >
                     <span className="line-clamp-2 break-words text-sm font-medium leading-snug text-ink">{doc.title}</span>
                     <span className="mt-1 block text-xs text-ink-4">
-                      {doc.chunk_count || 0} passages
+                      {tx(`${doc.chunk_count || 0} 个段落`, `${doc.chunk_count || 0} passages`)}
                     </span>
                   </button>
                   <div className="flex shrink-0 items-center gap-0.5">
@@ -2935,22 +2984,24 @@ const Agent: React.FC = () => {
                       onClick={() => toggleDocumentInScope(doc.id)}
                       disabled={!canAddToScope}
                       aria-pressed={inQueryScope}
-                      title={inQueryScope ? 'Remove from question scope' : canAddToScope ? 'Add to question scope' : 'Up to three documents can be in scope'}
+                      title={inQueryScope
+                        ? tx('移出提问范围', 'Remove from question scope')
+                        : canAddToScope ? tx('加入提问范围', 'Add to question scope') : tx('最多可将三份文档加入范围', 'Up to three documents can be in scope')}
                       className={`h-7 rounded-md px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
                         inQueryScope
                           ? 'bg-ink text-white hover:bg-ink-2'
                           : 'border border-line bg-white text-ink-3 hover:border-line-strong hover:text-ink disabled:text-ink-5 disabled:hover:border-line'
                       }`}
                     >
-                      {inQueryScope ? 'In scope' : canAddToScope ? 'Add' : 'Max 3'}
+                      {inQueryScope ? tx('已加入', 'In scope') : canAddToScope ? tx('加入', 'Add') : tx('最多 3 份', 'Max 3')}
                     </button>
                     {isAdmin && renderSyncStatus(doc)}
                     <button
                       type="button"
                       onClick={() => deleteDocument(doc.id)}
                       className="icon-btn h-7 w-7 hover:text-err sm:opacity-0 sm:focus:opacity-100 sm:group-hover:opacity-100"
-                      title="Delete document"
-                      aria-label={`Delete ${doc.title}`}
+                      title={tx('删除文档', 'Delete document')}
+                      aria-label={tx(`删除“${doc.title}”`, `Delete ${doc.title}`)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -2964,7 +3015,7 @@ const Agent: React.FC = () => {
             renderDocumentDetail(selectedDocument)
           ) : (
             <div className="rounded-xl border border-dashed border-line-strong px-6 py-16 text-center text-sm text-ink-3">
-              Select a document to see its details.
+              {tx('选择一份文档，查看它的详情。', 'Select a document to see its details.')}
             </div>
           )}
         </div>
@@ -2974,15 +3025,15 @@ const Agent: React.FC = () => {
 
   const renderUploadView = () => (
     <div className="mx-auto w-full max-w-[720px] px-4 py-6 sm:px-6 lg:py-10">
-      <h1 className="page-title">Upload a document</h1>
+      <h1 className="page-title">{tx('上传文档', 'Upload a document')}</h1>
       <p className="mt-1 text-sm leading-6 text-ink-3">
-        PDF, Word, plain text or RTF, up to 50 MB. The document is split into passages and indexed for search.
+        {tx('支持 PDF、Word、纯文本或 RTF，最大 50 MB。文档会被切分为段落，并建立检索索引。', 'PDF, Word, plain text or RTF, up to 50 MB. The document is split into passages and indexed for search.')}
       </p>
 
-      <div className="segmented mt-6" role="tablist" aria-label="Input method">
+      <div className="segmented mt-6" role="tablist" aria-label={tx('输入方式', 'Input method')}>
         {([
-          { id: 'file', label: 'Upload a file' },
-          { id: 'text', label: 'Paste text' },
+          { id: 'file', label: tx('上传文件', 'Upload a file') },
+          { id: 'text', label: tx('粘贴文本', 'Paste text') },
         ] as const).map((option) => (
           <button
             key={option.id}
@@ -3024,7 +3075,7 @@ const Agent: React.FC = () => {
               <div
                 role="button"
                 tabIndex={0}
-                aria-label="Choose a file"
+                aria-label={tx('选择文件', 'Choose a file')}
                 onClick={() => fileInputRef.current?.click()}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -3049,13 +3100,13 @@ const Agent: React.FC = () => {
               >
                 <FileUp className={`h-5 w-5 ${isDraggingFile ? 'text-ink' : 'text-ink-4'}`} />
                 <p className="mt-3 text-sm font-medium text-ink">
-                  {isDraggingFile ? 'Drop to add the file' : 'Drop a file here, or click to browse'}
+                  {isDraggingFile ? tx('松开即可添加文件', 'Drop to add the file') : tx('将文件拖放到这里，或点击选择', 'Drop a file here, or click to browse')}
                 </p>
-                <p className="mt-1 text-xs text-ink-4">PDF, DOC, DOCX, TXT or RTF</p>
+                <p className="mt-1 text-xs text-ink-4">{tx('PDF、DOC、DOCX、TXT 或 RTF', 'PDF, DOC, DOCX, TXT or RTF')}</p>
                 {isProcessingFile && (
                   <p className="mt-4 flex items-center gap-2 text-xs text-ink-3">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Reading the file…
+                    {tx('正在读取文件…', 'Reading the file…')}
                   </p>
                 )}
               </div>
@@ -3075,12 +3126,12 @@ const Agent: React.FC = () => {
                     }}
                     className="btn btn-ghost btn-sm hover:text-err"
                   >
-                    Remove
+                    {tx('移除', 'Remove')}
                   </button>
                 </div>
                 {fileContent && (
                   <details className="mt-3 border-t border-line pt-3">
-                    <summary className="cursor-pointer text-xs font-medium text-ink-3 hover:text-ink">Preview</summary>
+                    <summary className="cursor-pointer text-xs font-medium text-ink-3 hover:text-ink">{tx('预览', 'Preview')}</summary>
                     <p className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-ink-2">
                       {fileContent.substring(0, 400)}
                       {fileContent.length > 400 && <span className="text-ink-4">…</span>}
@@ -3095,30 +3146,30 @@ const Agent: React.FC = () => {
             value={uploadForm.content}
             onChange={(e) => setUploadForm({ ...uploadForm, content: e.target.value })}
             rows={14}
-            aria-label="Document text"
+            aria-label={tx('文档文本', 'Document text')}
             className="input min-h-[300px] resize-y text-sm"
-            placeholder="Paste a section, an excerpt or the whole document."
+            placeholder={tx('粘贴文档的某一节、摘录或全文。', 'Paste a section, an excerpt or the whole document.')}
           />
         )}
       </div>
 
       <div className="mt-6 space-y-4">
         <div>
-          <label className="field-label" htmlFor="upload-title">Title</label>
+          <label className="field-label" htmlFor="upload-title">{tx('标题', 'Title')}</label>
           <input
             id="upload-title"
             type="text"
             value={uploadForm.title}
             onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
             className="input"
-            placeholder={uploadedFile?.name || 'For example: Equipment Purchase Agreement 2024'}
+            placeholder={uploadedFile?.name || tx('例如：2024 年设备采购合同', 'For example: Equipment Purchase Agreement 2024')}
           />
         </div>
 
         {isAdmin && (
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="field-label" htmlFor="upload-domain">Category</label>
+              <label className="field-label" htmlFor="upload-domain">{tx('类别', 'Category')}</label>
               <select
                 id="upload-domain"
                 value={uploadForm.domain}
@@ -3126,7 +3177,7 @@ const Agent: React.FC = () => {
                 className="input"
               >
                 {DOCUMENT_CATEGORIES.map((category) => (
-                  <option key={category.value} value={category.value}>{category.label}</option>
+                  <option key={category.value} value={category.value}>{tx(category.label, category.labelEn)}</option>
                 ))}
               </select>
             </div>
@@ -3139,21 +3190,21 @@ const Agent: React.FC = () => {
           {isUploading ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              {uploadStage ? `${uploadStage.charAt(0).toUpperCase()}${uploadStage.slice(1)}…` : 'Processing…'}
+              {formatUploadButtonLabel(uploadStage)}
             </>
           ) : (
-            'Index this document'
+            tx('建立索引', 'Index this document')
           )}
         </button>
         {!isUploading && uploadDisabled && (
-          <span className="text-xs text-ink-4">Add a file or text, and a title.</span>
+          <span className="text-xs text-ink-4">{tx('请添加文件或文本，并填写标题。', 'Add a file or text, and a title.')}</span>
         )}
       </div>
 
       {isUploading && (
         <div className="mt-5">
           <div className="flex items-center justify-between gap-3 text-xs text-ink-3">
-            <span className="truncate">{uploadMessage || uploadStage || 'Processing'}</span>
+            <span className="truncate">{formatUploadProgress(uploadMessage, uploadStage)}</span>
             <span className="shrink-0 font-mono tabular-nums text-ink-2">{uploadProgress}%</span>
           </div>
           <div className="mt-2 h-1 overflow-hidden rounded-full bg-paper-hover">
@@ -3176,7 +3227,7 @@ const Agent: React.FC = () => {
         <div className="fixed inset-0 z-50 lg:hidden">
           <button
             type="button"
-            aria-label="Close sidebar"
+            aria-label={tx('关闭侧边栏', 'Close sidebar')}
             className="absolute inset-0 h-full w-full cursor-default bg-ink/20"
             onClick={closeMobileNav}
           />
@@ -3188,10 +3239,11 @@ const Agent: React.FC = () => {
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex h-12 shrink-0 items-center gap-1 border-b border-line px-2 lg:hidden">
-          <button type="button" onClick={() => setIsMobileNavOpen(true)} className="icon-btn" aria-label="Open sidebar">
+          <button type="button" onClick={() => setIsMobileNavOpen(true)} className="icon-btn" aria-label={tx('打开侧边栏', 'Open sidebar')}>
             <PanelLeft className="h-[18px] w-[18px]" />
           </button>
           <div className="min-w-0 flex-1 truncate px-1 text-sm font-medium text-ink">{mobileTitle}</div>
+          <LanguageSwitch className="mx-1 shrink-0" />
           {activeTab === 'chat' && hasAgentWorkspace && (
             <button
               type="button"
@@ -3200,12 +3252,12 @@ const Agent: React.FC = () => {
                 setAgentDrawerTab('process');
               }}
               className="icon-btn"
-              aria-label="Show process"
+              aria-label={tx('查看过程', 'Show process')}
             >
               <Network className="h-[18px] w-[18px]" />
             </button>
           )}
-          <button type="button" onClick={handleNewSession} className="icon-btn" aria-label="New research">
+          <button type="button" onClick={handleNewSession} className="icon-btn" aria-label={tx('新建研究', 'New research')}>
             <PenSquare className="h-[18px] w-[18px]" />
           </button>
         </div>
@@ -3215,7 +3267,7 @@ const Agent: React.FC = () => {
             <div className="mx-auto flex max-w-[760px] items-center gap-3 text-xs text-ink-3">
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
               <span className="min-w-0 flex-1 truncate">
-                Indexing {uploadDisplayTitle} · {uploadStage || 'processing'}
+                {formatUploadBanner(uploadDisplayTitle, uploadStage)}
               </span>
               <span className="shrink-0 font-mono tabular-nums">{uploadProgress}%</span>
             </div>

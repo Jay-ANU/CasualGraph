@@ -340,6 +340,23 @@ try:
         expect(page.get_by_label('履行阶段')).to_have_value('未知')
         expect(page.get_by_label('交易金额',exact=True)).to_have_value('')
         assert not errors,errors
+        # English interface: switched in the desk's own top bar; Chinese stays the default.
+        page.set_viewport_size({'width':1440,'height':1000})
+        page.goto('http://127.0.0.1:4173/legal')
+        page.get_by_role('heading',name='合同库').wait_for()
+        assert page.evaluate('document.documentElement.lang')=='zh-CN'
+        page.get_by_role('group',name='界面语言').get_by_role('button',name='EN').click()
+        expect(page.get_by_role('heading',name='Contract library')).to_be_visible()
+        expect(page.get_by_role('button',name='Choose file',exact=True)).to_be_enabled()
+        assert page.evaluate('document.documentElement.lang')=='en'
+        for width in (320, 390, 768, 1024, 1440):
+            page.set_viewport_size({'width':width,'height':960 if width>=768 else 844})
+            page.wait_for_timeout(80)
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 2'), ('legal-en', width)
+        page.screenshot(path=str(OUT/'legal-en-welcome.png'),full_page=True)
+        page.get_by_role('group',name='Interface language').get_by_role('button',name='中文').click()
+        expect(page.get_by_role('heading',name='合同库')).to_be_visible()
+        assert not errors,errors
         # Reduced motion: the desk renders fully with no animation left running.
         still=browser.new_context(viewport={'width':1440,'height':900},reduced_motion='reduce')
         still.add_init_script("localStorage.setItem('token','synthetic');localStorage.setItem('user',JSON.stringify({id:'u1',role:'user',plan:'max'}));")
@@ -349,7 +366,7 @@ try:
         still.close()
         assert not AXE_VIOLATIONS, AXE_VIOLATIONS
         browser.close()
-    print('PASS: actual built UI with synthetic APIs: Max gate, library, redaction compare, 20 scenarios, party picking on paper, live review, numbered findings, redline, export, policies, mobile.')
+    print('PASS: actual built UI with synthetic APIs: Max gate, library, redaction compare, 20 scenarios, party picking on paper, live review, numbered findings, redline, export, policies, mobile, English switch.')
 except Exception:
     try:
         page.screenshot(path=str(OUT/'failure.png'), full_page=True)

@@ -1,4 +1,5 @@
 import type { AgentPath, AgentTraceStep, ChatSessionPayload, RagBlock, RagGraphSource, RagReasoningMode, RagResponse, RagSource } from '../../types/api';
+import { currentLang, pick } from '../../i18n/core';
 
 export interface ChatMessage {
   type: 'user' | 'agent';
@@ -42,7 +43,7 @@ export const STORAGE_KEYS = {
 
 export const deriveSessionTitle = (messages: ChatMessage[]): string => {
   const firstUser = messages.find((m) => m.type === 'user' && m.content?.trim());
-  if (!firstUser) return 'New chat';
+  if (!firstUser) return pick('新对话', 'New chat');
   const text = firstUser.content.trim().replace(/\s+/g, ' ');
   return text.length > 48 ? `${text.slice(0, 48)}...` : text;
 };
@@ -64,7 +65,7 @@ type SessionFields = ChatSessionPayload & { updatedAt?: string; selectedDocument
 
 export const toSessionSummary = (raw: SessionFields | null | undefined): ChatSession => ({
   id: String(raw?.id || ''),
-  title: String(raw?.title || 'New chat'),
+  title: String(raw?.title || pick('新对话', 'New chat')),
   updatedAt: String(raw?.updated_at || raw?.updatedAt || new Date().toISOString()),
   selectedDocumentId: String(raw?.selected_document_id || raw?.selectedDocumentId || ''),
   mode: String(raw?.mode || 'ask'),
@@ -75,9 +76,9 @@ export const formatRelativeTime = (iso: string): string => {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const diff = (Date.now() - d.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
-  return d.toLocaleDateString();
+  if (diff < 60) return pick('刚刚', 'just now');
+  if (diff < 3600) return pick(`${Math.floor(diff / 60)} 分钟前`, `${Math.floor(diff / 60)}m ago`);
+  if (diff < 86400) return pick(`${Math.floor(diff / 3600)} 小时前`, `${Math.floor(diff / 3600)}h ago`);
+  if (diff < 604800) return pick(`${Math.floor(diff / 86400)} 天前`, `${Math.floor(diff / 86400)}d ago`);
+  return d.toLocaleDateString(currentLang() === 'zh' ? 'zh-CN' : undefined);
 };

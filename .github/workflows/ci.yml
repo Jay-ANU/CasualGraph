@@ -67,9 +67,10 @@ jobs:
         run: |
           pip install playwright==1.58.0
           python -m playwright install --with-deps chromium
-      - name: Existing research and contract UI browser checks (mock APIs)
+      - name: Landing, research and contract UI browser checks (mock APIs)
         working-directory: .
         run: |
+          python scripts/landing_ui_smoke.py
           python scripts/research_ui_smoke.py
           python scripts/legal_ui_smoke.py
       - uses: actions/upload-artifact@v4

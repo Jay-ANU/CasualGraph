@@ -5,6 +5,7 @@ import { ArrowRight, Loader2 } from 'lucide-react';
 import { GraphVisualizer } from '../components';
 import type { GraphData } from '../types/graph';
 import { useAuth } from '../contexts/AuthContext';
+import { useI18n } from '../i18n/core';
 import useDocumentTitle from '../utils/useDocumentTitle';
 
 type GraphLoadStatus = 'loading' | 'ready' | 'empty' | 'error';
@@ -64,8 +65,9 @@ const CausalInference: React.FC = () => {
   const [fullGraphLoading, setFullGraphLoading] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const { token } = useAuth();
+  const { tx } = useI18n();
   const apiBase = useMemo(() => getApiBase(), []);
-  useDocumentTitle('Knowledge graph');
+  useDocumentTitle(tx('知识图谱', 'Knowledge graph'));
 
   const fetchKnowledgeGraph = useCallback(async (nodeLimit: number, edgeLimit: number) => {
     const response = await fetch(`${apiBase}/graph/${token ? 'workspace' : 'public'}?limit=${nodeLimit}&edge_limit=${edgeLimit}`, {
@@ -126,17 +128,19 @@ const CausalInference: React.FC = () => {
     <div className="mx-auto max-w-content px-5 pb-24 pt-14 sm:px-8 sm:pt-20">
       <header className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-2xl">
-          <h1 className="display text-[40px] leading-[1.06] sm:text-display-lg">Knowledge graph</h1>
+          <h1 className="display text-[40px] leading-[1.06] sm:text-display-lg">{tx('知识图谱', 'Knowledge graph')}</h1>
           <p className="mt-4 text-[17px] leading-relaxed text-ink-3">
-            The entities and relationships extracted from reports in the shared library: targets, metrics, policies and
-            who oversees them. Choose a domain to see its entities, then select one to read the evidence behind it.
+            {tx(
+              '从共享文档库的报告中抽取的实体与关系：目标、指标、政策，以及负责监督的主体。选择一个领域查看其中的实体，再选中某个实体，阅读其背后的证据。',
+              'The entities and relationships extracted from reports in the shared library: targets, metrics, policies and who oversees them. Choose a domain to see its entities, then select one to read the evidence behind it.',
+            )}
           </p>
         </div>
         <dl className="flex gap-10 lg:pb-1">
           {[
-            ['Entities', statValue(nodeCount)],
-            ['Relationships', statValue(edgeCount)],
-            ...(documentCount > 0 && graphStatus === 'ready' ? [['Reports', documentCount.toLocaleString()]] : []),
+            [tx('实体', 'Entities'), statValue(nodeCount)],
+            [tx('关系', 'Relationships'), statValue(edgeCount)],
+            ...(documentCount > 0 && graphStatus === 'ready' ? [[tx('报告', 'Reports'), documentCount.toLocaleString()]] : []),
           ].map(([label, value]) => (
             <div key={label}>
               <dt className="text-xs text-ink-4">{label}</dt>
@@ -150,30 +154,30 @@ const CausalInference: React.FC = () => {
         {graphStatus === 'loading' && (
           <div className="flex h-[480px] items-center justify-center gap-2 rounded-xl border border-line bg-white text-sm text-ink-3">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Loading the graph…
+            {tx('正在加载图谱…', 'Loading the graph…')}
           </div>
         )}
 
         {graphStatus === 'error' && (
           <div className="rounded-xl border border-line bg-white px-6 py-20 text-center">
-            <p className="font-medium text-ink">The graph couldn’t be loaded</p>
+            <p className="font-medium text-ink">{tx('图谱加载失败', 'The graph couldn’t be loaded')}</p>
             <p className="mx-auto mt-1 max-w-md text-sm text-ink-3">
-              The graph service didn’t respond. It may be starting up — try again in a moment.
+              {tx('图谱服务没有响应，可能正在启动，请稍后再试。', 'The graph service didn’t respond. It may be starting up — try again in a moment.')}
             </p>
             <button type="button" onClick={() => setReloadKey((key) => key + 1)} className="btn btn-secondary btn-sm mt-5">
-              Try again
+              {tx('重试', 'Try again')}
             </button>
           </div>
         )}
 
         {graphStatus === 'empty' && (
           <div className="rounded-xl border border-dashed border-line-strong px-6 py-20 text-center">
-            <p className="font-medium text-ink">No graph yet</p>
+            <p className="font-medium text-ink">{tx('暂无图谱', 'No graph yet')}</p>
             <p className="mx-auto mt-1 max-w-md text-sm text-ink-3">
-              Entities appear here once reports have been uploaded and processed in the research desk.
+              {tx('在研究工作台上传并处理报告后，实体会显示在这里。', 'Entities appear here once reports have been uploaded and processed in the research desk.')}
             </p>
             <Link to="/agent" className="btn btn-secondary btn-sm mt-5">
-              Open the research desk
+              {tx('打开研究工作台', 'Open the research desk')}
             </Link>
           </div>
         )}
@@ -184,7 +188,10 @@ const CausalInference: React.FC = () => {
             {mayBeTruncated && (
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-ink-3">
                 <span>
-                  Showing {nodeCount.toLocaleString()} entities. The full graph may include more and can take a while to draw.
+                  {tx(
+                    `当前显示 ${nodeCount.toLocaleString()} 个实体。完整图谱可能包含更多实体，绘制需要一些时间。`,
+                    `Showing ${nodeCount.toLocaleString()} entities. The full graph may include more and can take a while to draw.`,
+                  )}
                 </span>
                 <button
                   type="button"
@@ -193,7 +200,7 @@ const CausalInference: React.FC = () => {
                   className="btn btn-secondary btn-sm"
                 >
                   {fullGraphLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {fullGraphLoading ? 'Loading the full graph…' : 'Load the full graph'}
+                  {fullGraphLoading ? tx('正在加载完整图谱…', 'Loading the full graph…') : tx('加载完整图谱', 'Load the full graph')}
                 </button>
               </div>
             )}
@@ -203,21 +210,24 @@ const CausalInference: React.FC = () => {
 
       <section className="mt-20 grid gap-10 border-t border-line pt-12 md:grid-cols-2">
         <div>
-          <h2 className="text-lg font-medium text-ink">How the graph is built</h2>
+          <h2 className="text-lg font-medium text-ink">{tx('图谱是如何构建的', 'How the graph is built')}</h2>
           <p className="mt-2 max-w-md leading-relaxed text-ink-3">
-            When a report is uploaded, each passage is read for entities — companies, targets, metrics, policies — and
-            the relationships between them. Each relationship keeps the evidence it was extracted from, so it can be
-            checked against the report.
+            {tx(
+              '报告上传后，系统会逐段识别其中的实体（公司、目标、指标、政策）以及它们之间的关系。每条关系都保留了抽取时依据的原文，便于对照报告核查。',
+              'When a report is uploaded, each passage is read for entities — companies, targets, metrics, policies — and the relationships between them. Each relationship keeps the evidence it was extracted from, so it can be checked against the report.',
+            )}
           </p>
         </div>
         <div>
-          <h2 className="text-lg font-medium text-ink">Ask questions about it</h2>
+          <h2 className="text-lg font-medium text-ink">{tx('基于图谱提问', 'Ask questions about it')}</h2>
           <p className="mt-2 max-w-md leading-relaxed text-ink-3">
-            In Deep mode the research desk can draw on this graph alongside the report passages when it plans an
-            answer, and it shows each step it took.
+            {tx(
+              '在深度模式下，研究工作台规划回答时可以结合这张图谱与报告段落，并展示它的每一步。',
+              'In Deep mode the research desk can draw on this graph alongside the report passages when it plans an answer, and it shows each step it took.',
+            )}
           </p>
           <Link to="/agent" className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-ink transition-[gap] hover:gap-2.5">
-            Open the research desk <ArrowRight className="h-4 w-4" />
+            {tx('打开研究工作台', 'Open the research desk')} <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
       </section>

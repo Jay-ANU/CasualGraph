@@ -1,0 +1,14 @@
+{
+  "name": "causalgraph-hero-video",
+  "private": true,
+  "description": "Renders the landing page's original hero film (Three.js in headless Chromium, encoded with ffmpeg).",
+  "type": "module",
+  "scripts": {
+    "render": "node render.mjs --mode landscape --w 1920 --h 1080 --out out/landscape.mkv && node render.mjs --mode portrait --w 720 --h 1280 --out out/portrait.mkv",
+    "encode": "sh encode.sh"
+  },
+  "devDependencies": {
+    "playwright-core": "1.58.0",
+    "three": "0.180.0"
+  }
+}

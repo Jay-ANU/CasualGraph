@@ -66,3 +66,8 @@ data/.redaction_key
 
 # UI smoke-test output
 ui-artifacts/
+
+# Hero film renderer (scripts/hero_video): dependencies and render masters
+scripts/hero_video/node_modules/
+scripts/hero_video/out/
+scripts/hero_video/package-lock.json

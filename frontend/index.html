@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <link rel="icon" type="image/svg+xml" href="/brand/logo-mark.svg" />
@@ -7,14 +7,36 @@
     <meta name="theme-color" content="#FBFAF8" />
     <meta
       name="description"
-      content="CausalGraph answers questions about sustainability reports with source citations. Contract review is available in the separate Legal workspace."
+      content="CausalGraph 法务 Agent：合同先自动脱敏，五个专业 Agent 并行审查法律风险、商业利益与公司规范，逐条给出依据与修改建议，确认后导出 Word 修订版。"
     />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="CausalGraph" />
+    <meta property="og:title" content="CausalGraph 法务 Agent · 多 Agent 合同审查" />
+    <meta property="og:description" content="合同先脱敏，五个专业 Agent 逐条审查，依据与修改建议一目了然，导出 Word 修订版。" />
+    <meta property="og:image" content="https://casualgraphai.vercel.app/media/og-legal.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="apple-touch-icon" href="/brand/logo-mark.svg" />
     <link rel="manifest" href="/manifest.json" />
-    <title>CausalGraph</title>
+    <title>CausalGraph · 法务 Agent</title>
+    <script>
+      // The landing page paints its film poster first; fetch it before the app script runs.
+      if (location.pathname === '/' || location.pathname === '/home') {
+        var poster = document.createElement('link');
+        poster.rel = 'preload';
+        poster.as = 'image';
+        poster.type = 'image/webp';
+        poster.href = window.matchMedia('(max-aspect-ratio: 4/5)').matches
+          ? '/media/hero-legal-poster-portrait.webp'
+          : '/media/hero-legal-poster.webp';
+        poster.setAttribute('fetchpriority', 'high');
+        document.head.appendChild(poster);
+      }
+    </script>
   </head>
   <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <noscript>请启用 JavaScript 以使用本应用。You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
     <script type="module" src="/src/index.tsx"></script>
   </body>

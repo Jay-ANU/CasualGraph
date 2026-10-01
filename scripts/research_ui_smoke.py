@@ -104,21 +104,22 @@ try:
         page = context.new_page()
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
-        check('Home heading', page.get_by_role('heading', name='Answers from sustainability reports, with the page they came from.').count() == 1)
-        check('Independent Legal navigation', page.get_by_role('navigation', name='Primary').get_by_role('link', name='法务 Agent', exact=True).get_attribute('href') == '/legal')
-        for path, heading in [('/about', 'A reading tool, not a verdict.'), ('/desktop', 'Your research, a little closer.')]:
+        # The site opens in Chinese and leads with the legal agent (landing_ui_smoke.py covers it in depth).
+        check('Home heading', page.get_by_role('heading', level=1, name='你的 AI 法务团队逐条守护每一份合同').count() == 1)
+        check('Independent Legal navigation', page.get_by_role('navigation', name='主导航').get_by_role('link', name='法务 Agent', exact=True).get_attribute('href') == '/legal')
+        for path in ['/about', '/desktop']:
             # Assert the real restored page renders, without hard-coding copy that might evolve.
             page.goto('http://127.0.0.1:4173' + path, wait_until='networkidle')
-            check('Restored page ' + path, page.get_by_role('heading', level=1).count() == 1 and 'doesn’t exist' not in page.locator('body').inner_text())
+            body = page.locator('body').inner_text()
+            check('Restored page ' + path, page.get_by_role('heading', level=1).count() == 1 and 'doesn’t exist' not in body and '页面不存在' not in body)
         page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
-        check('Home action empty disabled', page.get_by_role('button', name='Start research', exact=True).is_disabled())
         no_overflow(page, 'Desktop homepage no horizontal overflow')
         page.screenshot(path=str(OUT / 'home-desktop.png'), full_page=True)
-        page.get_by_role('textbox', name='Ask a research question').fill('Summarise the payment terms')
-        page.get_by_role('button', name='Start research', exact=True).click()
+        page.get_by_role('link', name='开始审查合同').first.click()
         page.wait_for_url('**/login')
-        check('Unauthenticated research opens login', '/login' in page.url)
-        page.evaluate('(u)=>{localStorage.setItem("token","ui-smoke-token");localStorage.setItem("user",JSON.stringify(u))}', USER)
+        check('Unauthenticated contract review opens login', '/login' in page.url)
+        # The research desk keeps its English copy byte for byte in English mode; check it there.
+        page.evaluate('(u)=>{localStorage.setItem("token","ui-smoke-token");localStorage.setItem("user",JSON.stringify(u));localStorage.setItem("causalgraph.lang","en")}', USER)
         page.goto('http://127.0.0.1:4173/agent', wait_until='networkidle')
         page.get_by_text('Fast answers · configured', exact=True).wait_for()
         check('DeepSeek status displayed', page.get_by_text('DeepSeek V4 Pro', exact=True).count() == 1)
@@ -162,6 +163,14 @@ try:
                 page.get_by_role('button', name='Retry model status').click()
                 page.get_by_text('DeepSeek V4 Pro', exact=True).wait_for()
                 check('Model retry recovers', True)
+        # Chinese is the research desk's default too.
+        page.evaluate('localStorage.setItem("causalgraph.lang","zh")')
+        page.goto('http://127.0.0.1:4173/agent', wait_until='networkidle')
+        page.locator('.research-welcome h2').wait_for()
+        check('Research desk defaults to Chinese', page.evaluate('document.documentElement.lang') == 'zh-CN' and any('\u4e00' <= ch <= '\u9fff' for ch in page.locator('.research-welcome h2').inner_text()))
+        no_overflow(page, 'Chinese workspace no horizontal overflow')
+        page.screenshot(path=str(OUT / 'workspace-desktop-zh.png'), full_page=True)
+        page.evaluate('localStorage.setItem("causalgraph.lang","en")')
         for width, height in [(390, 844), (768, 1024), (1024, 900), (1280, 900)]:
             page.set_viewport_size({'width': width, 'height': height})
             page.goto('http://127.0.0.1:4173/', wait_until='networkidle')

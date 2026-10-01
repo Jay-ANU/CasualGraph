@@ -5,6 +5,7 @@ import type { Catalog } from './types';
 import { splitRedactions } from './text';
 import { phraseDiff } from './diff';
 import { ic } from './icon';
+import { useI18n } from '../i18n/core';
 
 export function Spinner() {
   return <span className="lv-spinner" aria-hidden="true" />;
@@ -22,9 +23,10 @@ export function RichText({ text }: { text: string }) {
 
 /** A paragraph's revision as tracked changes: struck deletions, underlined insertions. */
 export function Redline({ before, after }: { before: string; after: string }) {
+  const { tx } = useI18n();
   return <>{phraseDiff(before, after).map((part, i) => part.kind === 'del'
-    ? <del key={i} className="lv-del"><span className="lv-sr">删除：</span><RichText text={part.text} /></del>
-    : part.kind === 'ins' ? <ins key={i} className="lv-ins"><span className="lv-sr">新增：</span><RichText text={part.text} /></ins>
+    ? <del key={i} className="lv-del"><span className="lv-sr">{tx('删除：', 'Deleted: ')}</span><RichText text={part.text} /></del>
+    : part.kind === 'ins' ? <ins key={i} className="lv-ins"><span className="lv-sr">{tx('新增：', 'Inserted: ')}</span><RichText text={part.text} /></ins>
     : <RichText key={i} text={part.text} />)}</>;
 }
 
@@ -55,10 +57,11 @@ export function Toast({ text, done, onDone }: { text: string; done?: boolean; on
 }
 
 /** Native modal supplies focus containment, Escape and return-focus behavior. */
-export function ConfirmDialog({ title, children, confirmLabel, busyLabel = '正在处理…', busy, onCancel, onConfirm }: {
+export function ConfirmDialog({ title, children, confirmLabel, busyLabel, busy, onCancel, onConfirm }: {
   title: string; children: ReactNode; confirmLabel: string; busyLabel?: string; busy: boolean;
   onCancel: () => void; onConfirm: () => void;
 }) {
+  const { tx } = useI18n();
   const ref = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -83,12 +86,12 @@ export function ConfirmDialog({ title, children, confirmLabel, busyLabel = '正�
     onCancel={event => { event.preventDefault(); if (!busy) onCancel(); }}>
     <div className="lv-dialog-heading">
       <h2 id="lv-dialog-title">{title}</h2>
-      <button type="button" className="lv-icon" aria-label="关闭确认窗口" disabled={busy} onClick={onCancel}><X {...ic} size={18} /></button>
+      <button type="button" className="lv-icon" aria-label={tx('关闭确认窗口', 'Close dialog')} disabled={busy} onClick={onCancel}><X {...ic} size={18} /></button>
     </div>
     <div className="lv-dialog-body">{children}</div>
     <div className="lv-dialog-actions">
-      <button ref={cancelRef} type="button" className="lv-secondary" disabled={busy} onClick={onCancel}>取消</button>
-      <button type="button" className="lv-primary" disabled={busy} onClick={onConfirm}>{busy && <Spinner />}{busy ? busyLabel : confirmLabel}</button>
+      <button ref={cancelRef} type="button" className="lv-secondary" disabled={busy} onClick={onCancel}>{tx('取消', 'Cancel')}</button>
+      <button type="button" className="lv-primary" disabled={busy} onClick={onConfirm}>{busy && <Spinner />}{busy ? busyLabel ?? tx('正在处理…', 'Working…') : confirmLabel}</button>
     </div>
   </dialog>;
 }
@@ -97,17 +100,18 @@ export function ModelSelect({ catalog, value, loading, disabled, onChange, onRef
   catalog: Catalog | null; value: string; loading: boolean; disabled: boolean;
   onChange: (id: string) => void; onRefresh: () => void;
 }) {
+  const { tx } = useI18n();
   const families = catalog?.families.filter(family => catalog.models.some(m => m.family === family)) || [];
   return <div className="lv-model-control">
     <div className="lv-model">
-      <select className="lv-select" aria-label="审查模型" value={value} disabled={disabled || loading || !catalog} onChange={e => onChange(e.target.value)}>
-        <option value="" disabled>{loading ? '加载中…' : '选择模型'}</option>
+      <select className="lv-select" aria-label={tx('审查模型', 'Review model')} value={value} disabled={disabled || loading || !catalog} onChange={e => onChange(e.target.value)}>
+        <option value="" disabled>{loading ? tx('加载中…', 'Loading…') : tx('选择模型', 'Choose a model')}</option>
         {families.map(family => <optgroup key={family} label={family}>
           {catalog?.models.filter(m => m.family === family).map(m => <option value={m.id} key={m.id}>{m.id}</option>)}
         </optgroup>)}
       </select>
-      <button type="button" className="lv-icon" disabled={disabled || loading} title="刷新模型列表" aria-label="刷新模型列表" onClick={onRefresh}><RefreshCw {...ic} /></button>
+      <button type="button" className="lv-icon" disabled={disabled || loading} title={tx('刷新模型列表', 'Refresh model list')} aria-label={tx('刷新模型列表', 'Refresh model list')} onClick={onRefresh}><RefreshCw {...ic} /></button>
     </div>
-    {!!catalog?.unavailable_families?.length && <p className="lv-hint" role="status">{catalog.unavailable_families.join('、')} 暂不可用</p>}
+    {!!catalog?.unavailable_families?.length && <p className="lv-hint" role="status">{tx(`${catalog.unavailable_families.join('、')} 暂不可用`, `${catalog.unavailable_families.join(', ')} unavailable for now`)}</p>}
   </div>;
 }

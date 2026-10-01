@@ -1,4 +1,5 @@
 import type { ModelConfiguration } from '../types/api';
+import { pick } from '../i18n/core';
 
 export function parseModelStatus(value: unknown): ModelConfiguration | null {
   if (!value || typeof value !== 'object') return null;
@@ -30,7 +31,7 @@ const formatModelIdPart = (part: string) => {
 /** "deepseek-v4-pro" -> "DeepSeek V4 Pro", "claude-sonnet-4-5-20250929" -> "Claude Sonnet 4.5". */
 export function modelDisplayName(model: string): string {
   const id = String(model || '').trim();
-  if (!id) return 'Model not configured';
+  if (!id) return pick('未配置模型', 'Model not configured');
   const [family, ...rest] = id.split('-').filter(Boolean);
   const familyName = MODEL_FAMILIES.get((family || '').toLowerCase());
   if (!familyName || rest.length === 0) return id;

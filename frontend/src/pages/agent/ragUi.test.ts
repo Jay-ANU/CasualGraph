@@ -1,6 +1,10 @@
-import { formatSourceChipLabel, formatSourceDocumentTitle, linkCitations } from './ragUi';
+import { setCurrentLang } from '../../i18n/core';
+import { formatSourceChipLabel, formatSourceDocumentTitle, getLoadingSteps, linkCitations } from './ragUi';
 
 describe('RAG evidence labels', () => {
+  beforeEach(() => setCurrentLang('en'));
+  afterEach(() => setCurrentLang('zh'));
+
   it('prefers the real source filename when stale chunk metadata points at another document', () => {
     // "agreement" appears in both names but says nothing about which document this is.
     const source = {
@@ -26,6 +30,26 @@ describe('RAG evidence labels', () => {
 
     expect(formatSourceDocumentTitle(source)).toBe('supply agreement 2023');
     expect(formatSourceChipLabel(source)).toBe('supply agreement · chunk_0');
+  });
+
+  it('names a source without a title in the interface language, never translating real titles', () => {
+    expect(formatSourceDocumentTitle({ chunk_id: 'chunk_0', text: 'a' })).toBe('Source document');
+    setCurrentLang('zh');
+    expect(formatSourceDocumentTitle({ chunk_id: 'chunk_0', text: 'a' })).toBe('来源文档');
+    expect(formatSourceDocumentTitle({ chunk_id: 'chunk_0', text: 'a', document_title: 'Office Lease Agreement' })).toBe('Office Lease Agreement');
+  });
+
+  it('describes the answer progress in the interface language', () => {
+    expect(getLoadingSteps('flash')).toEqual([
+      'Reading the question…',
+      'Searching the documents…',
+      'Reading the most relevant passages…',
+      'Writing the answer…',
+    ]);
+    expect(getLoadingSteps('deep')).toHaveLength(8);
+    setCurrentLang('zh');
+    expect(getLoadingSteps('flash')).toEqual(['正在理解问题…', '正在检索文档…', '正在阅读最相关的段落…', '正在撰写回答…']);
+    expect(getLoadingSteps('deep')[7]).toBe('正在完善回答…');
   });
 });
 

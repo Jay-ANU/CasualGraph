@@ -4,6 +4,7 @@ import type { Block } from './types';
 import { blockFragments, clauseLabel, partyCandidates } from './text';
 import { RichText } from './ui';
 import { ic } from './icon';
+import { useI18n } from '../i18n/core';
 
 /**
  * The user binds “our party” to a verbatim quote. Suggestions only quote the
@@ -13,6 +14,7 @@ export function PartyPicker({ blocks, blockId, quote, disabled, onChange }: {
   blocks: Block[]; blockId: string; quote: string; disabled: boolean;
   onChange: (blockId: string, quote: string) => void;
 }) {
+  const { tx } = useI18n();
   const candidates = useMemo(() => partyCandidates(blocks), [blocks]);
   const selected = blocks.find(b => b.id === blockId);
   const fragments = blockFragments(selected);
@@ -21,8 +23,8 @@ export function PartyPicker({ blocks, blockId, quote, disabled, onChange }: {
   const [manual, setManual] = useState(custom || !candidates.length);
   const uid = useId();
   return <fieldset className="lv-party" disabled={disabled}>
-    <legend className="lv-sr">我方主体</legend>
-    {candidates.length > 0 && <div className="lv-party-options" role="group" aria-label="从原文选择主体片段">
+    <legend className="lv-sr">{tx('我方主体', 'Our party')}</legend>
+    {candidates.length > 0 && <div className="lv-party-options" role="group" aria-label={tx('从原文选择主体片段', 'Pick our party from the contract text')}>
       {candidates.map((c, i) => {
         const on = c.blockId === blockId && c.quote === quote;
         const contextId = c.context ? `${uid}-context-${i}` : undefined;
@@ -34,17 +36,18 @@ export function PartyPicker({ blocks, blockId, quote, disabled, onChange }: {
         </button>;
       })}
     </div>}
-    {candidates.length > 0 && <button type="button" className="lv-text-button lv-party-toggle" aria-expanded={manual} onClick={() => setManual(!manual)}>手动指定</button>}
+    {candidates.length > 0 && <button type="button" className="lv-text-button lv-party-toggle" aria-expanded={manual} onClick={() => setManual(!manual)}>{tx('手动指定', 'Specify manually')}</button>}
     {manual && <div className="lv-party-manual">
-      <select className="lv-select" aria-label="我方主体所在段落" value={blockId} onChange={e => onChange(e.target.value, '')}>
-        <option value="">选择主体所在段落</option>
+      <select className="lv-select" aria-label={tx('我方主体所在段落', 'Paragraph naming our party')} value={blockId} onChange={e => onChange(e.target.value, '')}>
+        <option value="">{tx('选择主体所在段落', 'Choose the paragraph')}</option>
         {blocks.map(b => <option key={b.id} value={b.id}>{clauseLabel(b, 30)}</option>)}
       </select>
-      {fragments.length > 0 && <div className="lv-chips" role="group" aria-label="所选段落中的片段">
+      {fragments.length > 0 && <div className="lv-chips" role="group" aria-label={tx('所选段落中的片段', 'Fragments in this paragraph')}>
         {fragments.map(text => <button type="button" key={text} aria-label={text} aria-pressed={quote === text} className={quote === text ? 'selected' : ''} onClick={() => onChange(blockId, text)}><RichText text={text} /></button>)}
       </div>}
-      <input className="lv-input" aria-label="我方主体原文" maxLength={200} value={quote} onChange={e => onChange(blockId, e.target.value)} placeholder="主体原文（须与段落内容一致）" />
+      <input className="lv-input" aria-label={tx('我方主体原文', 'Our party, exactly as written')} maxLength={200} value={quote} onChange={e => onChange(blockId, e.target.value)}
+        placeholder={tx('主体原文（须与段落内容一致）', 'Party name exactly as it appears in the paragraph')} />
     </div>}
-    {quote && !valid && <p className="lv-note is-warn" role="alert">主体原文与所选段落不一致，请逐字填写。</p>}
+    {quote && !valid && <p className="lv-note is-warn" role="alert">{tx('主体原文与所选段落不一致，请逐字填写。', 'This does not match the chosen paragraph. Copy it exactly.')}</p>}
   </fieldset>;
 }

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useI18n } from '../i18n/core';
 import type { GraphData, GraphEdge, GraphHighlightPath, GraphNode } from '../types/graph';
 
 interface KnowledgeGraphViewProps {
@@ -17,8 +18,11 @@ interface KnowledgeGraphViewProps {
 type DomainKey = 'environmental' | 'social' | 'governance' | 'ai';
 type ClusterTab = 'overview' | DomainKey;
 
+// `label` is also matched against node metadata and used in ids, so it stays in
+// English; `labelZh` is only shown.
 type ClusterCategory = {
   label: string;
+  labelZh: string;
   shortLabel?: string;
   type: string;
   keywords: string[];
@@ -27,8 +31,11 @@ type ClusterCategory = {
 type ClusterDefinition = {
   key: DomainKey;
   tabLabel: string;
+  tabLabelZh: string;
   label: string;
+  labelZh: string;
   description: string;
+  descriptionZh: string;
   color: string;
   textColor: string;
   ringFill: string;
@@ -67,65 +74,77 @@ const CLUSTERS: ClusterDefinition[] = [
   {
     key: 'environmental',
     tabLabel: 'Environmental',
+    tabLabelZh: '环境',
     label: 'Environmental',
+    labelZh: '环境',
     description: 'Climate, energy, water, waste and other resource topics.',
+    descriptionZh: '气候、能源、水资源、废弃物等资源议题。',
     color: '#2F7D5B',
     textColor: '#24634A',
     ringFill: 'rgba(47, 125, 91, 0.06)',
     categories: [
-      { label: 'Climate Strategy', type: 'Strategy', keywords: ['climate', 'carbon neutral', 'net zero', 'transition'] },
-      { label: 'Emissions', type: 'Metric', keywords: ['emission', 'scope 1', 'scope 2', 'scope 3', 'ghg', 'carbon'] },
-      { label: 'Renewable Energy', type: 'Initiative', keywords: ['renewable', 'clean energy', 'electricity', 'solar', 'wind'] },
-      { label: 'Water', type: 'Resource', keywords: ['water', 'wastewater', 'stewardship'] },
-      { label: 'Circularity', type: 'Program', keywords: ['circular', 'recycling', 'waste', 'packaging', 'reuse'] },
+      { label: 'Climate Strategy', labelZh: '气候战略', type: 'Strategy', keywords: ['climate', 'carbon neutral', 'net zero', 'transition'] },
+      { label: 'Emissions', labelZh: '温室气体排放', type: 'Metric', keywords: ['emission', 'scope 1', 'scope 2', 'scope 3', 'ghg', 'carbon'] },
+      { label: 'Renewable Energy', labelZh: '可再生能源', type: 'Initiative', keywords: ['renewable', 'clean energy', 'electricity', 'solar', 'wind'] },
+      { label: 'Water', labelZh: '水资源', type: 'Resource', keywords: ['water', 'wastewater', 'stewardship'] },
+      { label: 'Circularity', labelZh: '循环经济', type: 'Program', keywords: ['circular', 'recycling', 'waste', 'packaging', 'reuse'] },
     ],
   },
   {
     key: 'social',
     tabLabel: 'Social',
+    tabLabelZh: '社会',
     label: 'Social',
+    labelZh: '社会',
     description: 'Workforce, suppliers, communities and human rights.',
+    descriptionZh: '员工、供应商、社区与人权。',
     color: '#3D64C4',
     textColor: '#2F4F9E',
     ringFill: 'rgba(61, 100, 196, 0.06)',
     categories: [
-      { label: 'Workforce Safety', type: 'Control', keywords: ['safety', 'injury', 'workforce', 'employee health'] },
-      { label: 'Diversity & Inclusion', type: 'Metric', keywords: ['diversity', 'inclusion', 'dei', 'gender', 'representation'] },
-      { label: 'Supplier Responsibility', type: 'Policy', keywords: ['supplier', 'supply chain', 'audit', 'sourcing'] },
-      { label: 'Community Impact', type: 'Program', keywords: ['community', 'philanthropy', 'local', 'education'] },
-      { label: 'Human Rights', type: 'Risk', keywords: ['human rights', 'labor', 'forced labor', 'modern slavery'] },
+      { label: 'Workforce Safety', labelZh: '员工安全', type: 'Control', keywords: ['safety', 'injury', 'workforce', 'employee health'] },
+      { label: 'Diversity & Inclusion', labelZh: '多元与包容', type: 'Metric', keywords: ['diversity', 'inclusion', 'dei', 'gender', 'representation'] },
+      { label: 'Supplier Responsibility', labelZh: '供应商责任', type: 'Policy', keywords: ['supplier', 'supply chain', 'audit', 'sourcing'] },
+      { label: 'Community Impact', labelZh: '社区影响', type: 'Program', keywords: ['community', 'philanthropy', 'local', 'education'] },
+      { label: 'Human Rights', labelZh: '人权', type: 'Risk', keywords: ['human rights', 'labor', 'forced labor', 'modern slavery'] },
     ],
   },
   {
     key: 'governance',
     tabLabel: 'Governance',
+    tabLabelZh: '治理',
     label: 'Governance',
+    labelZh: '治理',
     description: 'Board oversight, controls, ethics, compliance and risk.',
+    descriptionZh: '董事会监督、内部控制、商业道德、合规与风险。',
     color: '#B07A1E',
     textColor: '#86601A',
     ringFill: 'rgba(176, 122, 30, 0.07)',
     categories: [
-      { label: 'Board Oversight', type: 'Oversight', keywords: ['board', 'committee', 'oversight', 'director'] },
-      { label: 'Audit Controls', type: 'Control', keywords: ['audit', 'assurance', 'internal control', 'verification'] },
-      { label: 'Ethics', type: 'Policy', keywords: ['ethics', 'code of conduct', 'anti bribery', 'integrity'] },
-      { label: 'Risk Management', type: 'Risk', keywords: ['risk', 'scenario', 'enterprise risk', 'transition risk'] },
-      { label: 'Compliance', type: 'Compliance', keywords: ['compliance', 'regulation', 'legal', 'reporting standard'] },
+      { label: 'Board Oversight', labelZh: '董事会监督', type: 'Oversight', keywords: ['board', 'committee', 'oversight', 'director'] },
+      { label: 'Audit Controls', labelZh: '审计与内控', type: 'Control', keywords: ['audit', 'assurance', 'internal control', 'verification'] },
+      { label: 'Ethics', labelZh: '商业道德', type: 'Policy', keywords: ['ethics', 'code of conduct', 'anti bribery', 'integrity'] },
+      { label: 'Risk Management', labelZh: '风险管理', type: 'Risk', keywords: ['risk', 'scenario', 'enterprise risk', 'transition risk'] },
+      { label: 'Compliance', labelZh: '合规', type: 'Compliance', keywords: ['compliance', 'regulation', 'legal', 'reporting standard'] },
     ],
   },
   {
     key: 'ai',
     tabLabel: 'AI',
+    tabLabelZh: 'AI',
     label: 'AI and data',
+    labelZh: 'AI 与数据',
     description: 'Artificial intelligence, data and model topics mentioned in the reports.',
+    descriptionZh: '报告中提及的人工智能、数据与模型议题。',
     color: '#7B5BC0',
     textColor: '#5F4599',
     ringFill: 'rgba(123, 91, 192, 0.06)',
     categories: [
-      { label: 'Document Parsing', type: 'Capability', keywords: ['parse', 'parsing', 'document', 'pdf', 'chunk'] },
-      { label: 'Retrieval', type: 'Capability', keywords: ['retrieval', 'rag', 'search', 'vector', 'embedding'] },
-      { label: 'Reasoning', type: 'Capability', keywords: ['reasoning', 'causal', 'graph reasoning', 'analysis'] },
-      { label: 'Summarization', type: 'Capability', keywords: ['summary', 'summarization', 'synthesis'] },
-      { label: 'Prediction', type: 'Capability', keywords: ['prediction', 'forecast', 'scenario', 'impact'] },
+      { label: 'Document Parsing', labelZh: '文档解析', type: 'Capability', keywords: ['parse', 'parsing', 'document', 'pdf', 'chunk'] },
+      { label: 'Retrieval', labelZh: '检索', type: 'Capability', keywords: ['retrieval', 'rag', 'search', 'vector', 'embedding'] },
+      { label: 'Reasoning', labelZh: '推理', type: 'Capability', keywords: ['reasoning', 'causal', 'graph reasoning', 'analysis'] },
+      { label: 'Summarization', labelZh: '摘要', type: 'Capability', keywords: ['summary', 'summarization', 'synthesis'] },
+      { label: 'Prediction', labelZh: '预测', type: 'Capability', keywords: ['prediction', 'forecast', 'scenario', 'impact'] },
     ],
   },
 ];
@@ -358,6 +377,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
   onNodeSelect,
   onEdgeSelect,
 }) => {
+  const { tx } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(width);
   const initialTab = useMemo(() => compact ? 'overview' : getInitialClusterTab(), [compact]);
@@ -439,14 +459,19 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
   if (!hasNodes) {
     return (
       <div className="rounded-xl border border-dashed border-line-strong px-6 py-14 text-center">
-        <p className="font-medium text-ink">No graph data</p>
-        <p className="mt-1 text-sm text-ink-3">No extracted entities were returned for this view.</p>
+        <p className="font-medium text-ink">{tx('暂无图谱数据', 'No graph data')}</p>
+        <p className="mt-1 text-sm text-ink-3">{tx('此视图没有返回任何抽取出的实体。', 'No extracted entities were returned for this view.')}</p>
       </div>
     );
   }
 
   const focusNode = focusNodeId ? graph.nodes.find((node) => node.id === focusNodeId) : null;
-  const coreLabel = focusNode?.label || 'All reports';
+  const coreLabel = focusNode?.label || tx('全部报告', 'All reports');
+  const graphCounts = (nodes: number, edges: number) => tx(
+    `${formatCount(nodes)} 个实体 · ${formatCount(edges)} 条关系`,
+    `${formatCount(nodes)} entities · ${formatCount(edges)} relationships`,
+  );
+  const confidenceLabel = (confidence: number) => tx(`置信度 ${(confidence * 100).toFixed(0)}%`, `${(confidence * 100).toFixed(0)}% confidence`);
   const coreX = canvasWidth / 2;
   const coreY = canvasHeight * (compact ? 0.51 : 0.52);
   const coreRadius = compact ? 34 : narrow ? 38 : 50;
@@ -476,7 +501,6 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
   const handleNodeSelect = (node: GraphNode) => {
     const domain = inferNodeDomain(node);
     if (domain !== 'general') {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- synchronize externally selected node with the existing graph tabs
       setInspectedCluster(domain);
       setActiveTab(domain);
     }
@@ -520,7 +544,12 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
 
     return (
       <div className="min-w-0 overflow-hidden rounded-xl border border-line bg-white">
-        <svg viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} className="block w-full" role="img" aria-label={`${definition.label} entities and relationships`}>
+        <svg
+          viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
+          className="block w-full"
+          role="img"
+          aria-label={tx(`${definition.labelZh}领域的实体与关系`, `${definition.label} entities and relationships`)}
+        >
           <rect x="0" y="0" width={canvasWidth} height={canvasHeight} fill="#FFFFFF" />
 
           <ellipse
@@ -576,7 +605,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
           {categoryCenters.map((item, index) => {
             const count = cloudNodes.filter((node) => node.categoryIndex === index).length;
             if (count === 0) return null;
-            const lines = splitLabel(item.category.label, narrow ? 10 : 16);
+            const lines = splitLabel(tx(item.category.labelZh, item.category.label), narrow ? 10 : 16);
             return (
               <g
                 key={item.category.label}
@@ -602,7 +631,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                     </tspan>
                   ))}
                   <tspan x={item.x} dy={14} className="fill-ink-4 text-[11px] font-normal">
-                    {count} {count === 1 ? 'entity' : 'entities'}
+                    {tx(`${count} 个实体`, `${count} ${count === 1 ? 'entity' : 'entities'}`)}
                   </tspan>
                 </text>
               </g>
@@ -616,7 +645,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                 {truncateLabel(selectedCloudNode.node.label, 26)}
               </text>
               <text x="12" y="38" className="fill-ink-4 text-[11px]">
-                {formatTypeLabel(selectedCloudNode.node.type)} · {(selectedCloudNode.node.confidence * 100).toFixed(0)}% confidence
+                {formatTypeLabel(selectedCloudNode.node.type)} · {confidenceLabel(selectedCloudNode.node.confidence)}
               </text>
             </g>
           )}
@@ -627,7 +656,12 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
 
   const renderOverviewCanvas = () => (
     <div className="min-w-0 overflow-hidden rounded-xl border border-line bg-white">
-      <svg viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} className="block w-full" role="img" aria-label="Entities grouped by ESG domain">
+      <svg
+        viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
+        className="block w-full"
+        role="img"
+        aria-label={tx('按 ESG 领域分组的实体', 'Entities grouped by ESG domain')}
+      >
         <rect x="0" y="0" width={canvasWidth} height={canvasHeight} fill="#FFFFFF" />
 
         {clusterLayouts.map((cluster) => {
@@ -666,7 +700,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
           </text>
           {!compact && (
             <text x={coreX} y={coreY + 22} textAnchor="middle" className="fill-ink-4 text-[10px]">
-              {formatCount(stats.nodes)} entities
+              {tx(`${formatCount(stats.nodes)} 个实体`, `${formatCount(stats.nodes)} entities`)}
             </text>
           )}
         </g>
@@ -716,7 +750,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                   selectedNodeSet.has(category.backingNode?.id || category.id);
                 const lineHighlighted = selectedEdgeIdSet.has(makePathEdgeId(category.backingNode?.id || category.id, definition.key));
                 const nodeRadius = compact ? (selected ? 6 : 4.5) : (selected ? 7 : 5.5);
-                const labelLines = splitLabel(category.shortLabel || category.label, compact ? 10 : 15);
+                const labelLines = splitLabel(tx(category.labelZh, category.shortLabel || category.label), compact ? 10 : 15);
 
                 return (
                   <g key={category.id} onClick={() => handleCategorySelect(cluster, category)} className="cursor-pointer">
@@ -767,7 +801,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                   strokeWidth="4"
                   paintOrder="stroke"
                 >
-                  {definition.label}
+                  {tx(definition.labelZh, definition.label)}
                 </text>
                 {!compact && (
                   <text
@@ -778,7 +812,9 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                     strokeWidth="4"
                     paintOrder="stroke"
                   >
-                    {formatCount(cluster.nodeCount)} entities{narrow ? '' : ` · ${formatCount(cluster.edgeCount)} relationships`}
+                    {narrow
+                      ? tx(`${formatCount(cluster.nodeCount)} 个实体`, `${formatCount(cluster.nodeCount)} entities`)
+                      : graphCounts(cluster.nodeCount, cluster.edgeCount)}
                   </text>
                 )}
               </g>
@@ -813,7 +849,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
     <div className="min-w-0 space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="max-w-full overflow-x-auto">
-          <div className="segmented" role="tablist" aria-label="Graph view">
+          <div className="segmented" role="tablist" aria-label={tx('图谱视图', 'Graph view')}>
             {tabs.map((tab) => {
               const definition = tab === 'overview' ? null : CLUSTER_BY_KEY.get(tab);
               return (
@@ -829,7 +865,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                   className="shrink-0"
                 >
                   {definition && <span className="status-dot" style={{ backgroundColor: definition.color }} />}
-                  {definition?.tabLabel || 'Overview'}
+                  {definition ? tx(definition.tabLabelZh, definition.tabLabel) : tx('总览', 'Overview')}
                 </button>
               );
             })}
@@ -837,8 +873,8 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
         </div>
         <p className="text-xs tabular-nums text-ink-4">
           {activeLayout
-            ? `${formatCount(activeLayout.nodeCount)} entities · ${formatCount(activeLayout.edgeCount)} relationships`
-            : `${formatCount(stats.nodes)} entities · ${formatCount(stats.edges)} relationships`}
+            ? graphCounts(activeLayout.nodeCount, activeLayout.edgeCount)
+            : graphCounts(stats.nodes, stats.edges)}
         </p>
       </div>
 
@@ -851,23 +887,26 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
           <div className="border-b border-line p-4">
             <div className="flex items-center gap-2">
               <span className="status-dot h-2 w-2" style={{ backgroundColor: inspected.color }} />
-              <span className="font-medium text-ink">{inspected.label}</span>
+              <span className="font-medium text-ink">{tx(inspected.labelZh, inspected.label)}</span>
             </div>
-            <p className="mt-1 text-xs leading-5 text-ink-3">{inspected.description}</p>
+            <p className="mt-1 text-xs leading-5 text-ink-3">{tx(inspected.descriptionZh, inspected.description)}</p>
             <p className="mt-2 text-xs tabular-nums text-ink-4">
-              {formatCount(inspectedLayout.nodeCount)} entities · {formatCount(inspectedLayout.edgeCount)} relationships
-              {inspectedLayout.nodeCount > 0 && ` · ${(inspectedLayout.confidence * 100).toFixed(0)}% avg. confidence`}
+              {graphCounts(inspectedLayout.nodeCount, inspectedLayout.edgeCount)}
+              {inspectedLayout.nodeCount > 0 && tx(
+                ` · 平均置信度 ${(inspectedLayout.confidence * 100).toFixed(0)}%`,
+                ` · ${(inspectedLayout.confidence * 100).toFixed(0)}% avg. confidence`,
+              )}
             </p>
           </div>
 
           {(selectedNode || selectedEdge) && (
             <div className="border-b border-line p-4">
-              <div className="section-label mb-1">{selectedNode ? 'Selected entity' : 'Selected relationship'}</div>
+              <div className="section-label mb-1">{selectedNode ? tx('已选实体', 'Selected entity') : tx('已选关系', 'Selected relationship')}</div>
               {selectedNode ? (
                 <>
                   <p className="font-medium text-ink">{selectedNode.label}</p>
                   <p className="mt-0.5 text-xs text-ink-4">
-                    {formatTypeLabel(selectedNode.type)} · {(selectedNode.confidence * 100).toFixed(0)}% confidence
+                    {formatTypeLabel(selectedNode.type)} · {confidenceLabel(selectedNode.confidence)}
                   </p>
                   {selectedNode.description && (
                     <p className="mt-2 text-xs leading-5 text-ink-3">{selectedNode.description}</p>
@@ -884,7 +923,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                       {truncateLabel(graphNodeById.get(selectedEdge.target)?.label || selectedEdge.target, 34)}
                     </span>
                   </p>
-                  <p className="mt-0.5 text-xs text-ink-4">{(selectedEdge.confidence * 100).toFixed(0)}% confidence</p>
+                  <p className="mt-0.5 text-xs text-ink-4">{confidenceLabel(selectedEdge.confidence)}</p>
                   {selectedEdge.evidence && (
                     <p className="mt-2 text-xs leading-5 text-ink-3">{truncateLabel(selectedEdge.evidence, 220)}</p>
                   )}
@@ -894,7 +933,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
           )}
 
           <div className="border-b border-line p-4">
-            <div className="section-label mb-1">Categories</div>
+            <div className="section-label mb-1">{tx('类别', 'Categories')}</div>
             {inspectedLayout.categories.some((category) => category.nodeCount > 0) ? (
               <ul>
                 {inspectedLayout.categories.filter((category) => category.nodeCount > 0).map((category) => {
@@ -906,7 +945,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                         onClick={() => handleCategorySelect(inspectedLayout, category)}
                         className="flex w-full items-baseline justify-between gap-3 py-1.5 text-left text-[13px] transition-colors hover:text-ink"
                       >
-                        <span className={`truncate ${active ? 'font-medium text-ink' : 'text-ink-2'}`}>{category.label}</span>
+                        <span className={`truncate ${active ? 'font-medium text-ink' : 'text-ink-2'}`}>{tx(category.labelZh, category.label)}</span>
                         <span className="shrink-0 font-mono text-[11px] text-ink-4">{formatCount(category.nodeCount)}</span>
                       </button>
                     </li>
@@ -914,12 +953,12 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                 })}
               </ul>
             ) : (
-              <p className="text-xs text-ink-4">No entities in this domain yet.</p>
+              <p className="text-xs text-ink-4">{tx('该领域暂无实体。', 'No entities in this domain yet.')}</p>
             )}
           </div>
 
           <div className="p-4">
-            <div className="section-label mb-1.5">Example relationship</div>
+            <div className="section-label mb-1.5">{tx('示例关系', 'Example relationship')}</div>
             {inspectedLayout.representativeEdge ? (
               <>
                 <p className="text-[13px] leading-5">
@@ -940,7 +979,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({
                 )}
               </>
             ) : (
-              <p className="text-xs text-ink-4">No relationships in this domain yet.</p>
+              <p className="text-xs text-ink-4">{tx('该领域暂无关系。', 'No relationships in this domain yet.')}</p>
             )}
           </div>
         </aside>

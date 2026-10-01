@@ -4,6 +4,7 @@ import { findingTone } from './labels';
 import type { Tone } from './labels';
 import { diffText } from './diff';
 import { truncateText } from './text';
+import { currentLang, pick, type Lang } from '../i18n/core';
 
 /**
  * Layout logic for the document desk: which stage the contract is in, how
@@ -15,7 +16,11 @@ export type Stage = 'redaction' | 'setup' | 'running' | 'results' | 'export';
 /** Which rail a finished review shows; set by the stepper and the rail's own links. */
 export type DeskView = 'work' | 'setup' | 'export';
 
-export const STEP_LABELS = ['脱敏', '设置', '审查', '处理', '导出'] as const;
+const STEP_LABELS: { zh: string; en: string }[] = [
+  { zh: '脱敏', en: 'Redact' }, { zh: '设置', en: 'Set up' }, { zh: '审查', en: 'Review' }, { zh: '处理', en: 'Resolve' }, { zh: '导出', en: 'Export' },
+];
+/** The stepper's five steps in the current language. */
+export const stepLabels = (lang: Lang = currentLang()) => STEP_LABELS.map(step => pick(step.zh, step.en, lang));
 const STEP_OF: Record<Stage, number> = { redaction: 0, setup: 1, running: 2, results: 3, export: 4 };
 export const stepOf = (stage: Stage) => STEP_OF[stage];
 
@@ -118,25 +123,25 @@ export type OutlineEntry = ClauseName & { id: string; blockIds: string[]; kind: 
  * paragraphs before the first heading form the “首部”. A contract without any
  * headings lists its paragraphs instead.
  */
-export function clauseOutline(blocks: Block[]): OutlineEntry[] {
+export function clauseOutline(blocks: Block[], lang: Lang = currentLang()): OutlineEntry[] {
   const entries: OutlineEntry[] = [];
   let current: OutlineEntry | null = null;
   for (const block of blocks) {
     const heading = clauseName(block.text.split('\n')[0]);
     if (heading) { current = { ...heading, id: block.id, blockIds: [block.id], kind: 'clause' }; entries.push(current); }
     else if (current) current.blockIds.push(block.id);
-    else { current = { no: '首部', name: '当事人', id: block.id, blockIds: [block.id], kind: 'preamble' }; entries.push(current); }
+    else { current = { no: pick('首部', 'Preamble', lang), name: pick('当事人', 'Parties', lang), id: block.id, blockIds: [block.id], kind: 'preamble' }; entries.push(current); }
   }
   if (entries.some(e => e.kind === 'clause')) return entries;
   return blocks.map((b, i) => ({ id: b.id, blockIds: [b.id], kind: 'paragraph', no: `${i + 1}`, name: truncateText(b.text.split('\n')[0].trim(), 12) }));
 }
 
 /** How the rail names the place a finding sits: “第二条”, “2.1 付款安排”, “首部”, “第 3 段” or “全文”. */
-export function placeLabel(entries: OutlineEntry[], blockId: string | null): string {
+export function placeLabel(entries: OutlineEntry[], blockId: string | null, lang: Lang = currentLang()): string {
   const entry = blockId ? entries.find(e => e.blockIds.includes(blockId)) : undefined;
-  if (!entry) return '全文';
-  if (entry.kind === 'preamble') return '首部';
-  if (entry.kind === 'paragraph') return `第 ${entry.no} 段`;
+  if (!entry) return pick('全文', 'Whole contract', lang);
+  if (entry.kind === 'preamble') return pick('首部', 'Preamble', lang);
+  if (entry.kind === 'paragraph') return pick(`第 ${entry.no} 段`, `Paragraph ${entry.no}`, lang);
   return entry.no.startsWith('第') ? entry.no : `${entry.no} ${entry.name}`.trim();
 }
 

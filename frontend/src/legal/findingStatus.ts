@@ -1,4 +1,5 @@
 import type { Finding } from './types';
+import { currentLang, pick, type Lang } from '../i18n/core';
 
 /**
  * Rejected by the critic, still unconfirmed, supported, or quick (an ultra-fast finding that
@@ -21,15 +22,16 @@ export type RevisionInput = { done: boolean; busy: boolean; text: string; origin
  * without a suggestion) is saved as a human revision, which the exact-combination check
  * verifies before export. Rejected findings and missing clauses cannot seed a revision.
  */
-export function revisionState(f: Finding, s: RevisionInput) {
+export function revisionState(f: Finding, s: RevisionInput, lang: Lang = currentLang()) {
   const adoptable = s.text === f.suggested_text && !!f.suggested_text && f.revision_allowed === true;
-  const issue = !s.done ? '审查完成后方可操作。'
-    : findingStatus(f) === 'rejected' ? '该意见已被复核否定。'
-    : !f.block_id ? '缺失条款需在原文中人工补充。'
-    : !s.text.trim() ? '修订内容不能为空。'
-    : s.text.trim() === s.original.trim() ? '修订内容与原文相同。'
-    : f.kind === 'legal' && !s.legalBasis ? '请先确认已核对法规版本及适用性。'
-    : !adoptable && !s.manual ? '请确认保存为人工修订。' : '';
+  const say = (zh: string, en: string) => pick(zh, en, lang);
+  const issue = !s.done ? say('审查完成后方可操作。', 'Available once the review has finished.')
+    : findingStatus(f) === 'rejected' ? say('该意见已被复核否定。', 'Verification rejected this finding.')
+    : !f.block_id ? say('缺失条款需在原文中人工补充。', 'Add a missing clause to the contract by hand.')
+    : !s.text.trim() ? say('修订内容不能为空。', 'The revision cannot be empty.')
+    : s.text.trim() === s.original.trim() ? say('修订内容与原文相同。', 'The revision is the same as the original.')
+    : f.kind === 'legal' && !s.legalBasis ? say('请先确认已核对法规版本及适用性。', 'First confirm you have checked the version and applicability of the law.')
+    : !adoptable && !s.manual ? say('请确认保存为人工修订。', 'Confirm saving this as a manual revision.') : '';
   return { adoptable, decision: adoptable ? 'accepted' : 'draft', issue, canSubmit: !issue && !s.busy };
 }
 

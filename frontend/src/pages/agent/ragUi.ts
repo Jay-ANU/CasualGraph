@@ -1,4 +1,5 @@
 import type { RagReasoningMode, RagSource } from '../../types/api';
+import { pick } from '../../i18n/core';
 
 // Words that appear in many contract titles and file names, so they say nothing
 // about whether a title and a file name describe the same document.
@@ -53,7 +54,7 @@ export const formatSourceDocumentTitle = (source: RagSource): string => {
       return sourceName;
     }
   }
-  return title || sourceName || documentId || 'Source document';
+  return title || sourceName || documentId || pick('来源文档', 'Source document');
 };
 
 export const formatSourceChipLabel = (source: RagSource): string => {
@@ -70,21 +71,21 @@ export const formatSourceChipLabel = (source: RagSource): string => {
 export const getLoadingSteps = (tier: RagReasoningMode) => {
   if (tier === 'deep') {
     return [
-      'Reading the question…',
-      'Breaking the question down…',
-      'Searching the documents…',
-      'Reading the most relevant passages…',
-      'Cross-checking related clauses…',
-      'Working through the evidence…',
-      'Adding citations…',
-      'Finishing the answer…',
+      pick('正在理解问题…', 'Reading the question…'),
+      pick('正在拆解问题…', 'Breaking the question down…'),
+      pick('正在检索文档…', 'Searching the documents…'),
+      pick('正在阅读最相关的段落…', 'Reading the most relevant passages…'),
+      pick('正在交叉核对相关条款…', 'Cross-checking related clauses…'),
+      pick('正在梳理证据…', 'Working through the evidence…'),
+      pick('正在添加引用…', 'Adding citations…'),
+      pick('正在完善回答…', 'Finishing the answer…'),
     ];
   }
   return [
-    'Reading the question…',
-    'Searching the documents…',
-    'Reading the most relevant passages…',
-    'Writing the answer…',
+    pick('正在理解问题…', 'Reading the question…'),
+    pick('正在检索文档…', 'Searching the documents…'),
+    pick('正在阅读最相关的段落…', 'Reading the most relevant passages…'),
+    pick('正在撰写回答…', 'Writing the answer…'),
   ];
 };
 
