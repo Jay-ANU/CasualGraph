@@ -246,10 +246,11 @@ def test_decision_version_and_conflicting_edits(db):
     assert store.decide(rid,'u1','f2','accepted','改后段落',0)['version']==1
 
 
-def test_unverified_legal_change_cannot_be_accepted(db):
+def test_unverified_legal_change_can_be_user_accepted(db):
     c=store.contract(new_contract()); rid,_=store.create_review(c,'u1','fp',{})
     token=store.claim(rid); store.checkpoint(rid,token,{'findings':[{'id':'f1','block_id':'p1','kind':'legal','evidence_status':'unverified'}]},'completed')
-    with pytest.raises(HTTPException): store.decide(rid,'u1','f1','accepted','修改',0)
+    choice = store.decide(rid,'u1','f1','accepted','修改',0)
+    assert choice['decision'] == 'accepted' and choice['legal_basis_confirmed'] is False
 
 
 def ready_review():

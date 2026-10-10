@@ -1,6 +1,7 @@
 """User-requested legacy surfaces stay reachable without weakening tenant or offer permissions."""
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import sqlite3
@@ -84,18 +85,16 @@ def export_data(monkeypatch):
     cp.update(original_b64=base64.b64encode(raw).decode(), mapping={},
               redacted_blocks=cp['blocks'], redaction_version=2)
     c = {'id':'c','status':'ready','revision':1,'payload':cp,'matter_id':'m','org_id':'o'}
-    r = {'id':'r','status':'completed','payload':{
+    r = {'id':'r','contract_id':'c','created_at':0,'updated_at':0,'lease_until':0,'status':'completed','payload':{
         'engine_version':2,'audit_foundation_version':1,'contract_revision':1,
         'profile':{'external_processing_provider':'ydata','our_party':{'block_id':'p1','quote':'验收'}},
         'findings':[{'id':'f1','block_id':'p1','kind':'commercial','revision_allowed':True,
                      'verification_status':'supported','missing_facts':[],
                      'suggested_text':'验收后60日付款。','reason':'合成回款周期修改。'}],
         'decisions':{'f1':{'block_id':'p1','decision':'accepted','text':'验收后60日付款。','version':1}}}}
-    # Exporter fixture represents an already approved exact draft. The real
-    # check/approve transitions are covered in test_legal_audit_foundation.py.
-    approved = draft_release.snapshot(r, c)
-    r['payload']['draft_approval'] = {'version':draft_release.VERSION,
-        'fingerprint':approved['fingerprint'],'final_hash':approved['final_hash']}
+    # No model check or stored approval is needed for the user's current draft.
+    monkeypatch.setattr(draft_release, 'check', lambda *a,**kw: pytest.fail('export called a model check'))
+    monkeypatch.setattr(contracts.ydata, 'chat_json', lambda *a,**kw: pytest.fail('export called a model'))
     monkeypatch.setattr(draft_release, 'current', lambda conn,rid: (r,c))
     monkeypatch.setattr(contracts, '_review', lambda rid,user: (r,c))
     monkeypatch.setattr(contracts, '_access', lambda *a,**kw: None)
@@ -115,17 +114,29 @@ def test_word_download_defaults_to_native_pending_revisions(export_data):
     assert root.xpath('//w:ins//w:t/text()',namespaces=ns) == ['6']
 
 
-def test_word_does_not_silently_become_txt(export_data):
-    with pytest.raises(HTTPException) as error:
-        contracts.export('r', format='txt', user={'id':'u'})
-    assert error.value.status_code == 422
+def test_word_can_explicitly_export_txt_without_changing_default_docx(export_data):
+    result = contracts.export('r', format='txt', user={'id':'u'})
+    assert result.body.decode('utf-8-sig') == '验收后60日付款。'
+    assert '.txt' in result.headers['content-disposition']
+    assert '.docx' in contracts.export('r', user={'id':'u'}).headers['content-disposition']
 
 
-def test_word_requires_selected_edits(export_data):
-    export_data[0]['payload']['decisions'] = {}
+def test_word_with_unhandled_items_exports_original_after_one_confirmation(export_data):
+    r, c = export_data
+    r['payload']['decisions'] = {}
     with pytest.raises(HTTPException) as error:
         contracts.export('r', format='docx', user={'id':'u'})
-    assert error.value.status_code == 409
+    assert error.value.status_code == 409 and error.value.detail['pending_count'] == 1
+    assert error.value.detail['code'] == 'export_confirmation_required'
+    result = contracts.export('r', format='docx', user={'id':'u'}, confirmed=True, fingerprint=error.value.detail['fingerprint'])
+    assert result.body == base64.b64decode(c['payload']['original_b64'])
+
+
+def test_word_with_zero_findings_exports_unchanged_original_directly(export_data):
+    r, c = export_data
+    r['payload'].update(decisions={}, findings=[])
+    result = contracts.export('r', user={'id':'u'})
+    assert result.body == base64.b64decode(c['payload']['original_b64'])
 
 
 def test_original_identity_export_still_requires_edit_permission(export_data, monkeypatch):
@@ -137,11 +148,25 @@ def test_original_identity_export_still_requires_edit_permission(export_data, mo
     assert error.value.status_code == 403
 
 
-def test_native_export_requires_exact_draft_approval(export_data):
-    export_data[0]['payload'].pop('draft_approval')
-    with pytest.raises(HTTPException) as error:
-        contracts.export('r', user={'id':'u'})
-    assert error.value.status_code == 409
+def test_native_export_needs_neither_model_check_nor_stored_approval(export_data):
+    assert 'draft_approval' not in export_data[0]['payload']
+    assert 'draft_check' not in export_data[0]['payload']
+    assert contracts.export('r', user={'id':'u'}).status_code == 200
+
+
+def test_native_export_includes_exact_unverified_draft_text(export_data):
+    r, c = export_data
+    r['payload']['findings'][0].update(verification_status='rejected', revision_allowed=False, kind='legal')
+    r['payload']['decisions']['f1'].update(decision='draft', text='验收后30日付款。', legal_basis_confirmed=False)
+    state = draft_release.export_state(r, c)
+    assert state['pending_count'] == state['selected_count'] == 1
+    result = contracts.export('r', user={'id':'u'}, confirmed=True, fingerprint=state['fingerprint'])
+    with zipfile.ZipFile(io.BytesIO(result.body)) as archive:
+        root = etree.fromstring(archive.read('word/document.xml'))
+    ns = {'w':'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+    assert ''.join(root.xpath('//w:p//w:t[not(ancestor::w:del)]/text()', namespaces=ns)) == '验收后30日付款。'
+    assert root.xpath('//w:ins//w:t/text()', namespaces=ns) == ['3']
+    assert r['payload']['decisions']['f1']['decision'] == 'draft'
 
 
 def test_native_export_refuses_decision_changed_during_generation(export_data, monkeypatch):
@@ -153,4 +178,26 @@ def test_native_export_refuses_decision_changed_during_generation(export_data, m
     monkeypatch.setattr(contract_documents, 'redline_docx', changed)
     with pytest.raises(HTTPException) as error:
         contracts.export('r', user={'id':'u'})
-    assert error.value.status_code == 409
+    assert error.value.status_code == 409 and error.value.detail['code'] == 'export_stale'
+
+
+def test_docx_structural_limitation_offers_explicit_text_fallback(export_data):
+    r, c = export_data
+    raw = base64.b64decode(c['payload']['original_b64'])
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(raw)) as source, zipfile.ZipFile(out, 'w') as target:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename == 'word/document.xml':
+                root = etree.fromstring(data)
+                ns = {'w':'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                p = root.xpath('//w:body/w:p', namespaces=ns)[0]
+                p.insert(0, etree.Element('{'+ns['w']+'}bookmarkStart', {'{'+ns['w']+'}id':'9', '{'+ns['w']+'}name':'payment'}))
+                data = etree.tostring(root)
+            target.writestr(info, data)
+    c['payload'].update(original_b64=base64.b64encode(out.getvalue()).decode(), content_hash=hashlib.sha256(out.getvalue()).hexdigest())
+    with pytest.raises(HTTPException) as error:
+        contracts.export('r', user={'id':'u'})
+    assert error.value.status_code == 409 and '文字稿' in error.value.detail
+    text_result = contracts.export('r', format='txt', user={'id':'u'})
+    assert text_result.body.decode('utf-8-sig') == '验收后60日付款。'

@@ -2,6 +2,7 @@
 import traceback
 from contextlib import contextmanager
 import functools
+import hashlib
 import http.server
 import json
 import os
@@ -9,7 +10,7 @@ from pathlib import Path
 import re
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from playwright.sync_api import expect, sync_playwright
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -30,7 +31,7 @@ contract={'id':'c1','name':'测试采购合同.txt','status':'redaction_pending'
 finding={'id':'f1','rule_id':'performance','block_id':'p1','original_quote':contract['blocks'][0]['text'],'title':'付款与交货保障不匹配','kind':'commercial','severity':'high','impact':'我方预先承担全部资金风险。','reason':'付款条件未与确定的交货期限挂钩。','suggested_text':'【脱敏1】在交货验收后支付价款，交货应在签约后三十日内完成。','evidence_status':'not_applicable','missing_facts':[],'citations':[],'policy_ids':[],'verification_status':'supported','revision_allowed':True}
 review={'id':'r1','contract_id':'c1','status':'completed','stage':'检查完成，等待人工逐条复核','resumable':False,'engine_version':2,'profile':{'model':{'id':'glm-5.2','provider':'ydata'},'review_mode':'multi_agent'},'error':None,'findings':[finding],'coverage':[{'rule_id':'performance','title':'交付、验收与付款','status':'reviewed','note':'合成测试样例'}],'sources':[],'decisions':{},'policies':[],'notice':'合成测试数据，不是法律结论。'}
 review['collaboration']={'version':1,'max_parallel':3,'call_budget':40,'agents':[{'id':'legal','title':'法律风险审查','status':'completed','completed':2,'total':2,'note':''}]}
-policies=[]; calls=[]; allowed={'value':True,'plan':'max','unavailable':False}
+policies=[]; calls=[]; export_requests=[]; allowed={'value':True,'plan':'max','unavailable':False}
 # The started review stays running until the test has checked the progress view.
 running={'value':False,'step':0}
 def running_review():
@@ -44,6 +45,15 @@ def running_review():
     return {**review,'status':'running','stage':'多个审查 Agent 正在分别检查合同','findings':[],'created_at':time.time()-95,
             'progress':{'phase':'collaboration','completed':1+step,'total':5},'metrics':{'model_calls':5+2*step},
             'collaboration':{**review['collaboration'],'agents':agents}}
+def review_view():
+    decisions=review['decisions']
+    ids={f['id'] for f in review['findings']}
+    pending=sum(decisions.get(fid,{}).get('decision') not in ('accepted','rejected') for fid in ids)
+    selected=sum(decisions.get(fid,{}).get('decision') in ('accepted','draft') for fid in ids)
+    fingerprint=hashlib.sha256(json.dumps({'decisions':decisions,'findings':review['findings']},sort_keys=True).encode()).hexdigest()
+    return {**review,'export_state':{'ready':review['status'] in ('completed','partial'),'pending_count':pending,'selected_count':selected,
+            'fingerprint':fingerprint,'confirmation_required':pending>0}}
+
 headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,PATCH,DELETE,OPTIONS','Access-Control-Allow-Headers':'authorization,content-type'}
 def route_api(route):
     req=route.request; path=urlparse(req.url).path; method=req.method; calls.append((method,path))
@@ -83,21 +93,35 @@ def route_api(route):
         review['evidence_health']={'queried_topics':6,'topics_with_sources':4,'failed_or_empty_topics':2,'source_count':0,'non_authoritative_sources':0,'version_pending':0,'status':'gaps','notice':'合成检索状态。'}
         contract['reviews']=[{'id':'r1','status':'completed'}]
         running['value']=True;data=running_review()
-    elif path=='/legal/reviews/r1':data=running_review() if running['value'] else review
-    elif path=='/legal/reviews/r1/findings/f1':
-        data={**req.post_data_json,'version':1};review['decisions']['f1']=data
-    elif path=='/legal/reviews/r1/draft-check':
-        assert req.post_data_json['external_processing_confirmed'] is True
-        review['draft_check']={'id':'dc1','fingerprint':'a'*64,'final_hash':'b'*64,'status':'verified','checks':[{'finding_id':'f1','status':'supported','reason':'合成对比通过。'}],'whole_contract':{'status':'consistent','reason':'合成全文对比。'},'missing_facts':[]}
-        data=review
-    elif path=='/legal/reviews/r1/draft-approval':
-        assert req.post_data_json=={'fingerprint':'a'*64,'confirmed':True}
-        review['draft_approval']={'fingerprint':'a'*64,'final_hash':'b'*64,'user_id':'u1'}
-        data=review
+    elif path=='/legal/reviews/r1':data=running_review() if running['value'] else review_view()
+    elif path.startswith('/legal/reviews/r1/findings/'):
+        fid=path.rsplit('/',1)[1];payload=req.post_data_json
+        old=review['decisions'].get(fid,{})
+        assert payload['expected_version']==old.get('version',0)
+        data={**payload,'version':old.get('version',0)+1,'source':'user'}
+        review['decisions'][fid]=data
+    elif path in ('/legal/reviews/r1/draft-check','/legal/reviews/r1/draft-approval'):
+        raise AssertionError('Export must not call model-check or model-approval endpoints')
     elif path=='/legal/reviews/r1/export':
-        if urlparse(req.url).query == 'format=txt':
-            route.fulfill(status=200, headers=headers, content_type='text/plain; charset=utf-8', body='合成修订稿，不是法律结论。'); return
-        data=review
+        query=parse_qs(urlparse(req.url).query);export_requests.append(query)
+        view=review_view();state=view['export_state']
+        if query.get('format')==['json']:
+            data=view
+        elif query.get('fingerprint') != [state['fingerprint']]:
+            status=409;data={'detail':{'code':'export_stale','message':'修订稿已变化，请刷新后重新导出。',
+                'pending_count':state['pending_count'],'fingerprint':state['fingerprint']}}
+        elif state['pending_count'] and query.get('confirmed') != ['true']:
+            status=409;data={'detail':{'code':'export_confirmation_required','message':'请确认待处理项。',
+                'pending_count':state['pending_count'],'fingerprint':state['fingerprint']}}
+        else:
+            blocks=[]
+            for block in contract['blocks']:
+                revised=next((review['decisions'][f['id']]['text'] for f in review['findings'] if f.get('block_id')==block['id']
+                    and review['decisions'].get(f['id'],{}).get('decision') in ('accepted','draft')),None)
+                blocks.append(revised or block['text'])
+            text='\n'.join(blocks)
+            mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document' if query.get('format')==['docx'] else 'text/plain; charset=utf-8'
+            route.fulfill(status=200,headers=headers,content_type=mime,body=text);return
     elif path=='/legal/reviews/r1/questions':data={'messages':[]}
     elif path=='/legal/policies' and method=='GET':data={'policies':policies}
     elif path=='/legal/policies' and method=='POST':
@@ -284,33 +308,45 @@ try:
         # The adopted edit is written into the paper as a redline.
         expect(page.locator('#legal-block-p1 ins').first).to_be_visible()
         expect(page.locator('#legal-block-p1 .lv-marker.is-revised')).to_have_count(1)
-        page.locator('.lv-handled').get_by_role('button',name='导出',exact=True).click()
+        # Zero pending items: one click downloads, with no confirmation or model endpoint.
+        export_count=len(export_requests)
+        with page.expect_download() as direct:
+            page.locator('.lv-handled').get_by_role('button',name='导出',exact=True).click()
+        direct.value.save_as(OUT/'synthetic-direct-revision.txt')
+        assert len(export_requests)==export_count+1 and 'confirmed' not in export_requests[-1]
+        expect(page.get_by_role('dialog')).to_have_count(0)
+        assert (OUT/'synthetic-direct-revision.txt').read_text()==finding['suggested_text']
+        # A user may export unchanged text too; pending work prompts once and cancel does no work.
+        page.locator('.lv-decided').get_by_role('button',name='撤销',exact=True).click()
+        expect(page.get_by_role('button',name='采纳修改',exact=True)).to_be_visible()
+        steps.get_by_role('button',name='导出',exact=True).click()
         expect(steps.locator('[aria-current="step"]')).to_have_text('5导出')
-        expect(page.get_by_role('button',name='导出修订文本',exact=True)).to_be_disabled()
-        page.get_by_label('同意将已采纳修改（脱敏）提交原审查模型核验').check()
-        page.get_by_role('button',name='开始核验',exact=True).click()
-        page.get_by_label('已核对全部修改及剩余风险，确认生成修订版').check()
-        page.get_by_role('button',name='确认修订',exact=True).click()
         expect(page.get_by_role('button',name='导出修订文本',exact=True)).to_be_enabled()
-        export_count = sum(path == '/legal/reviews/r1/export' for _, path in calls)
+        expect(page.get_by_role('button',name='确认修订',exact=True)).to_have_count(0)
+        export_count=len(export_requests)
         page.get_by_role('button',name='导出修订文本',exact=True).click()
-        expect(page.get_by_role('dialog', name='导出确认')).to_be_visible()
-        assert sum(path == '/legal/reviews/r1/export' for _, path in calls) == export_count
+        confirm=page.get_by_role('dialog',name='导出确认')
+        expect(confirm).to_contain_text('还有 1 项待处理')
+        assert len(export_requests)==export_count
         page.keyboard.press('Escape')
         expect(page.get_by_role('dialog')).to_have_count(0)
+        assert len(export_requests)==export_count
         page.get_by_role('button',name='导出修订文本',exact=True).click()
         with page.expect_download() as revision:
             page.get_by_role('button',name='确认导出',exact=True).click()
         revision.value.save_as(OUT/'synthetic-revision.txt')
+        assert len(export_requests)==export_count+1 and export_requests[-1]['confirmed']==['true']
+        assert (OUT/'synthetic-revision.txt').read_text()==contract['blocks'][0]['text']
         with page.expect_download() as download:page.get_by_role('button',name='导出报告',exact=True).click()
         download.value.save_as(OUT/'synthetic-review.md')
+        assert not any(path.endswith(('/draft-check','/draft-approval')) for _,path in calls)
         page.screenshot(path=str(OUT/'legal-v2-review-desktop.png'))
         # On a phone the rail and the paper share the screen through one switch.
         page.set_viewport_size({'width':390,'height':844})
         views=page.get_by_role('group',name='工作区视图')
         expect(views).to_be_visible()
         expect(page.get_by_role('region',name='合同正文')).to_be_hidden()
-        views.get_by_role('button',name='合同正文',exact=True).click()
+        views.get_by_role('button',name='修订稿',exact=True).click()
         expect(page.get_by_role('region',name='合同正文')).to_be_visible()
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+2')
         page.screenshot(path=str(OUT/'legal-v2-mobile.png'),full_page=True)
@@ -368,6 +404,85 @@ try:
         page.get_by_role('group',name='Interface language').get_by_role('button',name='中文').click()
         expect(page.get_by_role('heading',name='合同库')).to_be_visible()
         assert not errors,errors
+        # Both fast tiers land directly on the readable model draft, including on phones.
+        saved_review=json.loads(json.dumps(review));saved_contract=json.loads(json.dumps(contract))
+        for tier in ('ultra_fast','fast'):
+            review.clear();review.update(json.loads(json.dumps(saved_review)))
+            review.update(review_tier=tier)
+            review['profile']['review_tier']=tier
+            review['decisions']={'f1':{'decision':'draft','text':finding['suggested_text'],'version':1,'source':'model',
+                                     'manual_edit_confirmed':False,'legal_basis_confirmed':False}}
+            review['draft_check']={'id':'optional','fingerprint':'old','final_hash':'old','status':'rejected','checks':[],
+                                   'whole_contract':{'status':'conflict','reason':'合成模型复核异议。'},'missing_facts':['合成未决事实。']}
+            page.set_viewport_size({'width':390,'height':844})
+            page.goto('http://127.0.0.1:4173/legal?contract=c1')
+            paper=page.get_by_role('region',name='合同正文')
+            expect(paper).to_be_visible()
+            expect(page.get_by_role('group',name='修订稿显示方式').get_by_role('button',name='修订稿',exact=True)).to_have_attribute('aria-pressed','true')
+            expect(page.locator('#legal-block-p1 .lv-para')).to_contain_text(finding['suggested_text'])
+            expect(page.locator('#legal-block-p1 ins')).to_have_count(0)
+            page.get_by_role('button',name='导出修订稿',exact=True).click()
+            expect(page.get_by_role('dialog',name='导出确认')).to_contain_text('还有 1 项待处理')
+            with page.expect_download() as draft_download:
+                page.get_by_role('button',name='确认导出',exact=True).click()
+            draft_download.value.save_as(OUT/f'{tier}-model-draft.txt')
+            assert (OUT/f'{tier}-model-draft.txt').read_text()==finding['suggested_text']
+            assert review['decisions']['f1']['source']=='model' and review['decisions']['f1']['decision']=='draft'
+            # Direct editing is available without first undoing or claiming a legal check.
+            page.get_by_role('group',name='工作区视图').get_by_role('button',name='批注',exact=True).click()
+            page.get_by_role('button',name='编辑',exact=True).click()
+            edited='【脱敏1】在交货验收后三十日内付款，交付日期由双方书面约定。'
+            page.get_by_label('编辑本段修订',exact=True).fill(edited)
+            page.get_by_role('button',name='保存修改',exact=True).click()
+            expect(page.locator('.lv-decided')).to_contain_text('已采纳')
+            assert review['decisions']['f1']['legal_basis_confirmed'] is False
+            assert review['decisions']['f1']['manual_edit_confirmed'] is False
+            page.get_by_role('group',name='工作区视图').get_by_role('button',name='修订稿',exact=True).click()
+            expect(page.locator('#legal-block-p1 .lv-para')).to_contain_text(edited)
+            with page.expect_download() as edited_download:
+                page.get_by_role('button',name='导出修订稿',exact=True).click()
+            expect(page.get_by_role('dialog')).to_have_count(0)
+            edited_download.value.save_as(OUT/f'{tier}-edited-draft.txt')
+            assert (OUT/f'{tier}-edited-draft.txt').read_text()==edited
+            assert 'confirmed' not in export_requests[-1]
+            audit_layout(page,f'legal-{tier}-draft')
+        # A changed draft invalidates a previous confirmation and refreshes the preview.
+        review['decisions']['f1'].update(decision='draft',source='model')
+        page.goto('http://127.0.0.1:4173/legal?contract=c1')
+        page.get_by_role('button',name='导出修订稿',exact=True).click()
+        expect(page.get_by_role('dialog',name='导出确认')).to_contain_text('还有 1 项待处理')
+        review['findings'].append({**finding,'id':'f2','block_id':None,'title':'合成未决条款','suggested_text':''})
+        page.get_by_role('button',name='确认导出',exact=True).click()
+        expect(page.get_by_role('dialog')).to_have_count(0)
+        expect(page.get_by_role('status').filter(has_text='修订稿已更新，请查看后再次导出。')).to_be_visible()
+        page.get_by_role('button',name='导出修订稿',exact=True).click()
+        expect(page.get_by_role('dialog',name='导出确认')).to_contain_text('还有 2 项待处理')
+        with page.expect_download():page.get_by_role('button',name='确认导出',exact=True).click()
+        # A model disagreement remains an actionable note, not an export or editing veto.
+        review.clear();review.update(json.loads(json.dumps(saved_review)))
+        review['findings'][0].update(verification_status='rejected',revision_allowed=False,verification_note='模型对该建议存在异议。')
+        review['decisions']={}
+        page.set_viewport_size({'width':1440,'height':1000})
+        page.goto('http://127.0.0.1:4173/legal?contract=c1')
+        expect(page.get_by_text('模型对该建议存在异议。',exact=True)).to_be_visible()
+        page.get_by_role('button',name='采纳修改',exact=True).click()
+        expect(page.locator('.lv-decided')).to_contain_text('已采纳')
+        with page.expect_download():page.get_by_role('button',name='导出修订稿',exact=True).click()
+        # No findings and no edits still allow a one-click export; Word also offers an explicit TXT option.
+        review['findings']=[];review['decisions']={}
+        page.goto('http://127.0.0.1:4173/legal?contract=c1')
+        with page.expect_download():page.locator('.lv-handled').get_by_role('button',name='导出',exact=True).click()
+        expect(page.get_by_role('dialog')).to_have_count(0)
+        contract.update(format='docx',name='测试采购合同.docx')
+        page.goto('http://127.0.0.1:4173/legal?contract=c1')
+        page.get_by_role('list',name='合同审查步骤').get_by_role('button',name='导出',exact=True).click()
+        with page.expect_download() as word_download:page.get_by_role('button',name='导出 Word 修订版',exact=True).click()
+        assert word_download.value.suggested_filename.endswith('.docx')
+        with page.expect_download() as text_download:page.get_by_role('button',name='导出文字稿',exact=True).click()
+        assert text_download.value.suggested_filename.endswith('.txt') and export_requests[-1]['format']==['txt']
+        assert not any(path.endswith(('/draft-check','/draft-approval')) for _,path in calls)
+        review.clear();review.update(saved_review);contract.clear();contract.update(saved_contract)
+        assert not errors,errors
         # Reduced motion: the desk renders fully with no animation left running.
         still=browser.new_context(viewport={'width':1440,'height':900},reduced_motion='reduce')
         still.add_init_script("localStorage.setItem('token','synthetic');localStorage.setItem('user',JSON.stringify({id:'u1',role:'user',plan:'max'}));")
@@ -377,7 +492,7 @@ try:
         still.close()
         assert not AXE_VIOLATIONS, AXE_VIOLATIONS
         browser.close()
-    print('PASS: actual built UI with synthetic APIs: Max gate, library, redaction compare, 20 scenarios, party picking on paper, live review, numbered findings, redline, export, policies, mobile, English switch.')
+    print('PASS: actual built UI with synthetic APIs: Max gate, library, redaction compare, 20 scenarios, party picking on paper, live review, numbered findings, user-controlled export, fast model drafts, direct edits, stale confirmation, disputed findings, Word/TXT choices, policies, mobile, English switch.')
 except Exception:
     try:
         page.screenshot(path=str(OUT/'failure.png'), full_page=True)

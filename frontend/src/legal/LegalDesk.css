@@ -302,7 +302,12 @@
   position: sticky; top: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 6px 24px;
   background: rgba(245, 245, 247, 0.86); border-bottom: 1px solid rgba(0, 0, 0, 0.06); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
 }
+.lv-desk-bar { flex-wrap: wrap; }
 .lv-desk-file { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; color: var(--lv-ink-3); white-space: nowrap; }
+.lv-draft-toolbar { flex-basis: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 6px; }
+.lv-draft-toolbar > div { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.lv-draft-toolbar .lv-toggle { padding: 6px 8px; }
+.lv-draft-toolbar > button { flex-shrink: 0; }
 .lv-desk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 500; color: var(--lv-ink); }
 .lv-desk-detail { font-size: 12.5px; color: var(--lv-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lv-toggle { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px; border-radius: 980px; font-size: 12.5px; font-weight: 500; white-space: nowrap; background: var(--lv-surface); color: var(--lv-ink); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08); transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease; }
@@ -580,6 +585,8 @@ button.lv-reference:hover, a.lv-reference:hover { background: #dcdce1; color: va
 .lv-clause-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* Export */
+.lv-export-summary { display: grid; gap: 8px; margin-bottom: 20px; font-size: 13px; }
+.lv-export-summary > p { color: var(--lv-ink-3); line-height: 1.6; }
 .lv-export-list { border-top: 1px solid var(--lv-line-strong); }
 .lv-export-row { display: flex; align-items: center; gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--lv-line); }
 .lv-export-row > .lv-tile { width: 40px; height: 40px; border-radius: 11px; }

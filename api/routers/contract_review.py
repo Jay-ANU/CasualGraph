@@ -10,9 +10,9 @@ import zipfile
 from lxml import etree
 from pypdf.errors import PdfReadError
 from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -132,13 +132,13 @@ def _view(c: dict):
             'replacement_count': len(p.get('mapping', mapping)), 'reviews': store.reviews(c['id'])}
 
 
-def _review_view(r: dict):
+def _review_view(r: dict, c: dict | None = None):
     from legal.review_v2 import all_sources, review_tier
     p = r['payload']
     sources = all_sources(p)
     now = time.time()
     expired = (r['status'] == 'running' and r['lease_until'] < now) or (r['status'] == 'queued' and r.get('updated_at', now) < now - 600)
-    can_resume = not p.get('decisions') and (r['status'] == 'failed' or expired or (r['status'] == 'partial' and p.get('retryable') is True))
+    can_resume = not store.has_user_decisions(p) and (r['status'] == 'failed' or expired or (r['status'] == 'partial' and p.get('retryable') is True))
     return {'transaction_brief': p.get('transaction_brief'), 'evidence_health': evidence_health(p.get('searches', {}), sources),
             'id': r['id'], 'contract_id': r['contract_id'], 'status': r['status'], 'created_at': r['created_at'],
             'stage': p.get('stage', '等待执行'), 'error': p.get('error'), 'resumable': can_resume,
@@ -146,6 +146,7 @@ def _review_view(r: dict):
             'decisions': p.get('decisions', {}), 'profile': p.get('profile', {}), 'policies': p.get('policies', []),
             'engine_version': p.get('engine_version', 1), 'intake': p.get('intake', {'facts': []}),
             'draft_check': p.get('draft_check'), 'draft_approval': p.get('draft_approval'), 'research': p.get('research'),
+            'export_state': draft_release.export_state(r, c or store.contract(r['contract_id'])),
             'collaboration': p.get('collaboration'), 'metrics': p.get('metrics', {}),
             'summary': p.get('summary', {}), 'progress': p.get('progress'), 'batch_errors': p.get('batch_errors', {}),
             'step_errors': p.get('step_errors', []),
@@ -159,7 +160,7 @@ def _review_view(r: dict):
 @public_router.get('/version')
 def version():
     return {'product': 'contract-review', 'version': '1.0.0', 'law_source': 'external', 'rules_source': 'database',
-            'max_only': True, 'model_gateway': 'ydata', 'model_selection_version': 1, 'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': 1, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION}
+            'max_only': True, 'model_gateway': 'ydata', 'model_selection_version': 1, 'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': draft_release.VERSION, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION}
 
 
 @public_router.get('/access')
@@ -198,7 +199,7 @@ def capabilities(user: dict = Depends(get_current_user)):
     except Exception:
         encrypted = False
     return {'product': 'contract-review', 'model_configured': ydata.configured(), 'model_gateway': 'ydata', 'encryption_configured': encrypted,
-            'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': 1, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION,
+            'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': draft_release.VERSION, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION,
             'scenario_catalog': scenarios.catalog(), 'upload_disclosure': data_boundary.disclosure(), 'law_search': external_law.provider_status(), 'contract_types': [scene['label'] for scene in scenarios.catalog()['scenarios']],
             'limits': {'max_upload_mb': 10, 'max_characters': documents.MAX_TEXT, 'max_blocks': documents.MAX_BLOCKS},
             'review_tiers': list(skill_registry.TIERS), 'skills_version': skill_registry.VERSION}
@@ -318,8 +319,8 @@ def start_review(cid: str, request: ReviewRequest, user: dict = Depends(get_curr
 
 @router.get('/reviews/{rid}')
 def get_review(rid: str, user: dict = Depends(get_current_user)):
-    r, _ = _review(rid, user)
-    return _review_view(r)
+    r, c = _review(rid, user)
+    return _review_view(r, c)
 
 
 @router.post('/reviews/{rid}/resume', status_code=202)
@@ -327,7 +328,7 @@ def resume(rid: str, user: dict = Depends(get_current_user)):
     r, c = _review(rid, user, True)
     if r['status'] in ('completed', 'cancelled') or (r['status'] == 'partial' and not r['payload'].get('retryable')):
         raise HTTPException(409, '该任务已结束；补充事实或改变要求时请新建审查。')
-    if r['payload'].get('decisions'):
+    if store.has_user_decisions(r['payload']):
         raise HTTPException(409, '本轮已有人工决定，请新建审查，避免覆盖已确认修改。')
     if r['payload'].get('profile', {}).get('external_processing_provider') != 'ydata':
         raise HTTPException(409, '旧任务未确认 YData 处理授权，请选择模型并新建审查。')
@@ -345,44 +346,48 @@ def decision(rid: str, fid: str, request: DecisionRequest, user: dict = Depends(
 
 
 @router.get('/reviews/{rid}/export')
-def export(rid: str, format: Literal['json', 'docx', 'txt'] | None = None, user: dict = Depends(get_current_user)):
+def export(rid: str, format: Literal['json', 'docx', 'txt'] | None = None, user: dict = Depends(get_current_user),
+           confirmed: bool = False, fingerprint: Annotated[str | None, Query(pattern=r'^[a-f0-9]{64}$')] = None):
     r, c = _review(rid, user)
     if r['status'] not in ('completed', 'partial'):
         raise HTTPException(409, '请在审查完成后导出。')
     # Require editing permission for reconstructed originals: viewers can only export redacted reports.
     p, cp = r['payload'], c['payload']
     format = format or ('docx' if cp['format'] == 'docx' else 'json')
-    if cp['format'] == 'docx' and format == 'txt':
-        raise HTTPException(422, 'Word 合同请导出带修订痕迹的 DOCX；审查报告可单独导出。')
     if format == 'json':
-        content = json.dumps(_review_view(r), ensure_ascii=False, indent=2).encode()
+        content = json.dumps(_review_view(r, c), ensure_ascii=False, indent=2).encode()
         mime, filename = 'application/json', f'review-{rid[:8]}.json'
     else:
         _access(c, user, True)
-        export_snapshot = draft_release.assert_exportable(r, c)
+        export_snapshot = draft_release.assert_exportable(r, c, confirmed=confirmed, fingerprint=fingerprint)
         changes = {d['block_id']: documents.restore(d['text'], cp.get('mapping', {}))
-                   for d in p.get('decisions', {}).values() if d['decision'] == 'accepted'}
+                   for d in export_snapshot['selected_changes']}
         if format == 'docx':
             if cp['format'] != 'docx':
                 raise HTTPException(422, '仅 DOCX 原件可导出 Word 修订；其他格式请选择文字修改稿。')
-            if not changes:
-                raise HTTPException(409, '尚未选择需要纳入修订稿的修改，请先接受至少一项建议。')
             try:
-                content = documents.redline_docx(base64.b64decode(cp['original_b64']), cp['blocks'], changes)
+                original = base64.b64decode(cp['original_b64'], validate=True)
+                if cp.get('content_hash') and hashlib.sha256(original).hexdigest() != cp['content_hash']:
+                    raise ValueError('原件内容已变化，请重新上传后审查。')
+                # The redline writer returns the original bytes when nothing changed.
+                content = documents.redline_docx(original, cp['blocks'], changes)
             except ValueError as exc:
-                raise HTTPException(409, str(exc)) from exc
+                raise HTTPException(409, f'{exc} 如需当前文字内容，可选择文字稿。') from exc
+            except (KeyError, zipfile.BadZipFile, etree.XMLSyntaxError) as exc:
+                raise HTTPException(409, '原始 Word 文件无法读取，请重新上传或选择文字稿。') from exc
             mime, filename = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', f'revised-{rid[:8]}.docx'
         else:
             content = '\n\n'.join(changes.get(b['id'], b['text']) for b in cp['blocks']).encode('utf-8-sig')
             mime, filename = 'text/plain; charset=utf-8', f'revised-{rid[:8]}.txt'
+        _access(c, user, True)
     with store.transaction() as conn:
         details = {'format': format}
         if format != 'json':
             latest, latest_contract = draft_release.current(conn, rid)
-            if draft_release.assert_exportable(latest, latest_contract)['fingerprint'] != export_snapshot['fingerprint']:
-                raise HTTPException(409, '生成文件期间修订发生变化，未导出旧稿。')
+            draft_release.assert_exportable(latest, latest_contract, confirmed=confirmed, fingerprint=export_snapshot['fingerprint'])
             details.update(fingerprint=export_snapshot['fingerprint'], final_hash=export_snapshot['final_hash'],
-                           file_hash=hashlib.sha256(content).hexdigest())
+                           file_hash=hashlib.sha256(content).hexdigest(), pending_count=export_snapshot['pending_count'],
+                           pending_acknowledged=confirmed is True)
         store.audit(conn, str(user['id']), c['matter_id'], c['org_id'], 'review.exported', rid, details)
     return Response(content=content, media_type=mime, headers={'Content-Disposition': f'attachment; filename="{filename}"', 'Cache-Control': 'no-store'})
 

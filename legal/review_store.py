@@ -205,6 +205,31 @@ def checkpoint(rid: str, token: str, payload: dict, status='running'):
             raise RuntimeError('review_lease_lost')
 
 
+def _model_draft(decision: dict) -> bool:
+    return decision.get('decision') == 'draft' and decision.get('source') == 'model' and decision.get('manual') is False
+
+
+def has_user_decisions(payload: dict) -> bool:
+    """Generated drafts can be rebuilt on retry; a user's choice must be preserved."""
+    return any(not _model_draft(d) for d in payload.get('decisions', {}).values())
+
+
+def validate_replacement(original: str, replacement: str, contract_payload: dict):
+    """Check locally reconstructable text, without asking a model to approve it."""
+    if not isinstance(replacement, str) or not replacement.strip() or len(replacement) > 12000:
+        fail(422, '修改文本为空或过长，请修正。')
+    if re.search(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', replacement):
+        fail(422, '修改包含非法控制字符，请修正。')
+    tokens = re.findall(r'【(?:补充)?脱敏\d+】', replacement)
+    if not set(tokens).issubset(contract_payload.get('mapping', {})):
+        fail(422, '修改包含未知脱敏代称，请先确认对应的原文。')
+    if tokens != re.findall(r'【(?:补充)?脱敏\d+】', original):
+        fail(422, '修改改变了脱敏主体的顺序或数量，请先核对主体映射。')
+    from legal.review_questions import redact_note
+    if redact_note(replacement, contract_payload) != replacement:
+        fail(422, '手工改稿含新增身份信息，请先建立新的脱敏合同版本。')
+
+
 def decide(rid: str, user_id: str, finding_id: str, decision: str, text: str, expected_version: int, *, legal_basis_confirmed: bool = False, manual_edit_confirmed: bool = False):
     with transaction() as conn:
         row = conn.execute('SELECT * FROM legal_reviews WHERE id=?', (rid,)).fetchone()
@@ -222,50 +247,48 @@ def decide(rid: str, user_id: str, finding_id: str, decision: str, text: str, ex
             fail(409, '该意见已由其他人处理，请刷新。')
         if decision not in ('accepted', 'draft', 'rejected', 'pending'):
             fail(400, '无效的处理决定。')
+        same_block = {k: d for k, d in decisions.items()
+                      if k != finding_id and finding.get('block_id') and d.get('block_id') == finding['block_id']
+                      and d.get('decision') in ('accepted', 'draft')}
         if decision in ('accepted', 'draft'):
-            cp = conn.execute('SELECT payload FROM legal_contracts WHERE id=?', (row['contract_id'],)).fetchone()
+            cp = conn.execute('SELECT * FROM legal_contracts WHERE id=?', (row['contract_id'],)).fetchone()
+            if not cp:
+                fail(404, '合同不存在。')
+            if payload.get('contract_revision') is not None and (cp['status'] != 'ready' or payload['contract_revision'] != cp['revision']):
+                fail(409, '原件或脱敏版本已变化，请重新审查。')
             contract_payload = decode(cp['payload'])
-            if payload.get('engine_version') == 2:
-                from legal.review_quality import edit_warnings
-                if finding.get('verification_status') == 'rejected':
-                    fail(409, '已被复核否定的意见不能作为修订依据。')
-                # One-click adoption needs the critic's support. A human revision (draft) may start from
-                # any finding that was not rejected; the exact selected combination is verified before export.
-                if decision == 'accepted' and (finding.get('revision_allowed') is not True
-                                               or finding.get('verification_status') != 'supported' or finding.get('missing_facts')):
-                    fail(409, '此建议未完成复核或缺少关键事实，不能直接采纳；可编辑后保存为人工修订。')
-                if finding['kind'] == 'legal' and legal_basis_confirmed is not True:
-                    fail(409, '请先核对法条版本及适用条件，再确认纳入修订。')
-                if decision == 'accepted' and text != finding.get('suggested_text'):
-                    fail(409, '手工改稿必须先保存为待复核草稿，不能沿用原建议的复核结果。')
-                if decision == 'draft' and manual_edit_confirmed is not True:
-                    fail(409, '请确认将手工改稿保存为未经复核的草稿。')
-                from legal.review_questions import redact_note
-                if redact_note(text, contract_payload) != text:
-                    fail(422, '手工改稿含新增身份信息，请先建立新的脱敏合同版本。')
-                original = next((b['text'] for b in contract_payload['redacted_blocks'] if b['id'] == finding.get('block_id')), '')
-                if not original or edit_warnings(original, text):
-                    fail(422, '修改范围、主体代称或文本完整性检查未通过，请人工核对。')
-            allowed = set(contract_payload.get('mapping', {}))
-            if not set(re.findall(r'【脱敏\d+】', text)).issubset(allowed) or re.search(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', text):
-                fail(422, '修改包含未知脱敏代称或非法控制字符，请修正。')
             if not finding.get('block_id') or not text.strip():
                 fail(400, '缺失条款或空修改建议不能自动回写，请人工编辑合同。')
-            if payload.get('engine_version') != 2 and finding['kind'] == 'legal' and finding['evidence_status'] != 'source_matched':
-                fail(409, '法律依据尚未核验，该建议不能直接接受回写。')
-            if any(k != finding_id and d['decision'] in ('accepted', 'draft') and d['block_id'] == finding['block_id'] for k, d in decisions.items()):
-                fail(409, '该段落已有另一条接受的修改，请先撤销或合并修改。')
-        # Any decision change invalidates the exact selected-combination review.
+            blocks = contract_payload.get('redacted_blocks', contract_payload.get('blocks', []))
+            matches = [b for b in blocks if b['id'] == finding['block_id']]
+            if len(matches) != 1:
+                fail(409, '修改定位缺失或重复，请重新审查。')
+            validate_replacement(matches[0]['text'], text, contract_payload)
+            if any(not _model_draft(d) for d in same_block.values()):
+                fail(409, '该段落已有另一条人工确认或保存的修改，请先撤销或合并修改。')
+        superseded = []
+        if decision in ('accepted', 'draft', 'rejected'):
+            for other_id, other in same_block.items():
+                if _model_draft(other):
+                    # A user's paragraph choice replaces automatic preselection. Bump the
+                    # displaced finding's version so a concurrent stale edit cannot restore it.
+                    other.update(decision='pending', text='', version=other.get('version', 0) + 1,
+                                 source='user', user_id=user_id, superseded_by=finding_id)
+                    superseded.append(other_id)
+        # Model checks remain optional advice tied to this exact revision.
         payload.pop('draft_check', None)
         payload.pop('draft_approval', None)
         decisions[finding_id] = {'decision': decision, 'text': text, 'block_id': finding.get('block_id'),
-                                 'user_id': user_id, 'version': expected_version + 1, 'manual': decision == 'draft',
+                                 'user_id': user_id, 'version': expected_version + 1,
+                                 'manual': decision == 'draft' or (decision == 'accepted' and text != finding.get('suggested_text')),
+                                 'source': 'user',
                                  'legal_basis_confirmed': legal_basis_confirmed is True,
                                  'manual_edit_confirmed': manual_edit_confirmed is True}
         conn.execute('UPDATE legal_reviews SET payload=?,updated_at=? WHERE id=?', (encode(payload), time.time(), rid))
         c = conn.execute('SELECT org_id FROM legal_contracts WHERE id=?', (row['contract_id'],)).fetchone()
         audit(conn, user_id, row['matter_id'], c['org_id'], 'review.decision', rid,
-              {'finding_id': finding_id, 'decision': decision, 'version': expected_version + 1})
+              {'finding_id': finding_id, 'decision': decision, 'version': expected_version + 1,
+               'superseded_model_drafts': superseded})
         return decisions[finding_id]
 
 def cancel_review(rid: str, user_id: str, org_id: str):
@@ -292,7 +315,7 @@ def queue_resume(rid: str):
             fail(404, '审查任务不存在。')
         now = time.time()
         payload = decode(row['payload'])
-        if payload.get('decisions'):
+        if has_user_decisions(payload):
             fail(409, '本轮已有人工决定，请新建审查。')
         if row['status'] in ('completed', 'cancelled') or (row['status'] == 'partial' and not payload.get('retryable')):
             fail(409, '该任务不可重试。')

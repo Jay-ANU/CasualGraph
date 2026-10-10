@@ -221,10 +221,10 @@ def validate(raw: Any, rules: list[dict], blocks: list[dict], sources: list[dict
     return {'coverage': coverage, 'findings': findings, 'rejected_findings': rejected}
 
 def apply_verification(checked: dict, raw: Any) -> dict:
-    """Every finding and every claimed coverage item needs an explicit disposition.
+    """Attach the critic's opinion without discarding the draft the person is reviewing.
 
-    Only an explicit "supported" enables one-click adoption. An uncertain finding keeps
-    its analysis and proposed wording so a reviewer can still edit and adopt it by hand.
+    revision_allowed describes model support, not permission to edit or export. The
+    reviewer can keep either proposal, change it or disregard the critic's assessment.
     """
     raw = raw if isinstance(raw, dict) else {}
     items = [r for r in rows(raw.get('checks')) if isinstance(r, dict)]
@@ -234,18 +234,11 @@ def apply_verification(checked: dict, raw: Any) -> dict:
         audit = index.get(f['id'], {})
         disposition, reason = audit.get('status'), text(audit.get('reason'), 1800)
         if counts[f['id']] != 1 or disposition not in ('supported', 'uncertain', 'rejected') or not reason.strip():
-            disposition, reason = 'uncertain', '本条意见未得到完整的逐项复核，不能直接纳入修订。'
+            disposition, reason = 'uncertain', '本条意见未得到完整的逐项复核，请结合原文决定是否采用。'
         f['verification_status'], f['verification_note'] = disposition, reason
         f['revision_allowed'] = bool(disposition == 'supported' and audit.get('replacement_supported') is True
                                      and f['suggested_text'] and not f['missing_facts']
                                      and not f['validation_warnings'] and f['evidence_status'] != 'unverified')
-        if disposition == 'rejected':
-            f['suggested_text'] = ''
-            f['title'] = '复核未支持：' + f['title'][:280]
-            f['impact'] = '初审意见未通过复核，不能把它当成已经成立的风险。'
-            f['reason'] = '逐项复核说明：' + reason
-        elif disposition != 'supported':
-            f['title'] = '待确认：' + f['title'][:280]
         f['needs_confirmation'] = f['kind'] == 'legal' or not f['revision_allowed']
     checks = [r for r in rows(raw.get('coverage_checks')) if isinstance(r, dict)]
     check_counts = Counter(text(r.get('rule_id'), 100) for r in checks)
@@ -286,16 +279,29 @@ def finding_brief(f: dict) -> dict:
             'suggested_text': f.get('suggested_text', '') if f.get('revision_allowed') else ''}
 
 def consolidate(batches: dict) -> tuple[list[dict], list[dict]]:
-    """Keep conflicting replacements even when their issue title and quote agree."""
-    found, seen, coverage = [], set(), []
+    """Keep conflicting replacements and differing assessments of identical proposals."""
+    found, by_content, coverage = [], {}, []
     for _, batch in sorted(batches.items()):
         coverage.extend(batch.get('coverage', []))
         for f in batch.get('findings', []):
             key = (f['kind'], f.get('block_id'), norm(f['title']), norm(f['original_quote']), norm(f.get('suggested_text', '')))
-            if key in seen:
+            if key in by_content:
+                kept = by_content[key]
+                assessments = list(kept.get('verification_assessments', [{
+                    'status': kept.get('verification_status', 'pending'), 'note': kept.get('verification_note', '')}]))
+                assessment = {'status': f.get('verification_status', 'pending'), 'note': f.get('verification_note', '')}
+                if assessment not in assessments:
+                    assessments.append(assessment)
+                    kept['verification_assessments'] = assessments
+                    labels = {'supported': '支持', 'rejected': '有异议', 'uncertain': '待确认', 'skipped': '未复核', 'pending': '待复核'}
+                    kept['verification_note'] = '；'.join(f"{labels.get(a['status'], a['status'])}：{a['note']}" for a in assessments)
+                    if len({a['status'] for a in assessments}) > 1:
+                        kept.update(verification_status='uncertain', revision_allowed=False, needs_confirmation=True)
+                kept['revision_allowed'] = bool(kept.get('revision_allowed') and f.get('revision_allowed'))
                 continue
-            seen.add(key)
-            found.append(dict(f))
+            entry = dict(f)
+            by_content[key] = entry
+            found.append(entry)
     targets: dict[str, set[str]] = {}
     for f in found:
         if f.get('block_id') and f.get('revision_allowed'):
@@ -310,11 +316,10 @@ def consolidate(batches: dict) -> tuple[list[dict], list[dict]]:
 def finding_status(f: dict) -> str:
     if f.get('verification_status') == 'rejected':
         return 'rejected'
-    # Ultra-fast findings were never sent to a critic: counted by severity, labelled unverified.
+    # Speed-first findings were never sent to a critic: counted by severity, labelled unverified.
     if f.get('verification_status') == 'skipped' and f.get('evidence_status') != 'unverified' and not f.get('missing_facts'):
         return 'quick'
-    # Legal findings keep their evidence label (official text attached, model-cited or none);
-    # the reviewer still confirms the legal basis before any legal edit is adopted.
+    # Legal findings keep their evidence label (official text attached, model-cited or none).
     if f.get('verification_status') != 'supported' or f.get('evidence_status') == 'unverified' or f.get('missing_facts'):
         return 'unconfirmed'
     return 'supported'
@@ -331,17 +336,13 @@ def summary(findings: list[dict], coverage: list[dict]) -> dict:
             'needs_confirmation': sum(finding_status(f) != 'rejected' and (not f.get('revision_allowed') or f['kind'] == 'legal') for f in findings),
             'checked_rules': sum(c['status'] in ('reviewed', 'not_applicable') and c.get('verification_status') == 'supported' for c in coverage),
             'total_rules': len(coverage),
-            'notice': ('极速模式的风险数为模型直接给出的结果，未经独立复核；已否定项单列。规则覆盖不等于合同风险覆盖。'
+            'notice': ('本档位的风险数为模型直接给出的结果，未经独立复核；复核异议单列。规则覆盖不等于合同风险覆盖。'
                        if any(finding_status(f) == 'quick' for f in findings) else
                        '风险数只包含经复核支持的意见；待核实和已否定项单列。规则覆盖不等于合同风险覆盖。')}
 
 
 def apply_cross_edit_checks(findings: list[dict], raw: Any) -> None:
-    """A reported conflict blocks one-click adoption; a missing check is flagged, not fatal.
-
-    The exact combination a reviewer selects is verified again before any export, so a
-    failed or incomplete whole-contract pass must not silently erase every proposal.
-    """
+    """Mark model-reported conflicts for the reviewer, without erasing any proposal."""
     items = [r for r in rows(raw.get('proposal_checks')) if isinstance(r, dict)] if isinstance(raw, dict) else []
     by_id: dict[str, list[dict]] = {}
     for item in items:
@@ -360,4 +361,4 @@ def apply_cross_edit_checks(findings: list[dict], raw: Any) -> None:
             finding.update(cross_edit_status='supported', cross_edit_note=reason)
         else:
             finding.update(cross_edit_status='unchecked',
-                           cross_edit_note=reason or '尚未完成与其他拟议修改的交叉核对；导出前仍会核验实际选择的修改组合。')
+                           cross_edit_note=reason or '尚未单独核对与其他修改的关系；你可以查看当前修订稿并决定是否导出。')

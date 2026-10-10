@@ -53,11 +53,11 @@ export function reviewStatusLabel(r: Pick<Review, 'status' | 'batch_errors' | 'r
 /** Review tiers, fastest first, with what each one leaves out. */
 const TIERS: { value: ReviewTier; title: Pair; label: Pair; note: Pair }[] = [
   { value: 'ultra_fast', title: ['极速', 'Ultra-fast'], label: ['极速审查', 'Ultra-fast review'],
-    note: ['一轮并行审查，直接给出意见和修改建议；不检索法规、不做独立复核，采用前请逐条确认。',
-      'One parallel pass that returns findings and suggested edits directly. No legal research and no independent verification, so confirm each finding before adopting it.'] },
+    note: ['模型一次通读全文，直接生成修订稿；看稿后即可导出。不检索法规、不做独立复核。',
+      'One model pass over the whole contract produces a revised draft, ready to read and export. No legal research and no independent verification.'] },
   { value: 'fast', title: ['快速', 'Fast'], label: ['快速审查', 'Fast review'],
-    note: ['分组审查后逐项独立复核；不检索法规，不做全文交叉核对。',
-      'Reviews the contract in groups, then verifies each finding independently. No legal research and no whole-contract cross-check.'] },
+    note: ['并行分组审查，完成后直接生成修订稿；不检索法规、不做独立复核。',
+      'Reviews groups in parallel and delivers a revised draft. No legal research and no independent verification.'] },
   { value: 'standard', title: ['标准', 'Standard'], label: ['标准审查', 'Standard review'],
     note: ['分组审查与法规检索同时进行，逐项复核后核对各项修改能否同时采用。',
       'Reviews in groups while researching the law, verifies each finding, then checks that the edits can be adopted together.'] },
@@ -107,8 +107,7 @@ export type Tone = 'high' | 'mid' | 'low' | 'unconfirmed' | 'excluded';
 /** One visual tone per finding: evidence state first, then severity. */
 export function findingTone(f: Finding): Tone {
   const status = findingStatus(f);
-  if (status === 'rejected') return 'excluded';
-  if (status === 'unconfirmed') return 'unconfirmed';
+  if (status === 'rejected' || status === 'unconfirmed') return 'unconfirmed';
   return f.severity === 'high' ? 'high' : f.severity === 'medium' ? 'mid' : 'low';
 }
 

@@ -1,5 +1,4 @@
 import type { Block, Contract, Decision, Finding, Review } from './types';
-import { findingStatus } from './findingStatus';
 import { findingTone } from './labels';
 import type { Tone } from './labels';
 import { diffText } from './diff';
@@ -41,7 +40,8 @@ export type Numbered = { finding: Finding; n: number };
 /**
  * Open findings in reading order (paragraph, then position of the quote), numbered
  * from 1. Numbers never change when a decision is made, so the paper, the outline
- * and the rail always agree. Findings the critic rejected are kept apart, unnumbered.
+ * and the rail always agree. Model disagreements stay in the list so a person can
+ * still accept the suggestion, edit it, or keep the original.
  */
 export function numberFindings(findings: Finding[], blocks: Block[]): { open: Numbered[]; excluded: Finding[] } {
   const order = new Map(blocks.map((b, i) => [b.id, i]));
@@ -54,10 +54,9 @@ export function numberFindings(findings: Finding[], blocks: Block[]): { open: Nu
     return [at, offset < 0 ? 0 : offset];
   };
   const open = findings.map((finding, index) => ({ finding, index, key: place(finding) }))
-    .filter(x => findingStatus(x.finding) !== 'rejected')
     .sort((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.index - b.index)
     .map((x, i) => ({ finding: x.finding, n: i + 1 }));
-  return { open, excluded: findings.filter(f => findingStatus(f) === 'rejected') };
+  return { open, excluded: [] };
 }
 
 export type ToneFilter = 'all' | Exclude<Tone, 'excluded'>;
@@ -74,9 +73,9 @@ export function toneCounts(open: Numbered[]): Record<ToneFilter, number> {
 
 export const filterByTone = (open: Numbered[], tone: ToneFilter) => tone === 'all' ? open : open.filter(x => findingTone(x.finding) === tone);
 
-/** A decision that settles a finding for navigation: adopted, kept as is, or saved as a human revision. */
-export const isDecided = (d?: Decision) => Boolean(d && d.decision !== 'pending');
-/** Adopted or saved as a human revision: these reach the revised draft. */
+/** Only an explicit choice to accept or keep the original settles a finding. */
+export const isDecided = (d?: Decision) => Boolean(d && ['accepted', 'rejected'].includes(d.decision));
+/** Model drafts and accepted edits both reach the revised document. */
 export const isRevised = (d?: Decision) => Boolean(d && ['accepted', 'draft'].includes(d.decision));
 
 export type MarkerState = 'open' | 'prelim' | 'revised' | 'kept';

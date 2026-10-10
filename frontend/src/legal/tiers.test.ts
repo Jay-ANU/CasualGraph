@@ -27,21 +27,21 @@ describe('review tiers', () => {
   });
   it('runs only the steps the tier has', () => {
     expect(phaseSteps(review()).map(s => s.label)).toEqual(['读取合同', '分项审查']);
-    expect(phaseSteps(review({ review_tier: 'fast' })).map(s => s.label)).toEqual(['读取合同', '分项审查', '逐项复核']);
+    expect(phaseSteps(review({ review_tier: 'fast' })).map(s => s.label)).toEqual(['读取合同', '分项审查']);
     expect(phaseSteps(review({ review_tier: 'deep' })).map(s => s.label)).toEqual(['读取合同', '检索法规', '分项审查', '汇总复核']);
   });
 });
 
 describe('ultra-fast findings', () => {
-  it('count by severity, stay labelled unverified and are adopted only as human revisions', () => {
+  it('count by severity and stay unverified while users can accept their edits', () => {
     const f = finding();
     expect(findingStatus(f)).toBe('quick');
     expect(findingTone(f)).toBe('high');
     expect(findingCounts([f]).high).toBe(1);
     const state = revisionState(f, { done: true, busy: false, text: f.suggested_text, original: '合成原文', legalBasis: false, manual: false });
-    expect(state.adoptable).toBe(false);
-    expect(state.decision).toBe('draft');
-    expect(state.issue).toBe('请确认保存为人工修订。');
+    expect(state.adoptable).toBe(true);
+    expect(state.decision).toBe('accepted');
+    expect(state.canSubmit).toBe(true);
     expect(findingStatus(finding({ missing_facts: ['缺少附件'] }))).toBe('unconfirmed');
   });
   it('say so in the status label and the report', () => {

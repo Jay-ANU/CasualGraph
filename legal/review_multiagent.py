@@ -30,12 +30,12 @@ def digest(value: object) -> str:
 def block_conflicting_edits(findings: list[dict]) -> None:
     targets: dict[str, set[str]] = {}
     for f in findings:
-        if f.get('block_id') and f.get('suggested_text') and f.get('verification_status') == 'supported':
+        if f.get('block_id') and f.get('suggested_text'):
             targets.setdefault(f['block_id'], set()).add(f['suggested_text'])
     for f in findings:
         if len(targets.get(f.get('block_id'), set())) > 1:
             f.update(revision_allowed=False, needs_confirmation=True, conflict_group=f['block_id'],
-                     cross_edit_status='conflict', cross_edit_note='多个 Agent 对同一段提出不同修改，请人工合并后重新审查。')
+                     cross_edit_status='conflict', cross_edit_note='同一段有不同修改建议，请选择一份或编辑合并；其他建议不会自动写入稿件。')
 
 
 def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | None = None,
