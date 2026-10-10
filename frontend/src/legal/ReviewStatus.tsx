@@ -1,11 +1,13 @@
+import { useEffect, useRef } from 'react';
 import { RotateCcw } from 'lucide-react';
 import type { Review } from './types';
 import { findingStatus } from './findingStatus';
 import { agentStatusLabel, failedSteps, researchGaps, reviewOutcome, tierLabel, tierOf } from './labels';
-import { agentLine, formatClock, phaseDetail, phaseSteps, remainingLabel, remainingSeconds, reviewPhase } from './reviewActivity';
+import { agentLine, chatTier, formatClock, liveActivity, phaseDetail, phaseSteps, remainingLabel, remainingSeconds, reviewPhase } from './reviewActivity';
 import type { Agent } from './reviewActivity';
 import { useLiveReview, useNow } from './useLive';
 import { DrawnCheck, ProgressRing, Spinner } from './ui';
+import { MemoText } from './ReviewMemo';
 import { ic } from './icon';
 import { useI18n } from '../i18n/core';
 import { plural, serverText } from './i18n';
@@ -46,6 +48,28 @@ function AgentRow({ agent }: { agent: Agent }) {
   </li>;
 }
 
+/**
+ * A chat-style review shows what the model is writing as it writes it: the review memo,
+ * kept scrolled to its newest line, or what the model is doing before any text arrives.
+ */
+function LiveWriting({ review }: { review: Review }) {
+  const { tx } = useI18n();
+  const live = review.live;
+  const box = useRef<HTMLDivElement>(null);
+  const memo = live?.memo || '';
+  useEffect(() => {
+    const el = box.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [memo]);
+  if (!live) return null;
+  return <section className="lv-writing" aria-label={tx('模型撰写进度', 'What the model is writing')}>
+    <div className="lv-activity-head"><h3>{liveActivity(live)}</h3></div>
+    {memo ? <div ref={box} className="lv-writing-box lv-memo-text" lang="zh-CN" aria-live="off"><MemoText text={memo} /></div>
+      : <p className="lv-writing-wait"><Spinner />{live.step === 'research' ? tx('正在检索法规原文，完成后复读全文定稿。', 'Searching official legal sources; the model then re-reads the contract to finalise.')
+        : tx('模型正在通读整份合同，审查意见书会在这里逐字出现。', 'The model is reading the whole contract; its review memo will appear here as it writes.')}</p>}
+  </section>;
+}
+
 const clockTime = (at: number) => new Date(at).toLocaleTimeString('zh-CN', { hour12: false });
 
 export function ReviewProgress({ review, canCancel, busy, onCancel }: {
@@ -69,7 +93,8 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
         <ProgressRing percent={live.percent} paused={queued} />
         <div className="lv-live-title">
           <h2>{queued ? tx('排队中', 'Queued') : tx('审查中', 'Reviewing')}</h2>
-          <p>{tierLabel(tierOf(review))}{tx(' · 发现的意见会直接标在正文上', ' · findings are marked on the text as they come in')}</p>
+          <p>{tierLabel(tierOf(review))}{chatTier(tierOf(review)) ? tx(' · 模型通读全文，写出完整审查和修订稿', ' · the model reads the whole contract and writes the full review and draft')
+            : tx(' · 发现的意见会直接标在正文上', ' · findings are marked on the text as they come in')}</p>
         </div>
         <Clock createdAt={review.created_at} percent={live.percent} />
       </div>
@@ -84,6 +109,7 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
       </ol>
     </div>
     <div className="lv-rail-body">
+      {chatTier(tierOf(review)) && !queued && <LiveWriting review={review} />}
       {working.length > 0 && <ul className="lv-agents" aria-label={tx('协作进度', 'Team progress')}>{working.map(agent => <AgentRow key={agent.id} agent={agent} />)}</ul>}
       {idle.map(agent => <p key={agent.id} className="lv-agents-note">{tx(`${agent.title}不适用：${agentLine(agent)}`, `${serverText(agent.title)} not needed: ${agentLine(agent)}`)}</p>)}
       <div className="lv-activity">

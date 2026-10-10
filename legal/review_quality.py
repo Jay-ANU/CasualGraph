@@ -138,7 +138,7 @@ def edit_warnings(original: str, replacement: str) -> list[str]:
         warnings.append('建议重写范围过大，请人工编辑，避免无关约定被删除。')
     return warnings
 
-def validate(raw: Any, rules: list[dict], blocks: list[dict], sources: list[dict], policies: list[dict]) -> dict:
+def validate(raw: Any, rules: list[dict], blocks: list[dict], sources: list[dict], policies: list[dict], limit: int = 30) -> dict:
     raw = raw if isinstance(raw, dict) else {}
     rule_map = {r['id']: r for r in rules}
     block_map = {b['id']: b for b in blocks}
@@ -159,11 +159,11 @@ def validate(raw: Any, rules: list[dict], blocks: list[dict], sources: list[dict
         coverage.append({'rule_id': rule['id'], 'title': rule['title'], 'status': status,
                          'note': text(c.get('note'), 1200), 'verification_status': 'pending'})
     candidates = rows(raw.get('findings'))
-    rejected = max(0, len(candidates) - 30)
+    rejected = max(0, len(candidates) - limit)
     if not isinstance(raw.get('findings'), list):
         rejected += 1
     findings = []
-    for item in candidates[:30]:
+    for item in candidates[:limit]:
         if not isinstance(item, dict):
             rejected += 1
             continue

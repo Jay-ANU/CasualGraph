@@ -62,6 +62,7 @@ const REVIEW_SCOPE: Record<string, string> = {
   '': '',
   '（未做法规检索和独立复核）': ' (no legal research or independent verification)',
   '（已逐项复核，未做法规检索和全文交叉核对）': ' (findings verified; no legal research or whole-contract cross-check)',
+  '（已复读定稿，未做独立复核）': ' (re-read before finalising; no independent verification)',
 };
 const SEARCH_NAME: Record<string, string> = { 公开搜索: 'public web search' };
 
@@ -107,6 +108,9 @@ const RULES: Rule[] = [
     `The finding mentions ${m[1]}, which is not in the contract, the attached sources or the cited laws. Check before adopting it.`],
   [/^第 (\d+) 页未提取到文字，可能为扫描页；请提供可复制文字的 PDF 或 DOCX。$/, m =>
     `No text was found on page ${m[1]}; it may be a scan. Provide a PDF with selectable text, or a DOCX.`],
+  [/^模型的结构化结果多次无法读取（(.+)），可重试。$/s, () => 'The model’s structured result could not be read after several attempts. You can retry.'],
+  [/^(\d+) 条模型意见格式不完整，未能采用；可新建审查重新生成。$/, m =>
+    `${plural(Number(m[1]), 'model finding was', 'model findings were')} incomplete and could not be used; start a new review to generate ${m[1] === '1' ? 'it' : 'them'} again.`],
   [/^YData 请求失败（HTTP (\d+)），请检查网关及所选模型的聊天接口支持。$/, m =>
     `The YData request failed (HTTP ${m[1]}). Check the gateway and that the selected model supports chat.`],
   [/^Anthropic 请求失败（HTTP (\d+)）；没有自动切换模型或提供方。$/, m =>

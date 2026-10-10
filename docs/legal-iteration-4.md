@@ -9,6 +9,8 @@
 
 ## 四档审查
 
+> 后续更新：极速和快速档已改为对话式审查，由模型通读全文写出意见书和修订稿，见 [legal-agent/chat-style-review.md](legal-agent/chat-style-review.md)。本节记录的是当时的设计。
+
 四档共用 `legal/review_v2.py` 的同一条流水线，只在“跑哪些步骤”上不同。
 
 | 档位 | 运行的步骤 | 关键路径 | 一键采纳 |

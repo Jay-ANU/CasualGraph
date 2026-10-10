@@ -26,8 +26,8 @@ describe('review tiers', () => {
     expect(tierOf({ review_tier: 'fast', profile: { review_mode: 'multi_agent' } })).toBe('fast');
   });
   it('runs only the steps the tier has', () => {
-    expect(phaseSteps(review()).map(s => s.label)).toEqual(['读取合同', '分项审查']);
-    expect(phaseSteps(review({ review_tier: 'fast' })).map(s => s.label)).toEqual(['读取合同', '分项审查']);
+    expect(phaseSteps(review()).map(s => s.label)).toEqual(['读取合同', '审查拟稿']);
+    expect(phaseSteps(review({ review_tier: 'fast' })).map(s => s.label)).toEqual(['读取合同', '通读初审', '检索法规', '复读定稿']);
     expect(phaseSteps(review({ review_tier: 'deep' })).map(s => s.label)).toEqual(['读取合同', '检索法规', '分项审查', '汇总复核']);
   });
 });

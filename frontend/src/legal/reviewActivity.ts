@@ -1,4 +1,4 @@
-import type { Collaboration, Review } from './types';
+import type { Collaboration, LiveWriting, Review, ReviewTier } from './types';
 import { findingTone, tierOf } from './labels';
 import type { Tone } from './labels';
 import { currentLang, pick, type Lang } from '../i18n/core';
@@ -23,11 +23,37 @@ const PHASE_STEPS: { id: PhaseStep['id']; zh: string; en: string }[] = [
   { id: 'coordination', zh: '汇总复核', en: 'Finalise' },
 ];
 
-/** The steps a review actually runs, in the current language: faster tiers skip research and the final pass. */
+/** The speed tiers review in one conversation: ultra-fast answers once; fast reads, researches and re-reads. */
+const CHAT_STEPS: Record<'ultra_fast' | 'fast', { id: PhaseStep['id']; zh: string; en: string }[]> = {
+  ultra_fast: [{ id: 'intake', zh: '读取合同', en: 'Read' }, { id: 'review', zh: '审查拟稿', en: 'Review & draft' }],
+  fast: [{ id: 'intake', zh: '读取合同', en: 'Read' }, { id: 'review', zh: '通读初审', en: 'First read' },
+    { id: 'retrieval', zh: '检索法规', en: 'Research' }, { id: 'coordination', zh: '复读定稿', en: 'Re-read' }],
+};
+
+/** Ultra-fast and fast: one model reads the whole contract and writes the review, like an AI chat app. */
+export const chatTier = (tier: ReviewTier): tier is 'ultra_fast' | 'fast' => tier === 'ultra_fast' || tier === 'fast';
+
+/** The steps a review actually runs, in the current language. */
 export function phaseSteps(r: Review, lang: Lang = currentLang()): PhaseStep[] {
   const tier = tierOf(r);
-  const steps = ['ultra_fast', 'fast'].includes(tier) ? PHASE_STEPS.filter(s => s.id === 'intake' || s.id === 'review') : PHASE_STEPS;
+  const steps = chatTier(tier) ? CHAT_STEPS[tier] : PHASE_STEPS;
   return steps.map(s => ({ id: s.id, label: pick(s.zh, s.en, lang) }));
+}
+
+/** What the model is doing right now in a chat-style review, with counts once there is text. */
+export function liveActivity(live: LiveWriting, lang: Lang = currentLang()): string {
+  const say = (zh: string, en: string) => pick(zh, en, lang);
+  const prefix = live.step === 'final' ? say('复读定稿 · ', 'Re-reading · ') : '';
+  switch (live.activity) {
+    case 'searching': return say('正在检索法规原文', 'Searching official legal sources');
+    case 'fixing': return say('正在修正结构化结果', 'Fixing the structured result');
+    case 'merging': return say('正在合并同一段落的修改', 'Merging edits to the same paragraph');
+    case 'thinking': return prefix + (live.reasoning
+      ? say(`模型正在思考 · 已思考 ${live.reasoning} 字`, `The model is thinking · ${live.reasoning} characters of reasoning`)
+      : say('模型正在通读合同', 'The model is reading the contract'));
+    case 'writing_result': return prefix + say(`正在逐条写出修改 · 已写 ${live.findings} 条`, `Writing the edits · ${plural(live.findings, 'finding')} so far`);
+    default: return prefix + say(`正在撰写审查意见书 · 已写 ${live.written} 字`, `Writing the review memo · ${live.written} characters`);
+  }
 }
 
 const SUPPORT_AGENTS = new Set(['critic', 'arbiter']);
@@ -43,8 +69,9 @@ export function reviewPhase(r: Review): PhaseId {
   const p = r.progress;
   if (p?.phase === 'arbitration' || r.collaboration?.agents.some(a => a.id === 'arbiter' && a.status === 'running')) return 'coordination';
   if (p?.phase === 'collaboration') return 'review';
+  if (p?.phase === 'finalize') return 'coordination';
   // Single-agent reviews run their last group as the whole-contract consistency check.
-  if (p?.phase === 'review' || p?.phase === 'verification') return !['ultra_fast', 'fast'].includes(tierOf(r)) && p.total > 1 && p.completed >= p.total - 1 ? 'coordination' : 'review';
+  if (p?.phase === 'review' || p?.phase === 'verification') return !chatTier(tierOf(r)) && p.total > 1 && p.completed >= p.total - 1 ? 'coordination' : 'review';
   if (p?.phase === 'retrieval') return 'retrieval';
   return 'intake';
 }
@@ -56,7 +83,19 @@ export function reviewPercent(r: Review): number {
   if (phase === 'complete') return 100;
   if (phase === 'intake') return 3;
   const p = r.progress;
+  const tier = tierOf(r);
+  if (chatTier(tier) && phase !== 'retrieval') {
+    // The answer's length is the signal: written text, plus reasoning at a lower weight, approaching the step's end.
+    const work = (r.live?.written || 0) + (r.live?.reasoning || 0) / 4;
+    const share = 1 - Math.exp(-work / 9000);
+    if (tier === 'ultra_fast') return 5 + 90 * share;
+    return phase === 'review' ? 5 + 40 * share : 55 + 42 * share;
+  }
   if (phase === 'retrieval') {
+    if (chatTier(tier)) {
+      const total = Math.max(1, p?.total || 0);
+      return 46 + 8 * clamp((r.retrieval?.length || 0) / total, 0, .95);
+    }
     const total = Math.max(1, p?.total || 0);
     return 6 + 14 * clamp(Math.max((p?.completed || 0) / total, (r.retrieval?.length || 0) / total), 0, .95);
   }
@@ -83,8 +122,9 @@ export function phaseDetail(r: Review, lang: Lang = currentLang()): string {
   const say = (zh: string, en: string) => pick(zh, en, lang);
   const phase = reviewPhase(r);
   if (phase === 'queued') return say('等待开始', 'Waiting to start');
-  if (phase === 'intake') return ['ultra_fast', 'fast'].includes(tierOf(r)) ? say('读取合同', 'Reading the contract') : say('读取合同，规划法律检索', 'Reading the contract and planning legal research');
+  if (phase === 'intake') return chatTier(tierOf(r)) ? say('读取合同', 'Reading the contract') : say('读取合同，规划法律检索', 'Reading the contract and planning legal research');
   if (phase === 'retrieval') return say(`法规检索 · 已检索 ${r.retrieval?.length || 0} 项`, `Researching the law · ${r.retrieval?.length || 0} searched`);
+  if (chatTier(tierOf(r))) return r.live ? liveActivity(r.live, lang) : '';
   if (r.collaboration) {
     const team = specialists(r);
     const done = sum(team, 'completed'), total = sum(team, 'total');

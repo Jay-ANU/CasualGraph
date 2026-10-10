@@ -246,6 +246,90 @@ def test_streaming_can_be_turned_off(monkeypatch):
     assert chat(respond) == {'ok': True} and [body['stream'] for body in sent] == [False]
 
 
+def test_a_chat_turn_returns_the_text_and_lets_the_caller_continue_a_long_answer():
+    reply = '<review_memo>意见书</review_memo>'
+    chunks = [{'choices': [{'index': 0, 'delta': {'reasoning_content': '推理' * 10}}]}] + [text_chunk(reply[i:i + 4]) for i in range(0, len(reply), 4)]
+    respond, sent = gateway(lambda body, request: streamed(*chunks, text_chunk('', 'length')))
+    seen = []
+    messages = [{'role': 'system', 'content': '系统'}, {'role': 'user', 'content': '合同'}, {'role': 'assistant', 'content': '前文'},
+                {'role': 'user', 'content': '继续'}]
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = ydata.chat(messages, {'provider': 'ydata', 'id': 'glm-5.2'}, max_tokens=32768, client=client,
+                            on_delta=lambda piece, reasoned: seen.append((piece, reasoned)))
+    assert result == {'content': reply, 'finish': 'length', 'reasoning_chars': 20, 'model': 'glm-5.2'}
+    assert sent[0]['messages'] == messages and sent[0]['max_tokens'] == 32768 and sent[0]['stream'] is True
+    assert ''.join(piece for piece, _ in seen) == reply and sum(r for _, r in seen) == 20
+
+
+def test_a_chat_turn_uses_the_completion_budget_field_gpt_models_expect():
+    respond, sent = gateway(lambda body, request: httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': '好'}}]}))
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        assert ydata.chat([{'role': 'user', 'content': '你好'}], {'provider': 'ydata', 'id': 'gpt-5-test'}, max_tokens=4096, client=client)['finish'] == 'stop'
+        ydata.chat([{'role': 'user', 'content': '你好'}], {'provider': 'ydata', 'id': 'glm-5.2'}, client=client)
+    assert sent[0]['max_completion_tokens'] == 4096 and 'max_tokens' not in sent[0]
+    assert sent[1]['max_tokens'] == ydata.default_output_tokens()
+
+
+def test_a_chat_turn_that_stops_for_another_reason_is_not_published():
+    respond, _ = gateway(lambda body, request: httpx.Response(200, json={'choices': [{'finish_reason': 'content_filter', 'message': {'content': '半'}}]}))
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ydata.GatewayError) as exc:
+            ydata.chat([{'role': 'user', 'content': '你好'}], {'provider': 'ydata', 'id': 'glm-5.2'}, client=client)
+    assert exc.value.code == 'ydata_incomplete'
+
+
+class Dropped(httpx.SyncByteStream):
+    """A streamed body whose connection drops after the given bytes."""
+    def __init__(self, body: bytes):
+        self.body = body
+
+    def __iter__(self):
+        yield self.body
+        raise httpx.ReadError('connection reset by peer')
+
+
+def test_a_chat_turn_cut_off_mid_answer_keeps_what_was_written_and_strict_json_does_not():
+    body = sse(text_chunk('<review_memo>已写的'), text_chunk('意见'), done=False)
+    respond, _ = gateway(lambda body_, request: httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=Dropped(body)))
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = ydata.chat([{'role': 'user', 'content': '审查'}], {'provider': 'ydata', 'id': 'glm-5.2'}, client=client)
+        assert result['content'] == '<review_memo>已写的意见' and result['finish'] == 'length'
+        with pytest.raises(ydata.GatewayError) as exc:
+            ydata.chat_json('JSON', {}, {'provider': 'ydata', 'id': 'glm-5.2'}, client=client)
+    assert exc.value.code == 'ydata_unavailable'
+
+
+def test_a_chat_turn_still_writing_when_its_time_is_up_keeps_what_was_written(monkeypatch):
+    from types import SimpleNamespace
+    first, rest = sse(text_chunk('已写的意见'), done=False), sse(text_chunk('没来得及'), text_chunk('', 'stop'))
+    clock = iter([0, 0, 0] + [10 ** 9] * 20)  # chat start, deadline set, first chunk; then time is up
+    monkeypatch.setattr(ydata, 'time', SimpleNamespace(monotonic=lambda: next(clock)))
+    respond, _ = gateway(lambda body, request: httpx.Response(200, headers={'content-type': 'text/event-stream'},
+                                                               stream=Pieces(first + rest, size=len(first))))
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = ydata.chat([{'role': 'user', 'content': '审查'}], {'provider': 'ydata', 'id': 'glm-5.2'}, client=client)
+    assert result['content'] == '已写的意见' and result['finish'] == 'length'
+
+
+def test_a_chat_turn_whose_time_runs_out_before_any_text_fails(monkeypatch):
+    monkeypatch.setattr(ydata, 'CHAT_STREAM_SECONDS', -1)
+    respond, _ = gateway(lambda body, request: streamed(text_chunk('半')))
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ydata.GatewayError) as exc:
+            ydata.chat([{'role': 'user', 'content': '审查'}], {'provider': 'ydata', 'id': 'glm-5.2'}, client=client)
+    assert exc.value.code == 'ydata_unavailable'
+
+
+def test_chat_output_budget_is_configurable_within_bounds(monkeypatch):
+    assert ydata.chat_output_tokens() == 32768
+    monkeypatch.setenv('LEGAL_CHAT_MAX_TOKENS', '64000')
+    assert ydata.chat_output_tokens() == 64000
+    monkeypatch.setenv('LEGAL_CHAT_MAX_TOKENS', '9999999')
+    assert ydata.chat_output_tokens() == 131072
+    monkeypatch.setenv('LEGAL_CHAT_MAX_TOKENS', 'lots')
+    assert ydata.chat_output_tokens() == 32768
+
+
 @pytest.mark.parametrize('status', [401,403,429,500,302])
 def test_upstream_failures_are_sanitized_and_not_retried(status):
     calls=[]

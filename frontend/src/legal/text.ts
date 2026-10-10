@@ -93,3 +93,14 @@ export function blockFragments(block: Block | undefined): string[] {
   const found = block?.text.match(/(?:甲方|乙方|丙方|丁方)[^，。；\n]{0,45}|【[^】]{1,30}】/g) || [];
   return [...new Set(found)].filter(text => text.length >= 2);
 }
+
+/**
+ * Paragraph numbers a model cites in its memo (p5, P12) become links to that paragraph of the
+ * contract. Numbers that are not paragraphs of this contract stay plain text.
+ */
+export function linkParagraphs(markdown: string, ids: Set<string>): string {
+  return markdown.replace(/(?<![\w#/[\]-])([pP]\d{1,4})(?![\w\]])/g, (match: string) => {
+    const id = match.toLowerCase();
+    return ids.has(id) ? `[${match}](#paragraph-${id})` : match;
+  });
+}

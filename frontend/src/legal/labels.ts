@@ -53,11 +53,11 @@ export function reviewStatusLabel(r: Pick<Review, 'status' | 'batch_errors' | 'r
 /** Review tiers, fastest first, with what each one leaves out. */
 const TIERS: { value: ReviewTier; title: Pair; label: Pair; note: Pair }[] = [
   { value: 'ultra_fast', title: ['极速', 'Ultra-fast'], label: ['极速审查', 'Ultra-fast review'],
-    note: ['模型一次通读全文，直接生成修订稿；看稿后即可导出。不检索法规、不做独立复核。',
-      'One model pass over the whole contract produces a revised draft, ready to read and export. No legal research and no independent verification.'] },
+    note: ['像在 AI 对话里上传合同：模型一次通读全文，写出审查意见书和逐条修订稿。不检索法规、不做独立复核。',
+      'Like uploading the contract to an AI chat: the model reads it whole in one pass and writes a review memo and clause-by-clause edits. No legal research and no independent verification.'] },
   { value: 'fast', title: ['快速', 'Fast'], label: ['快速审查', 'Fast review'],
-    note: ['并行分组审查，完成后直接生成修订稿；不检索法规、不做独立复核。',
-      'Reviews groups in parallel and delivers a revised draft. No legal research and no independent verification.'] },
+    note: ['模型通读全文写出审查，按需检索法规原文，再复读全文自查定稿。不做独立复核。',
+      'The model reads the whole contract and writes its review, searches official legal sources where needed, then re-reads everything to check and finalise. No independent verification.'] },
   { value: 'standard', title: ['标准', 'Standard'], label: ['标准审查', 'Standard review'],
     note: ['分组审查与法规检索同时进行，逐项复核后核对各项修改能否同时采用。',
       'Reviews in groups while researching the law, verifies each finding, then checks that the edits can be adopted together.'] },

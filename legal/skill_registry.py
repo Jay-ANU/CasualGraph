@@ -27,8 +27,9 @@ VERSION = 1
 TIERS = ('ultra_fast', 'fast', 'standard', 'deep')
 STATUSES = ('active', 'draft')
 ORIGINS = ('in-house', 'adapted', 'imported')
-# Characters of guidance a review may carry: faster tiers keep prompts short.
-BUDGET = {'ultra_fast': 4000, 'fast': 6000, 'standard': 9000, 'deep': 12000}
+# Characters of guidance a review may carry. The chat-style tiers send it once, with the whole
+# contract; standard sends it with every review group, so it carries less.
+BUDGET = {'ultra_fast': 12000, 'fast': 12000, 'standard': 9000, 'deep': 12000}
 MAX_SKILLS = 4
 MAX_GUIDANCE = 6000
 NOTICE = '审查技能是经维护的审查方法与检查清单，用于提示检查要点，不是法律依据；法律依据仍以官方原文核对为准。'

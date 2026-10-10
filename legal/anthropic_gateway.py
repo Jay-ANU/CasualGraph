@@ -1,8 +1,10 @@
 """Anthropic's native Messages transport for Claude, with no gateway fallback.
 
 Only ANTHROPIC_API_KEY is used and the API origin is fixed. Model discovery is
-read-only; chat makes exactly one request and publishes only a complete JSON
-reply. Retries remain visible to the review worker's existing attempt budget.
+read-only; chat_json makes exactly one request and publishes only a complete JSON
+reply. chat runs one turn of a chat-style review and returns what was written,
+so the caller can continue an answer that stopped at a limit. Retries remain
+visible to the review worker's existing attempt budget.
 """
 from __future__ import annotations
 
@@ -25,10 +27,20 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_STREAM_BYTES = 48 * 1024 * 1024
 MAX_REPLY_CHARACTERS = 1024 * 1024
 STREAM_SECONDS = 900
+# A chat turn may write a whole review: allow it longer, and keep what was written when time runs out.
+CHAT_STREAM_SECONDS = 1800
+CHAT_IDLE_SECONDS = 600
 _ID = re.compile(r'^claude-[A-Za-z0-9][A-Za-z0-9._-]{0,151}$')
 INCOMPLETE = 'Anthropic 未返回完整的结构化结果；本次结果未发布，可重试。'
 UNAVAILABLE = 'Anthropic 连接超时或响应无效；没有自动切换其他提供方或模型。'
 log = logging.getLogger(__name__)
+
+
+class StreamDeadline(ydata.GatewayError):
+    """A streamed reply still running when its time was up."""
+
+    def __init__(self):
+        super().__init__('anthropic_unavailable', UNAVAILABLE, 502)
 
 
 def configured() -> bool:
@@ -42,8 +54,8 @@ def key() -> str:
     return value
 
 
-def _client() -> httpx.Client:
-    return httpx.Client(timeout=httpx.Timeout(300, connect=10, pool=10, write=30),
+def _client(idle: float = 300) -> httpx.Client:
+    return httpx.Client(timeout=httpx.Timeout(idle, connect=10, pool=10, write=30),
                         follow_redirects=False, trust_env=False)
 
 
@@ -161,11 +173,16 @@ def model_catalog(*, client: httpx.Client | None = None) -> dict:
     return {'provider': 'anthropic', 'models': list(models.values()), 'catalog_source': 'official_api'}
 
 
-def _output_tokens(model: dict) -> int:
+def default_output_tokens() -> int:
+    """LEGAL_ANTHROPIC_MAX_TOKENS, 8192 by default."""
     try:
-        budget = max(1, min(65536, int(os.getenv('LEGAL_ANTHROPIC_MAX_TOKENS', '8192'))))
+        return max(1, min(65536, int(os.getenv('LEGAL_ANTHROPIC_MAX_TOKENS', '8192'))))
     except ValueError:
-        budget = 8192
+        return 8192
+
+
+def _output_tokens(model: dict, requested: int | None = None) -> int:
+    budget = requested or default_output_tokens()
     discovered = model.get('max_output_tokens')
     return min(budget, discovered) if type(discovered) is int and discovered > 0 else budget
 
@@ -179,22 +196,33 @@ def _finish(reason: object):
         raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
 
 
-def _reply(data: dict) -> str:
+def _message(data: dict, strict: bool = True) -> tuple[str, object, int]:
+    """Text, stop reason and reasoning length of a complete (not streamed) message.
+
+    Strict, as for a JSON reply, any stop other than the end of the turn is an error.
+    """
     if data.get('type') != 'message' or data.get('role') != 'assistant' or not isinstance(data.get('content'), list):
         raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
-    _finish(data.get('stop_reason'))
-    parts = []
+    if strict:
+        _finish(data.get('stop_reason'))
+    parts, reasoning = [], 0
     for block in data['content']:
         if not isinstance(block, dict):
             raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
         if block.get('type') == 'text' and isinstance(block.get('text'), str):
             parts.append(block['text'])
-        elif block.get('type') not in ('thinking', 'redacted_thinking'):
+        elif block.get('type') in ('thinking', 'redacted_thinking'):
+            reasoning += len(block['thinking']) if isinstance(block.get('thinking'), str) else 0
+        else:
             raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
     content = ''.join(parts)
     if len(content) > MAX_REPLY_CHARACTERS:
         raise ydata.GatewayError('anthropic_response_too_large', 'Anthropic 响应超出限制。', 502)
-    return content
+    return content, data.get('stop_reason'), reasoning
+
+
+def _reply(data: dict) -> str:
+    return _message(data)[0]
 
 
 def _events(response: httpx.Response, deadline: float):
@@ -205,7 +233,7 @@ def _events(response: httpx.Response, deadline: float):
         if size > MAX_STREAM_BYTES:
             raise ydata.GatewayError('anthropic_response_too_large', 'Anthropic 响应超出限制。', 502)
         if time.monotonic() > deadline:
-            raise ydata.GatewayError('anthropic_unavailable', UNAVAILABLE, 502)
+            raise StreamDeadline()
         *lines, buffer = (buffer + part).split(b'\n')
         for line in lines:
             line = line.rstrip(b'\r')
@@ -230,10 +258,45 @@ def _stream_error(chunk: dict, upstream_status: int):
     raise exc
 
 
+def _read_stream(response: httpx.Response, deadline: float, on_delta: ydata.Progress | None = None,
+                 partial: bool = False) -> tuple[str, object, int]:
+    """Text, stop reason and reasoning length of a streamed message, checked event by event.
+
+    on_delta sees text and reasoning as they arrive, for progress only. With partial, a message cut
+    off by a dropped connection or the deadline is returned as far as it got, as if stopped at the
+    output limit, so the conversation can continue from there.
+    """
+    blocks: dict[int, dict] = {}
+    reasoning = [0]
+
+    def written() -> str:
+        return ''.join(''.join(blocks[index]['parts']) for index in sorted(blocks) if blocks[index]['type'] == 'text')
+
+    try:
+        stopped, finish = _read_events(response, deadline, blocks, reasoning, on_delta)
+    except (StreamDeadline, httpx.HTTPError):
+        if partial and written().strip():
+            return written(), 'max_tokens', reasoning[0]
+        raise
+    if not stopped:
+        if partial and written().strip():
+            return written(), 'max_tokens', reasoning[0]
+        # Even syntactically valid JSON is unusable if the native message never completed.
+        raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
+    return written(), finish, reasoning[0]
+
+
 def _stream_reply(response: httpx.Response, deadline: float) -> str:
+    content, finish, _ = _read_stream(response, deadline)
+    _finish(finish)
+    return content
+
+
+def _read_events(response: httpx.Response, deadline: float, blocks: dict, reasoning: list,
+                 on_delta: ydata.Progress | None) -> tuple[bool, object]:
     known = {'message_start', 'content_block_start', 'content_block_delta', 'content_block_stop',
              'message_delta', 'message_stop', 'error'}
-    blocks, started, stopped, finish, length = {}, False, False, None, 0
+    started, stopped, finish, length = False, False, None, 0
     for event, raw in _events(response, deadline):
         if event and event not in known:
             continue  # Anthropic may add events; ping and unknown events carry no answer text.
@@ -287,6 +350,13 @@ def _stream_reply(response: httpx.Response, deadline: float) -> str:
                             raise ValueError('invalid text delta')
                         block['parts'].append(piece)
                         length += len(piece)
+                        if on_delta and piece:
+                            on_delta(piece, 0)
+                    elif delta.get('type') == 'thinking_delta' and isinstance(delta.get('thinking'), str):
+                        # Reasoning is counted for progress; it is never part of the answer.
+                        reasoning[0] += len(delta['thinking'])
+                        if on_delta and delta['thinking']:
+                            on_delta('', len(delta['thinking']))
         elif kind == 'message_delta':
             delta = chunk.get('delta')
             if not isinstance(delta, dict) or any(not block['closed'] for block in blocks.values()):
@@ -303,11 +373,7 @@ def _stream_reply(response: httpx.Response, deadline: float) -> str:
             break
         if length > MAX_REPLY_CHARACTERS:
             raise ydata.GatewayError('anthropic_response_too_large', 'Anthropic 响应超出限制。', 502)
-    if not stopped:
-        # Even syntactically valid JSON is unusable if the native message never completed.
-        raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
-    _finish(finish)
-    return ''.join(''.join(blocks[index]['parts']) for index in sorted(blocks) if blocks[index]['type'] == 'text')
+    return stopped, finish
 
 
 def chat_json(system: str, payload: dict, model: dict, *, client: httpx.Client | None = None) -> dict:
@@ -333,6 +399,72 @@ def chat_json(system: str, payload: dict, model: dict, *, client: httpx.Client |
             return ydata._json_object(content)
         except (ValueError, TypeError):
             raise ydata.GatewayError('anthropic_invalid_json', INCOMPLETE, 502) from None
+    except ydata.GatewayError as exc:
+        log.warning('anthropic chat failed: model=%s code=%s upstream=%s seconds=%.1f', model['id'], exc.code,
+                    exc.upstream_status, time.monotonic() - started)
+        raise
+    except (ValueError, TypeError, UnicodeError):
+        raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502) from None
+    except httpx.HTTPError:
+        raise ydata.GatewayError('anthropic_unavailable', UNAVAILABLE, 502) from None
+    finally:
+        if owned is not None:
+            owned.close()
+
+
+def _conversation(messages: list[dict]) -> tuple[str, list[dict]]:
+    """OpenAI-style messages as Anthropic's system prompt and alternating user and assistant turns."""
+    system = '\n\n'.join(m['content'] for m in messages if m.get('role') == 'system' and isinstance(m.get('content'), str))
+    turns: list[dict] = []
+    for m in messages:
+        if m.get('role') not in ('user', 'assistant') or not isinstance(m.get('content'), str):
+            continue
+        if turns and turns[-1]['role'] == m['role']:
+            turns[-1]['content'] += '\n\n' + m['content']
+        else:
+            turns.append({'role': m['role'], 'content': m['content']})
+    if not turns or turns[0]['role'] != 'user' or turns[-1]['role'] != 'user':
+        raise ydata.GatewayError('legal_conversation_invalid', '审查对话格式无效，未发送请求。', 500)
+    return system, turns
+
+
+def chat(messages: list[dict], model: dict, *, max_tokens: int | None = None, on_delta: ydata.Progress | None = None,
+         client: httpx.Client | None = None) -> dict:
+    """One turn of a chat-style review, returned as Claude wrote it.
+
+    An answer stopped at the output limit, or cut off by the deadline or a dropped connection, is
+    returned with finish="length" so the caller can ask Claude to continue. A refusal, a full
+    context window or any other stop is an error, as in chat_json.
+    """
+    if model.get('provider') != 'anthropic' or not isinstance(model.get('id'), str) or not _ID.fullmatch(model['id']):
+        raise ydata.GatewayError('legacy_review_restart_required', 'Claude 接收方已变更为 Anthropic 官方，请重新选择模型并授权后新建审查。', 409)
+    secret = key()
+    system, turns = _conversation(messages)
+    stream = os.getenv('LEGAL_ANTHROPIC_STREAM', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+    request = {'model': model['id'], 'max_tokens': _output_tokens(model, max_tokens), 'stream': stream, 'messages': turns,
+               **({'system': system} if system else {})}
+    started = time.monotonic()
+    owned = _client(CHAT_IDLE_SECONDS) if client is None else None
+    active = client if client is not None else owned
+    try:
+        with active.stream('POST', BASE_URL + '/messages', headers=_headers(secret, stream), json=request,
+                           follow_redirects=False) as response:
+            if not response.is_success:
+                raise _status_error(response.status_code, response.headers.get('retry-after'))
+            if 'text/event-stream' in response.headers.get('content-type', '').lower():
+                content, finish, reasoning = _read_stream(response, started + CHAT_STREAM_SECONDS, on_delta, partial=True)
+            else:
+                content, finish, reasoning = _message(_read_json(response), strict=False)
+                if on_delta and (content or reasoning):
+                    on_delta(content, reasoning)
+        if finish == 'max_tokens':
+            state = 'length'
+        elif finish in ('end_turn', 'stop_sequence'):
+            state = 'stop'
+        else:
+            _finish(finish)
+            state = 'stop'
+        return {'content': content, 'finish': state, 'reasoning_chars': reasoning, 'model': model['id']}
     except ydata.GatewayError as exc:
         log.warning('anthropic chat failed: model=%s code=%s upstream=%s seconds=%.1f', model['id'], exc.code,
                     exc.upstream_status, time.monotonic() - started)

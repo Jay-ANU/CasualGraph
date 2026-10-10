@@ -441,3 +441,82 @@ def test_official_timeout_is_sanitized_and_not_automatically_retried():
         chat(handler)
     assert error.value.code == 'anthropic_unavailable' and len(calls) == 1
     assert 'private-prompt' not in str(error.value)
+
+
+class Dropped(httpx.SyncByteStream):
+    """A streamed body whose connection drops after the given bytes."""
+    def __init__(self, body: bytes):
+        self.body = body
+
+    def __iter__(self):
+        yield self.body
+        raise httpx.ReadError('connection reset by peer')
+
+
+def chat_turn(handler, messages=None, **options):
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        return ydata.chat(messages or [{'role': 'system', 'content': '审查说明'}, {'role': 'user', 'content': '合同全文'}],
+                          {'id': 'claude-test', 'provider': 'anthropic'}, client=client, **options)
+
+
+def test_a_chat_turn_for_claude_goes_to_the_official_api_as_a_native_conversation():
+    sent, seen = [], []
+
+    def handler(request):
+        body = json.loads(request.content)
+        sent.append(body)
+        assert str(request.url) == 'https://api.anthropic.com/v1/messages' and 'authorization' not in request.headers
+        return streamed(events('<review_memo>意见书</review_memo>'))
+    history = [{'role': 'system', 'content': '审查说明'}, {'role': 'user', 'content': '合同全文'},
+               {'role': 'assistant', 'content': '已写部分'}, {'role': 'user', 'content': '继续'}]
+    result = chat_turn(handler, history, max_tokens=32768, on_delta=lambda piece, reasoned: seen.append(piece))
+    assert result == {'content': '<review_memo>意见书</review_memo>', 'finish': 'stop', 'reasoning_chars': 0, 'model': 'claude-test'}
+    assert sent[0]['system'] == '审查说明' and sent[0]['max_tokens'] == 32768
+    assert sent[0]['messages'] == [{'role': 'user', 'content': '合同全文'}, {'role': 'assistant', 'content': '已写部分'},
+                                   {'role': 'user', 'content': '继续'}]
+    assert ''.join(seen) == '<review_memo>意见书</review_memo>'
+
+
+def test_a_chat_turn_for_claude_that_reaches_the_output_limit_can_be_continued():
+    assert chat_turn(lambda request: streamed(events('半篇意见', 'max_tokens')))['finish'] == 'length'
+    assert chat_turn(lambda request: httpx.Response(200, json=message('半篇意见', 'max_tokens')))['finish'] == 'length'
+
+
+def test_a_chat_turn_for_claude_cut_off_mid_answer_keeps_what_was_written():
+    body = ''.join('event: ' + item['type'] + '\r\ndata: ' + json.dumps(item, ensure_ascii=False) + '\r\n\r\n'
+                   for item in events('已写的意见')[:-3]).encode()
+    result = chat_turn(lambda request: httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=Dropped(body)))
+    assert result['content'] == '已写的意见' and result['finish'] == 'length'
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={'content-type': 'text/event-stream'},
+                                                                                   stream=Dropped(body)))) as client:
+        with pytest.raises(ydata.GatewayError) as exc:
+            ydata.chat_json('JSON', {}, {'id': 'claude-test', 'provider': 'anthropic'}, client=client)
+    assert exc.value.code == 'anthropic_unavailable'
+
+
+@pytest.mark.parametrize('reason,code', [('refusal', 'anthropic_refused'), ('model_context_window_exceeded', 'anthropic_truncated')])
+def test_a_chat_turn_for_claude_that_stops_for_another_reason_is_not_published(reason, code):
+    with pytest.raises(ydata.GatewayError) as exc:
+        chat_turn(lambda request: streamed(events('部分', reason)))
+    assert exc.value.code == code
+
+
+def test_a_chat_turn_for_claude_respects_the_models_own_output_limit(monkeypatch):
+    monkeypatch.delenv('LEGAL_ANTHROPIC_MODELS')
+    sent = []
+
+    def handler(request):
+        if request.method == 'GET':
+            return httpx.Response(200, json={'data': [{'id': 'claude-test', 'type': 'model', 'max_tokens': 16000}], 'has_more': False,
+                                             'last_id': 'claude-test', 'first_id': 'claude-test'})
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json=message('好'))
+    chat_turn(handler, max_tokens=32768)
+    assert sent[0]['max_tokens'] == 16000
+
+
+def test_a_claude_review_saved_for_ydata_never_reaches_a_new_recipient():
+    with httpx.Client(transport=httpx.MockTransport(lambda request: pytest.fail('nothing may be sent'))) as client:
+        with pytest.raises(ydata.GatewayError) as exc:
+            ydata.chat([{'role': 'user', 'content': '合同'}], {'id': 'claude-test', 'provider': 'ydata'}, client=client)
+    assert exc.value.code == 'legacy_review_restart_required'

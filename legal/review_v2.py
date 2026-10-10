@@ -1,19 +1,16 @@
-"""Model-led drafting, optional deeper review and resumable checkpoints.
+"""Verified review in parallel groups, with resumable checkpoints: the standard and deep tiers.
 
-Four tiers share one pipeline, and everything that can run at the same time does:
-- ultra_fast: one complete-contract model call produces findings and a draft;
-- fast: parallel review groups produce a draft without independent verification,
-  legal research or a whole-contract compatibility pass;
-- standard: parallel groups, model-planned legal research, verification and compatibility;
+- standard: parallel review groups, model-planned legal research, verification and compatibility;
 - deep: specialist agents (legal, commercial, company policy), the critic and the arbiter.
 
-In the standard and deep tiers a planning call (transaction facts and the legal research
-plan) runs beside every review group; each group is verified by a separate call as soon as it and the
-research are ready; one compact pass then checks that the proposed edits fit together. The
-critical path is three model calls, whatever the number of rules.
+A planning call (transaction facts and the legal research plan) runs beside every review
+group; each group is verified by a separate call as soon as it and the research are ready;
+one compact pass then checks that the proposed edits fit together. The critical path is three
+model calls, whatever the number of rules.
 
-The two speed-first tiers assemble applicable suggestions into a preview immediately.
-Model checks inform the reviewer; exporting the current draft is the user's decision.
+The two speed tiers (ultra_fast, fast) review in one conversation, the way an AI chat app
+does; see legal.review_chat. Model checks inform the reviewer; exporting the current draft
+is the user's decision.
 """
 from __future__ import annotations
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -101,16 +98,6 @@ CROSS_CHECK = VERIFY + '''
 本步骤不复核单条意见，只检查proposed_changes全部同时采用时是否相互兼容：重点比较定义、时间、付款条件、责任与解除；同一段的不同替代文本不能同时成立。
 checks和coverage_checks输出空数组；为每个proposed_changes输出一项proposal_checks:[{"finding_id":"...","status":"consistent|conflict|uncertain","reason":"一句话说明"}]。'''
 BRIEFER = '\n上次输出过长被截断：只保留最重要的意见（最多3条），各字段进一步精简。'
-# One answer owns the complete draft, so changes to the same paragraph are combined by
-# the model here, not reconciled by another model later.
-QUICK = '''\n极速模式：本轮一次完成全文审查与修订。直接运用专业能力，优先给出可阅读的修订稿，不等待其他模型批准。
-同时考虑全部 rules、全文上下文与我方要求；coverage 简洁但不得遗漏规则。只保留最重要的问题（最多8条），reason 不超过120字，impact 不超过50字。
-同一段落的多处修改必须合并为一条 finding 和一份完整 suggested_text；未修改段落由系统保留，不要重复输出全文。
-本档位不调用法规检索或独立复核，不声称已经核验法律来源。修订建议供用户直接查看、编辑和导出。'''
-FAST = '\n快速模式：直接生成可阅读的修订建议；本档位不调用法规检索或独立复核，不声称已经核验法律来源。'
-UNVERIFIED = '本档位由模型直接审查和拟稿，未做独立复核与法规检索；你可以修改并导出。'
-UNCHECKED = '本档位未单独核对修改组合；请阅读当前修订稿，是否导出由你决定。'
-QUICK_MAX_CALLS = 2  # The initial call plus at most one transport/format recovery.
 
 
 class ReviewStopped(RuntimeError):
@@ -137,21 +124,17 @@ def review_tier(profile: dict) -> str:
     return 'deep' if profile.get('review_mode') == 'multi_agent' else 'standard'
 
 
-def review_tasks(plan: list[dict], team: bool, tier: str = 'standard') -> list[dict]:
-    """One full-contract task for ultra-fast; bounded parallel groups for other tiers."""
-    if tier == 'ultra_fast':
-        return [{'id': 'direct_draft', 'agent_id': 'standard', 'title': '全文审查与修订', 'kind': None,
-                 'rules': plan + [CONSISTENCY], 'prompt': REVIEW + QUICK}]
+def review_tasks(plan: list[dict], team: bool) -> list[dict]:
+    """Specialist tasks for a team review; otherwise bounded parallel groups and a whole-contract pass."""
     if team:
         tasks = [{**t, 'prompt': REVIEW + '\n本 Agent 的职责：' + t['instructions'] + '\n仅输出kind=' + t['kind'] + '的候选意见。'}
                  for t in build_tasks(plan)]
         return tasks + [{'id': 'consistency', 'agent_id': 'arbiter', 'title': '全文协调与冲突检查', 'kind': None,
                          'rules': [CONSISTENCY], 'prompt': REVIEW}]
-    prompt = REVIEW + FAST if tier == 'fast' else REVIEW
     tasks = [{'id': str(i), 'agent_id': 'standard', 'title': '、'.join(r['title'] for r in plan[i:i + GROUP_SIZE]), 'kind': None,
-              'rules': plan[i:i + GROUP_SIZE], 'prompt': prompt} for i in range(0, len(plan), GROUP_SIZE)]
+              'rules': plan[i:i + GROUP_SIZE], 'prompt': REVIEW} for i in range(0, len(plan), GROUP_SIZE)]
     return tasks + [{'id': 'consistency', 'agent_id': 'standard', 'title': CONSISTENCY['title'], 'kind': None,
-                     'rules': [CONSISTENCY], 'prompt': prompt}]
+                     'rules': [CONSISTENCY], 'prompt': REVIEW}]
 
 
 def draft_applicable(original: str, replacement: str, contract_payload: dict) -> bool:
@@ -199,8 +182,11 @@ def step_title(task: dict) -> str:
 
 
 def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | None = None,
-               authorize: Callable | None = None, team: bool | None = None) -> None:
-    from legal import review_engine as legacy, review_multiagent as agents
+               authorize: Callable | None = None, team: bool | None = None, chat: Callable | None = None) -> None:
+    """Run (or resume) a review. The speed tiers go to the chat-style engine; chat is its model."""
+    from legal import review_chat, review_engine as legacy, review_multiagent as agents
+    if team is None and review_tier(store.review(rid)['payload'].get('profile', {})) in review_chat.TIERS:
+        return review_chat.run_review(rid, model=chat, retrieve=retrieve, authorize=authorize)
     model = model or legacy.model_json
     retrieve = retrieve or external_law.retrieve_law
     authorize = authorize or legacy.authorize_job
@@ -212,11 +198,10 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
     tier = review_tier(p.get('profile', {}))
     if team is not None:
         tier = 'deep' if team else ('standard' if tier == 'deep' else tier)
+    # Called directly with team=False, a speed-tier review runs as a standard one.
+    tier = tier if tier in ('standard', 'deep') else 'standard'
     team = tier == 'deep'
-    researching = tier in ('standard', 'deep')
-    verifying = tier in ('standard', 'deep')
-    cross_checking = tier in ('standard', 'deep')
-    budget = QUICK_MAX_CALLS if tier == 'ultra_fast' else agents.MAX_CALLS_PER_ATTEMPT if team else MAX_CALLS_PER_ATTEMPT
+    budget = agents.MAX_CALLS_PER_ATTEMPT if team else MAX_CALLS_PER_ATTEMPT
     contract = store.contract(job['contract_id'])
     lock = threading.RLock()
     stopped = threading.Event()
@@ -297,8 +282,6 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 try:
                     result = model(prompt, request)
                 except ydata.GatewayError as exc:
-                    if tier == 'ultra_fast' and counter['calls'] >= QUICK_MAX_CALLS:
-                        raise
                     if not briefer and exc.code in ('ydata_truncated', 'anthropic_truncated'):
                         prompt, briefer = system + BRIEFER, True
                         continue
@@ -353,13 +336,11 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
             if 'plan' not in p:
                 p['plan'] = build_plan(legacy.RULES, redacted, p['profile'], policies)
             plan = p['plan']
-            tasks = review_tasks(plan, team, tier)
-            if not team and tier != 'ultra_fast':
+            tasks = review_tasks(plan, team)
+            if not team:
                 # Room for one retry of every call; smaller groups mean more calls for the same plan.
                 budget = max(budget, 4 * len(tasks) + 4)
             skills = skill_registry.prompt_items(p.get('skills'))
-            if not researching:
-                p['research'] = {'status': 'skipped', 'issues': [], 'rejected_queries': 0, 'reason': 'tier'}
             p.setdefault('batches', {})
             p.setdefault('searches', {})
             # A review started under another grouping keeps no batch that the current tasks do not own.
@@ -375,11 +356,11 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                     'agents': initial_team(specialist_tasks) + [
                         {'id': 'critic', 'title': '证据与覆盖复核', 'status': 'pending', 'completed': 0, 'total': len(tasks), 'note': ''},
                         {'id': 'arbiter', 'title': '全文协调与冲突检查', 'status': 'pending', 'completed': 0, 'total': 1, 'note': ''}]}
-            publish('正在读取合同，规划法律检索并分项审查' if researching else '正在读取合同并生成修订稿', 'intake')
+            publish('正在读取合同，规划法律检索并分项审查', 'intake')
 
         def task_input(task: dict) -> dict:
             ids = {r.get('policy_id') or r.get('origin_rule_id', r['id']) for r in task['rules']}
-            chosen = policies if task['id'] in ('consistency', 'direct_draft') else [pol for pol in policies
+            chosen = policies if task['id'] == 'consistency' else [pol for pol in policies
                      if pol['id'] in ids or 'policy_' + pol['id'] in ids]
             data = {'rules': task['rules'], 'contract_blocks': blocks, 'legal_sources': [], 'company_policies': chosen,
                     'parsing_warnings': warnings, 'skills': skills}
@@ -449,19 +430,6 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
             checked.update(sources=sources, input_hash=input_hash(task), agent_id=task['agent_id'])
             return checked
 
-        def unverified(task: dict, checked: dict) -> dict:
-            """Speed-first: preserve the model's proposal, with checks labelled as skipped."""
-            originals = {b['id']: b['text'] for b in blocks}
-            for f in checked['findings']:
-                applicable = (f.get('block_id') in originals
-                              and draft_applicable(originals[f['block_id']], f.get('suggested_text', ''), contract['payload']))
-                f.update(verification_status='skipped', verification_note=UNVERIFIED,
-                         revision_allowed=bool(applicable), needs_confirmation=True)
-            for c in checked['coverage']:
-                c.update(verification_status='skipped', verification_note=UNVERIFIED)
-            checked.update(sources=[], input_hash=input_hash(task), agent_id=task['agent_id'])
-            return checked
-
         def finish_agent_counts() -> None:
             if not team:
                 return
@@ -474,7 +442,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
         reuse = {t['id'] for t in tasks if t['id'] in p['batches'] and t['id'] not in previous_errors
                  and p['batches'][t['id']].get('input_hash', input_hash(t)) == input_hash(t)}
         todo = [t for t in tasks if t['id'] not in reuse]
-        total = len(tasks) + int(cross_checking)
+        total = len(tasks) + 1
         with lock:
             for t in tasks:
                 if t['id'] not in reuse:
@@ -484,7 +452,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                     'collaboration' if team else 'review', len(reuse), total)
         pool = ThreadPoolExecutor(max_workers=max(2, min(12, len(todo) + 1)), thread_name_prefix='legal-review')
         try:
-            research_future = pool.submit(plan_and_research) if researching else None
+            research_future = pool.submit(plan_and_research)
             reviews = {pool.submit(review, t): t for t in todo}
             checks: dict = {}
             evidence: list[dict] | None = None
@@ -518,10 +486,6 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                         if stopped.is_set():
                             fail_task(task['id'], ydata.GatewayError('team_paused', '审查调用已暂停，成功步骤已保留，可重试。', 429))
                             continue
-                        if not verifying:
-                            done_now = pool.submit(unverified, task, checked)
-                            checks[done_now] = task
-                            continue
                         checks[pool.submit(verify, task, data, checked, research_pool())] = task
                     else:
                         task = checks.pop(future)
@@ -537,7 +501,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                             p['batches'][task['id']] = checked
                             finish_agent_counts()
                             finished = sum(t['id'] in p['batches'] for t in tasks)
-                            publish(f'分项审查已完成 {finished}/{len(tasks)} 项' + (('，正在复核其余各项' if verifying else '，其余各项审查中') if finished < len(tasks) else ''),
+                            publish(f'分项审查已完成 {finished}/{len(tasks)} 项' + ('，正在复核其余各项' if finished < len(tasks) else ''),
                                     completed=finished, total=total)
             sources = research_pool()
             with lock:
@@ -550,13 +514,12 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 proposals = [quality.finding_brief(f) for f in findings if f.get('revision_allowed') and f.get('suggested_text')]
                 if team:
                     agent('arbiter', status='running', note=f'核对 {len(proposals)} 项拟议修改能否同时成立')
-                if cross_checking:
-                    publish('正在核对各项修改能否同时采用', 'arbitration' if team else None, len(tasks), total)
+                publish('正在核对各项修改能否同时采用', 'arbitration' if team else None, len(tasks), total)
             cross = None
             cross_key = _digest(proposals)
-            if cross_checking and p.get('cross_check', {}).get('input_hash') == cross_key:
+            if p.get('cross_check', {}).get('input_hash') == cross_key:
                 cross = p['cross_check']['result']
-            elif cross_checking and len(proposals) >= 2 and not stopped.is_set():
+            elif len(proposals) >= 2 and not stopped.is_set():
                 try:
                     cross = generate('arbiter' if team else 'standard', CROSS_CHECK,
                                      {'rules': [], 'contract_blocks': blocks, 'findings': [], 'coverage': [], 'proposed_changes': proposals})
@@ -566,22 +529,13 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                     raise
                 except Exception as exc:
                     fail_task('cross_check', exc)
-            elif cross_checking and len(proposals) < 2:
+            elif len(proposals) < 2:
                 cross = {'proposal_checks': [{'finding_id': x['finding_id'], 'status': 'consistent', 'reason': '仅此一项修改，已由逐项复核检查与全文的关系。'} for x in proposals]}
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
         with lock:
             guard()
-            if cross_checking:
-                quality.apply_cross_edit_checks(findings, cross)
-            else:
-                # No compatibility pass in this tier; two different replacements for one paragraph
-                # still can never both be adopted.
-                agents.block_conflicting_edits(findings)
-                quality.apply_cross_edit_checks(findings, None)
-                for f in findings:
-                    if f.get('cross_edit_status') == 'unchecked':
-                        f['cross_edit_note'] = UNCHECKED
+            quality.apply_cross_edit_checks(findings, cross)
             covered = {c['rule_id'] for c in coverage}
             for rule in [r for t in tasks for r in t['rules']]:
                 if rule['id'] not in covered:
@@ -592,36 +546,23 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
             for t in tasks:
                 if t['id'] not in p['batches']:
                     errors.setdefault(t['id'], '此步骤尚未完成。')
-                elif not verifying:
-                    batch = p['batches'][t['id']]
-                    if batch.get('rejected_findings', 0):
-                        errors.setdefault(t['id'], '部分模型意见无法对应原文或格式不完整，已保留可用修订；可重试补全。')
-                    elif any(c['status'] == 'not_reviewed' for c in batch['coverage']):
-                        errors.setdefault(t['id'], '部分检查范围未返回结果，已保留可用修订；可重试补全。')
             p['batch_errors'] = errors
             titles = {**STEP_TITLES, **{t['id']: step_title(t) for t in tasks}}
             p['step_errors'] = [{'id': key, 'title': titles.get(key, key), 'code': error_codes.get(key, 'not_finished'), 'message': message}
                                 for key, message in errors.items()]
             p['findings'], p['coverage'] = findings, coverage
-            if not verifying:
-                p['decisions'] = prepare_draft(findings, blocks, contract['payload'])
             p['summary'] = quality.summary(findings, coverage)
             # Partial is never a clean pass. The stage says which kind: failed steps (retry), legal
             # issues without official text (searching again costs no model call) or items that need
             # a person's confirmation, the usual result of a review rather than a failure.
             gaps = sum(s.get('status') != 'retrieved' for s in p['searches'].values())
             unreviewed = any(c['status'] == 'not_reviewed' for c in coverage)
-            # A step a tier leaves out by design (verification, the compatibility pass) is labelled
-            # on each finding and does not make the review partial.
-            open_cross = ('unchecked', 'conflict', 'uncertain') if cross_checking else ('conflict', 'uncertain')
-            unsettled = [f for f in findings if f['verification_status'] not in ('supported', 'skipped') or f['evidence_status'] == 'unverified'
-                         or f['missing_facts'] or f.get('cross_edit_status') in open_cross]
+            unsettled = [f for f in findings if f['verification_status'] != 'supported' or f['evidence_status'] == 'unverified'
+                         or f['missing_facts'] or f.get('cross_edit_status') in ('unchecked', 'conflict', 'uncertain')]
             confirm = sum(f['verification_status'] != 'rejected' for f in unsettled)
-            incomplete = bool(errors) or unreviewed or bool(gaps)
-            if verifying:
-                incomplete = (incomplete or bool(unsettled)
-                              or any(c['status'] == 'needs_information' for c in coverage)
-                              or any(b.get('rejected_findings', 0) for b in p['batches'].values()))
+            incomplete = (bool(errors) or unreviewed or bool(gaps) or bool(unsettled)
+                          or any(c['status'] == 'needs_information' for c in coverage)
+                          or any(b.get('rejected_findings', 0) for b in p['batches'].values()))
             p['retryable'] = bool(errors) or bool(gaps)
             if team:
                 for spec in ('legal', 'commercial', 'policy'):
@@ -631,20 +572,17 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 agent('critic', status='completed' if all(t['id'] in p['batches'] for t in tasks) else 'partial', note='')
                 agent('arbiter', status='completed' if 'consistency' in p['batches'] and 'cross_check' not in errors else 'partial',
                       note='', completed=int('consistency' in p['batches']))
-            label = {'ultra_fast': '极速审查', 'fast': '快速审查', 'standard': '本轮检查', 'deep': '协作检查'}[tier]
-            scope = '（未做法规检索和独立复核）' if not verifying else ''
+            label = {'standard': '本轮检查', 'deep': '协作检查'}[tier]
             if errors:
                 p['stage'] = f'{label}部分完成：{len(errors)} 个步骤未完成，可重试；已完成的意见可先处理'
             elif unreviewed:
                 p['stage'] = f'{label}部分完成：部分规则未完成审查，请查看覆盖缺口'
             elif gaps:
                 p['stage'] = f'{label}完成，请逐项确认；{gaps} 个法律问题未取得官方原文，可重新检索'
-            elif confirm and verifying:
-                p['stage'] = f'{label}完成{scope}，其中 {confirm} 项意见需人工确认'
-            elif not verifying:
-                p['stage'] = f'{label}完成{scope}，修订稿已就绪，可直接查看、修改并导出'
+            elif confirm:
+                p['stage'] = f'{label}完成，其中 {confirm} 项意见需人工确认'
             else:
-                p['stage'] = f'{label}完成{scope}，请逐项确认'
+                p['stage'] = f'{label}完成，请逐项确认'
             p['progress'] = {'phase': 'complete', 'completed': sum(t['id'] in p['batches'] for t in tasks) + int(cross is not None), 'total': total}
             p.setdefault('metrics', {})['last_attempt_seconds'] = round(time.monotonic() - started, 2)
             p.pop('error', None)
