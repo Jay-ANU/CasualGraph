@@ -7,7 +7,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from legal import external_law, review_store as store, ydata, access
+from legal import external_law, review_store as store, ydata, access, data_boundary
 
 RULES = [
     {'id': 'capacity', 'title': '主体、授权与合同效力', 'query': '民法典 合同效力 代理 授权 格式条款', 'keywords': ['代理', '格式条款', '效力'], 'checks': '主体和我方角色是否明确；授权、资质、格式条款提示说明及效力问题；不得猜测主体资质。'},
@@ -129,8 +129,8 @@ def run_review(rid: str):
         authorize_job(job, c)
         if c['status'] != 'ready' or c['revision'] != payload['contract_revision']:
             raise RuntimeError('contract_version_changed')
-        if payload.get('profile', {}).get('external_processing_provider') != 'ydata':
-            raise ydata.GatewayError('legacy_review_restart_required', '旧任务未确认 YData 授权，请选择模型并新建审查。', 409)
+        if not data_boundary.model_consent_valid(payload.get('profile', {})):
+            raise ydata.GatewayError('legacy_review_restart_required', '本轮模型处理方已变化或尚未授权，请选择模型并新建审查。', 409)
         blocks = c['payload']['redacted_blocks']
         legal_search = payload.setdefault('searches', {})
         for rule in RULES:

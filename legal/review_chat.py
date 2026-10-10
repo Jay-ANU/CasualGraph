@@ -29,7 +29,7 @@ import threading
 import time
 from typing import Callable
 
-from legal import external_law, research, review_quality as quality, review_store as store, review_v2 as v2, skill_registry, ydata
+from legal import data_boundary, external_law, research, review_quality as quality, review_store as store, review_v2 as v2, skill_registry, ydata
 from legal.review_multiagent import block_conflicting_edits
 from legal.review_plan import build_plan, relevant_evidence
 from legal.transaction_brief import apply_material_gates
@@ -52,6 +52,9 @@ LIVE_MEMO = 8000
 AUTHORIZE_SECONDS = 30.0
 HEARTBEAT_SECONDS = 60.0
 TRANSIENT = v2.TRANSIENT | {'ydata_incomplete'}
+RATE_LIMITED = ('ydata_rate_limited', 'anthropic_rate_limited')
+# A route that refuses a long output budget: retried once with the provider's usual one.
+REFUSED_BUDGET = ('ydata_request_failed', 'anthropic_invalid_request')
 log = logging.getLogger(__name__)
 
 WHOLE = {'id': 'whole_contract', 'title': '全文通读与清单外问题',
@@ -417,7 +420,7 @@ def run_review(rid: str, *, model: Model | None = None, retrieve: Callable | Non
         latest = store.contract(job['contract_id'])
         if latest['status'] != 'ready' or latest['revision'] != p['contract_revision']:
             raise ydata.GatewayError('contract_version_changed', '合同版本或状态已变化，请新建审查。', 409)
-        if p.get('profile', {}).get('external_processing_provider') != 'ydata':
+        if not data_boundary.model_consent_valid(p.get('profile', {})):
             raise ydata.GatewayError('legacy_review_restart_required', '请重新确认外部处理授权并新建审查。', 409)
 
     def save(status: str = 'running') -> None:
@@ -484,13 +487,13 @@ def run_review(rid: str, *, model: Model | None = None, retrieve: Callable | Non
                     live.rewind(mark)
                     status = getattr(exc, 'upstream_status', None) or 0
                     refused = 400 <= status < 500 and status not in (408, 409, 425, 429)
-                    default = ydata.default_output_tokens()
-                    if refused and exc.code == 'ydata_request_failed' and tokens > default:
+                    default = ydata.default_output_tokens(p['profile']['model'])
+                    if refused and exc.code in REFUSED_BUDGET and tokens > default:
                         # A route that does not take a long output budget: use the usual one and continue in turns.
                         budget['tokens'] = default
                         p['chat']['max_tokens'] = default
                         continue
-                    if exc.code == 'ydata_rate_limited' and limited < v2.RATE_LIMIT_RETRIES:
+                    if exc.code in RATE_LIMITED and limited < v2.RATE_LIMIT_RETRIES:
                         limited += 1
                         backoff = getattr(exc, 'retry_after', None) or v2.RATE_LIMIT_PAUSE * 2 ** (limited - 1)
                         time.sleep(min(v2.RATE_LIMIT_MAX_WAIT, backoff) + random.uniform(0, 1))

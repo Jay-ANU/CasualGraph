@@ -10,19 +10,21 @@ import { Spinner } from './ui';
 import { ic } from './icon';
 import { useI18n } from '../i18n/core';
 import { plural, serverText } from './i18n';
+import { processingConsent, processingProvider, reviewRouteKey } from './modelProcessing';
 
 /** A second model opinion is available on request and never controls export. */
 function OptionalCheck({ review, selected, busy, onCheck }: { review: Review; selected: boolean; busy: boolean; onCheck: () => void }) {
-  const { tx } = useI18n();
+  const { tx, lang } = useI18n();
   const [externalConsent, setExternalConsent] = useState(false);
   const checked = review.draft_check;
+  const provider = processingProvider(review.profile?.model);
   return <details className="lv-disclosure">
     <summary>{tx('可选：复核当前修订稿', 'Optional: check this revision')}</summary>
     <div className="lv-disclosure-body">
       <p>{tx('需要第二遍模型意见时再运行；复核结果供你参考。', 'Run a second model review when you want another opinion.')}</p>
-      <label className="lv-check lv-check-sm"><input type="checkbox" checked={externalConsent} disabled={busy || !selected} onChange={e => setExternalConsent(e.target.checked)} />
-        <span>{tx('同意将当前修改（脱敏）提交原审查模型复核', 'I agree to send the current edits (redacted) to the review model')}</span></label>
-      <button className="lv-secondary lv-btn-sm" disabled={busy || !externalConsent || !selected} onClick={onCheck}>{busy && <Spinner />}{tx('开始复核', 'Run optional check')}</button>
+      <label className="lv-check lv-check-sm"><input type="checkbox" checked={externalConsent && Boolean(provider)} disabled={busy || !selected || !provider} onChange={e => setExternalConsent(e.target.checked)} />
+        <span>{processingConsent('check', provider, lang)}</span></label>
+      <button className="lv-secondary lv-btn-sm" disabled={busy || !externalConsent || !selected || !provider} onClick={onCheck}>{busy && <Spinner />}{tx('开始复核', 'Run optional check')}</button>
       {checked && <div className={`lv-check-result ${checked.status === 'verified' ? 'is-ok' : 'is-warn'}`} role="status">
         <strong>{checked.status === 'verified' ? tx('模型复核未发现冲突', 'The model found no conflicts') : tx('模型复核提示', 'Model review notes')}</strong>
         <p>{serverText(checked.whole_contract.reason)}</p>
@@ -72,7 +74,7 @@ export function ReleasePanel({ review, contract, open, busy, onCheck, onReport, 
           <button className="lv-secondary lv-btn-sm" disabled={busy} onClick={onReport}>{tx('导出报告', 'Export report')}</button>
         </div>
       </div>
-      <OptionalCheck key={`${review.id}-${JSON.stringify(review.decisions)}`} review={review} selected={adopted.length > 0} busy={busy} onCheck={onCheck} />
+      <OptionalCheck key={`${review.id}-${reviewRouteKey(review)}-${JSON.stringify(review.decisions)}`} review={review} selected={adopted.length > 0} busy={busy} onCheck={onCheck} />
       <p className="lv-footnote">{tx('导出文件包含未脱敏信息；Word 修订版还会保留删除内容，请按需要分享。', 'Exports contain unredacted information; Word revisions also retain deleted text. Share accordingly.')}</p>
     </div>
   </section>;

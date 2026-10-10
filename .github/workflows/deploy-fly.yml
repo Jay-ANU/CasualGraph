@@ -69,9 +69,12 @@ jobs:
             echo '::error::DEEPSEEK_API_KEY is missing on Fly. No release was made.'
             exit 1
           fi
-          if ! awk '{print $1}' /tmp/casualgraph-secret-names.txt | grep -Eq '^(YDATA_API_KEY|YDATA_GPT_API_KEY|YDATA_CLAUDE_API_KEY|YDATA_DEEPSEEK_API_KEY|YDATA_KIMI_API_KEY|YDATA_GLM_API_KEY)$'; then
-            echo '::error::No YData credential is configured on Fly. Set YDATA_API_KEY or at least one family-specific YDATA_*_API_KEY.'
+          if ! awk '{print $1}' /tmp/casualgraph-secret-names.txt | grep -Eq '^(ANTHROPIC_API_KEY|YDATA_API_KEY|YDATA_GPT_API_KEY|YDATA_DEEPSEEK_API_KEY|YDATA_KIMI_API_KEY|YDATA_GLM_API_KEY)$'; then
+            echo '::error::No supported Legal model credential is configured on Fly. Set ANTHROPIC_API_KEY for official Claude, or a YData key for another family. YDATA_CLAUDE_API_KEY is no longer used.'
             exit 1
+          fi
+          if ! awk '{print $1}' /tmp/casualgraph-secret-names.txt | grep -qx ANTHROPIC_API_KEY; then
+            echo 'Official Claude is not enabled: configure ANTHROPIC_API_KEY in Fly secrets. Other configured Legal providers remain available.' >> "$GITHUB_STEP_SUMMARY"
           fi
           if ! awk '{print $1}' /tmp/casualgraph-secret-names.txt | grep -qx REDACTION_KEY; then
             python -c 'from cryptography.fernet import Fernet; print("REDACTION_KEY=" + Fernet.generate_key().decode())' | flyctl secrets import --stage --app casualgraph
@@ -101,7 +104,10 @@ jobs:
                   for tier in ('flash','deep'):
                       assert data['modes'][tier]['model']=='deepseek-v4-pro' and data['modes'][tier]['configured'] is True
                   with urllib.request.urlopen('https://casualgraph.fly.dev/legal/version', timeout=20) as r:
-                      assert json.load(r)['product']=='contract-review'
+                      legal=json.load(r)
+                  assert legal['product']=='contract-review'
+                  assert legal['model_gateway']=='mixed' and legal['model_selection_version']==2
+                  assert legal['draft_release_version']==2
                   try:
                       urllib.request.urlopen('https://casualgraph.fly.dev/legal/contracts?matter_id=probe', timeout=20)
                   except urllib.error.HTTPError as e:

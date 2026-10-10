@@ -15,10 +15,26 @@ NOTICE_VERSION = 'original-upload-v1'
 
 def disclosure() -> dict:
     return {'version': NOTICE_VERSION, 'storage_region': os.getenv('LEGAL_STORAGE_REGION', '').strip()[:120] or '未核验，请向运营方确认',
-            'region_verified': False, 'provider': 'ydata', 'raw_upload_before_redaction': True,
+            'region_verified': False, 'provider': 'mixed', 'raw_upload_before_redaction': True,
             'notice': '上传的是原件，会先传至 CasualGraph 后端解析并加密保存，再在后端脱敏；不是浏览器本地脱敏。'
-                      '后续经 YData 外发的正文、补充要求和公司规范须另行确认。'
+                      '后续外发的正文、补充要求和公司规范须另行确认：Claude 直接交给 Anthropic 官方，其他模型经 YData 处理。'
                       '地域、保留期限及处理方协议需运营方核验；勾选不构成合规认证。敏感真实材料请先完成组织审批。'}
+
+
+def model_consent_valid(profile: dict) -> bool:
+    """A saved model may only be called through the recipient the user authorized.
+
+    In particular, old Claude/YData jobs cannot silently migrate to Anthropic.
+    Local previews and exports do not call this guard and stay available.
+    """
+    from legal.ydata import provider_for_model
+    model = profile.get('model')
+    if not isinstance(model, dict):
+        return False
+    provider = model.get('provider')
+    expected = provider_for_model(model.get('id'))
+    return (provider in ('ydata', 'anthropic') and provider == expected
+            and profile.get('external_processing_provider') == provider)
 
 
 def redact_materials(contract_payload: dict, policies: list[dict], instructions: str) -> tuple[list[dict], str]:

@@ -155,11 +155,17 @@ def test_user_acceptance_is_sufficient_to_export_without_a_model_call(runtime, m
     assert data['pending_count'] == 0 and '60日' in data['final_contract'][0]['text']
 
 
-def test_exact_selected_combination_then_human_approval(runtime):
+@pytest.mark.parametrize('provider,model_id', [('ydata', 'glm-5.2'), ('anthropic', 'claude-test')])
+def test_exact_selected_combination_then_human_approval(runtime, provider, model_id):
     select(runtime, runtime[2]['suggested_text'].replace('60', '30'), 'draft')
     rid, cid, _ = runtime
+    with store.transaction() as conn:
+        review, _ = release.current(conn, rid)
+        review['payload']['profile'].update(model={'id': model_id, 'provider': provider}, external_processing_provider=provider)
+        conn.execute('UPDATE legal_reviews SET payload=? WHERE id=?', (store.encode(review['payload']), rid))
     seen = []
     def model(s, d, m):
+        assert m == {'id': model_id, 'provider': provider}
         seen.append(deepcopy(d))
         return supported(s, d, m)
     checked = release.check(rid, 'u1', 'request1', lambda: None, model=model)
@@ -364,6 +370,20 @@ def test_local_export_does_not_need_external_processing_authorization(runtime):
     r, c = store.review(runtime[0]), store.contract(runtime[1])
     r['payload']['profile'].pop('external_processing_provider')
     assert release.assert_exportable(r, c)['pending_count'] == 0
+
+
+def test_old_claude_keeps_local_export_but_cannot_silently_change_check_provider(runtime):
+    select(runtime)
+    rid, cid, _ = runtime
+    with store.transaction() as conn:
+        review, _ = release.current(conn, rid)
+        review['payload']['profile']['model'] = {'id': 'claude-test', 'provider': 'ydata'}
+        conn.execute('UPDATE legal_reviews SET payload=? WHERE id=?', (store.encode(review['payload']), rid))
+    assert release.assert_exportable(store.review(rid), store.contract(cid))['pending_count'] == 0
+    with pytest.raises(HTTPException) as error:
+        release.check(rid, 'u1', 'old-provider', lambda: None,
+                      model=lambda *a: pytest.fail('must not silently change providers'))
+    assert error.value.status_code == 409
 
 
 @pytest.fixture

@@ -430,3 +430,38 @@ def test_review_skills_reach_the_conversation_as_guidance(runtime):
     run(runtime, 'ultra_fast', model)
     user = model.seen[0]['messages'][1]['content']
     assert '【审查方法与检查要点】（经维护的方法与清单，不是法律依据）\n《合成技能》\n合成指引：先检查付款与验收。' in user
+
+
+def claude(job):
+    job['payload']['profile'].update(model={'id': 'claude-test', 'provider': 'anthropic'}, external_processing_provider='anthropic')
+
+
+def test_official_claude_reviews_in_the_same_conversation(runtime):
+    claude(runtime)
+    model = Chat(answer())
+    p = run(runtime, 'ultra_fast', model)
+    assert runtime['status'] == 'completed' and model.seen[0]['model'] == 'claude-test' and len(p['decisions']) == 1
+
+
+def test_a_claude_review_saved_for_ydata_never_sends_data_to_a_new_recipient(runtime):
+    runtime['payload']['profile']['model'] = {'id': 'claude-test', 'provider': 'ydata'}
+    model = Chat(answer())
+    run(runtime, 'ultra_fast', model)
+    assert not model.seen and runtime['status'] == 'failed'
+
+
+@pytest.mark.parametrize('code', ['anthropic_rate_limited', 'anthropic_overloaded', 'anthropic_incomplete', 'anthropic_unavailable'])
+def test_official_claude_busy_or_dropped_turns_are_retried(runtime, code):
+    claude(runtime)
+    model = Chat(ydata.GatewayError(code, '合成错误。', 502), answer())
+    run(runtime, 'ultra_fast', model)
+    assert runtime['status'] == 'completed' and len(model.seen) == 2
+
+
+def test_official_claude_that_refuses_a_long_output_budget_falls_back_to_its_usual_one(runtime):
+    claude(runtime)
+    refused = ydata.GatewayError('anthropic_invalid_request', '参数被拒绝。', 422, upstream_status=400)
+    model = Chat(refused, answer())
+    run(runtime, 'ultra_fast', model)
+    assert runtime['status'] == 'completed'
+    assert [s['max_tokens'] for s in model.seen] == [ydata.chat_output_tokens(), ydata.default_output_tokens(runtime['payload']['profile']['model'])]

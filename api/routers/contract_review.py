@@ -47,7 +47,7 @@ class ReviewRequest(BaseModel):
     our_party: PartyBinding | None = None
     transaction_context: TransactionContext = Field(default_factory=TransactionContext)
     model_id: str = Field(min_length=1, max_length=160, pattern=r'^[A-Za-z0-9][A-Za-z0-9._/-]*$')
-    external_processing_provider: Literal['ydata']
+    external_processing_provider: Literal['ydata', 'anthropic']
     our_role: str = Field(min_length=1, max_length=40)
     contract_type: str = Field(min_length=1, max_length=80)
     scenario_revision: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
@@ -138,7 +138,8 @@ def _review_view(r: dict, c: dict | None = None):
     sources = all_sources(p)
     now = time.time()
     expired = (r['status'] == 'running' and r['lease_until'] < now) or (r['status'] == 'queued' and r.get('updated_at', now) < now - 600)
-    can_resume = not store.has_user_decisions(p) and (r['status'] == 'failed' or expired or (r['status'] == 'partial' and p.get('retryable') is True))
+    can_resume = (data_boundary.model_consent_valid(p.get('profile', {})) and not store.has_user_decisions(p)
+                  and (r['status'] == 'failed' or expired or (r['status'] == 'partial' and p.get('retryable') is True)))
     return {'transaction_brief': p.get('transaction_brief'), 'evidence_health': evidence_health(p.get('searches', {}), sources),
             'id': r['id'], 'contract_id': r['contract_id'], 'status': r['status'], 'created_at': r['created_at'],
             'stage': p.get('stage', '等待执行'), 'error': p.get('error'), 'resumable': can_resume,
@@ -163,7 +164,7 @@ def _review_view(r: dict, c: dict | None = None):
 @public_router.get('/version')
 def version():
     return {'product': 'contract-review', 'version': '1.0.0', 'law_source': 'external', 'rules_source': 'database',
-            'max_only': True, 'model_gateway': 'ydata', 'model_selection_version': 1, 'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': draft_release.VERSION, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION}
+            'max_only': True, 'model_gateway': 'mixed', 'model_selection_version': 2, 'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': draft_release.VERSION, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION}
 
 
 @public_router.get('/access')
@@ -201,7 +202,7 @@ def capabilities(user: dict = Depends(get_current_user)):
         encrypted = True
     except Exception:
         encrypted = False
-    return {'product': 'contract-review', 'model_configured': ydata.configured(), 'model_gateway': 'ydata', 'encryption_configured': encrypted,
+    return {'product': 'contract-review', 'model_configured': ydata.configured(), 'model_gateway': 'mixed', 'model_selection_version': 2, 'encryption_configured': encrypted,
             'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': draft_release.VERSION, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION,
             'scenario_catalog': scenarios.catalog(), 'upload_disclosure': data_boundary.disclosure(), 'law_search': external_law.provider_status(), 'contract_types': [scene['label'] for scene in scenarios.catalog()['scenarios']],
             'limits': {'max_upload_mb': 10, 'max_characters': documents.MAX_TEXT, 'max_blocks': documents.MAX_BLOCKS},
@@ -300,11 +301,14 @@ def start_review(cid: str, request: ReviewRequest, user: dict = Depends(get_curr
         selected = ydata.select_model(request.model_id)
     except ydata.GatewayError as exc:
         raise _gateway_failure(exc) from None
+    if request.external_processing_provider != selected['provider']:
+        raise HTTPException(409, {'error': 'legal_model_provider_changed',
+                                  'message': '所选模型的处理方已变化，请重新选择模型并确认外部处理方。'})
     profile = request.model_dump(mode='json', exclude={'external_processing_confirmed', 'fresh_review', 'external_processing_provider', 'model_id', 'scenario_revision'})
     profile['our_party'] = party
     profile['scenario'] = scenarios.descriptor(scene, request.our_role)
     profile['model'] = selected
-    profile['external_processing_provider'] = 'ydata'
+    profile['external_processing_provider'] = selected['provider']
     profile['review_date'] = date.today().isoformat()
     policies = scenarios.matching_policies(store.policies(c['org_id'], str(user['id'])), request.contract_type, request.our_role)
     policies, profile['instructions'] = data_boundary.redact_materials(c['payload'], policies, profile.get('instructions', ''))
@@ -334,8 +338,8 @@ def resume(rid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(409, '该任务已结束；补充事实或改变要求时请新建审查。')
     if store.has_user_decisions(r['payload']):
         raise HTTPException(409, '本轮已有人工决定，请新建审查，避免覆盖已确认修改。')
-    if r['payload'].get('profile', {}).get('external_processing_provider') != 'ydata':
-        raise HTTPException(409, '旧任务未确认 YData 处理授权，请选择模型并新建审查。')
+    if not data_boundary.model_consent_valid(r['payload'].get('profile', {})):
+        raise HTTPException(409, '本轮模型处理方已变化或尚未授权，请选择模型并新建审查。历史稿件仍可查看和导出。')
     store.queue_resume(rid)
     engine.submit(rid)
     return _review_view(store.review(rid))
@@ -399,6 +403,19 @@ class QuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1500)
     request_id: str = Field(min_length=1, max_length=80, pattern=r'^[A-Za-z0-9_-]+$')
     external_processing_confirmed: bool = False
+    external_processing_provider: Literal['ydata', 'anthropic'] | None = None
+
+
+def _require_request_provider(review: dict, requested: str | None) -> None:
+    profile = review['payload'].get('profile', {})
+    if not data_boundary.model_consent_valid(profile):
+        raise HTTPException(409, '本轮模型处理方已变化或尚未授权，请选择模型并新建审查。历史稿件仍可查看和导出。')
+    actual = profile['model']['provider']
+    # Old YData clients already named the same recipient when creating the review.
+    # Official Claude requests must explicitly acknowledge their new recipient.
+    if requested != actual and not (requested is None and actual == 'ydata'):
+        raise HTTPException(409, {'error': 'legal_model_provider_changed',
+                                  'message': '所选模型的处理方已变化，请重新选择模型并确认外部处理方。'})
 
 @router.post('/reviews/{rid}/cancel')
 def cancel_review(rid: str, user: dict = Depends(get_current_user)):
@@ -419,6 +436,7 @@ def ask_question(rid: str, request: QuestionRequest, user: dict = Depends(get_cu
     r, c = _review(rid, user, True)
     if not request.external_processing_confirmed:
         raise HTTPException(409, '请明确授权把本次提问及本轮脱敏材料发送给原审查模型。')
+    _require_request_provider(r, request.external_processing_provider)
     def authorize():
         assert_worker_max(str(user['id']))
         _review(rid, user, True)
@@ -442,6 +460,7 @@ def original_text(cid: str, user: dict = Depends(get_current_user)):
 class DraftCheckRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=80, pattern=r'^[A-Za-z0-9_-]+$')
     external_processing_confirmed: bool = False
+    external_processing_provider: Literal['ydata', 'anthropic'] | None = None
 
 
 class DraftApprovalRequest(BaseModel):
@@ -452,9 +471,10 @@ class DraftApprovalRequest(BaseModel):
 @router.post('/reviews/{rid}/draft-check')
 def check_draft(rid: str, request: DraftCheckRequest, user: dict = Depends(get_current_user)):
     from legal.access import assert_worker_max
-    _review(rid, user, True)
+    r, _ = _review(rid, user, True)
     if not request.external_processing_confirmed:
         raise HTTPException(409, '请授权将当前脱敏修订组合交给原审查模型复核。')
+    _require_request_provider(r, request.external_processing_provider)
     def authorize():
         assert_worker_max(str(user['id']))
         _review(rid, user, True)

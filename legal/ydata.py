@@ -1,4 +1,4 @@
-"""Server-only YData chat gateway with per-model-family credential routing."""
+"""Compatible legal model gateway: Claude uses Anthropic; four families use YData."""
 from __future__ import annotations
 
 import hashlib
@@ -15,9 +15,9 @@ import httpx
 
 BASE_URL = 'https://www.ydata.space/v1'
 FAMILIES = ('GPT', 'Claude', 'DeepSeek', 'Kimi', 'GLM')
+YDATA_FAMILIES = ('GPT', 'DeepSeek', 'Kimi', 'GLM')
 FAMILY_KEY_ENVS = {
     'GPT': 'YDATA_GPT_API_KEY',
-    'Claude': 'YDATA_CLAUDE_API_KEY',
     'DeepSeek': 'YDATA_DEEPSEEK_API_KEY',
     'Kimi': 'YDATA_KIMI_API_KEY',
     'GLM': 'YDATA_GLM_API_KEY',
@@ -25,6 +25,7 @@ FAMILY_KEY_ENVS = {
 TTL_SECONDS = 120
 _LOCK = threading.Lock()
 _CACHE: dict[str, Any] = {}
+_PROVIDER_CACHE: dict[str, dict[str, Any]] = {}
 _ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$')
 _PLACEHOLDER_KEYS = {'...', 'your-api-key', 'replace-me', 'bearer ...'}
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -125,11 +126,12 @@ def _key_for_family(family: str) -> str:
 
 
 def configured() -> bool:
+    from legal import anthropic_gateway
     try:
         _bindings()
         return True
     except GatewayError:
-        return False
+        return anthropic_gateway.configured()
 
 
 def family_of(model: str) -> str | None:
@@ -146,6 +148,11 @@ def family_of(model: str) -> str | None:
         if name.startswith(prefixes):
             return family
     return None
+
+
+def provider_for_model(model_id: str) -> str | None:
+    family = family_of(model_id)
+    return 'anthropic' if family == 'Claude' else 'ydata' if family in YDATA_FAMILIES else None
 
 
 def _client(idle: float = 300) -> httpx.Client:
@@ -199,6 +206,7 @@ def _request(client: httpx.Client, method: str, path: str, key: str, **kwargs) -
 def clear_cache() -> None:
     with _LOCK:
         _CACHE.clear()
+        _PROVIDER_CACHE.clear()
 
 
 def _cache_fingerprint(manual: str) -> str:
@@ -206,18 +214,17 @@ def _cache_fingerprint(manual: str) -> str:
         'legacy': _legacy_key() or '',
         'manual': manual,
         'default': os.getenv('LEGAL_YDATA_DEFAULT_MODEL', ''),
+        'anthropic_key': _read_key('ANTHROPIC_API_KEY') or '',
+        'anthropic_manual': os.getenv('LEGAL_ANTHROPIC_MODELS', ''),
+        'retired_claude_key_present': bool(_read_key('YDATA_CLAUDE_API_KEY')),
         **{family: _read_key(env_name) or '' for family, env_name in FAMILY_KEY_ENVS.items()},
     }
     return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def model_catalog(*, client: httpx.Client | None = None) -> dict:
+def _ydata_catalog(*, client: httpx.Client | None = None) -> dict:
     bindings = _bindings()
     manual = os.getenv('LEGAL_YDATA_MODELS', '').strip()
-    cache_key = _cache_fingerprint(manual)
-    with _LOCK:
-        if client is None and _CACHE.get('key') == cache_key and _CACHE.get('until', 0) > time.monotonic():
-            return json.loads(json.dumps(_CACHE['catalog']))
 
     models: dict[str, dict[str, str]] = {}
     unavailable: set[str] = set()
@@ -230,12 +237,14 @@ def model_catalog(*, client: httpx.Client | None = None) -> dict:
             for mid in ids:
                 family = family_of(mid)
                 assert family is not None
+                if family == 'Claude':
+                    continue  # Legacy inventory cannot route Claude back through YData.
                 _key_for_family(family)
-                models[mid] = {'id': mid, 'family': family}
+                models[mid] = {'id': mid, 'family': family, 'provider': 'ydata'}
         except GatewayError:
             raise
         except (ValueError, TypeError):
-            raise GatewayError('ydata_catalog_invalid', 'LEGAL_YDATA_MODELS 必须是五个支持系列中确切模型 ID 的 JSON 数组。') from None
+            raise GatewayError('ydata_catalog_invalid', 'LEGAL_YDATA_MODELS 必须是 GPT、DeepSeek、Kimi、GLM 确切模型 ID 的 JSON 数组；Claude 请配置官方库存。') from None
     else:
         dedicated = _dedicated_keys()
         errors: list[GatewayError] = []
@@ -257,7 +266,7 @@ def model_catalog(*, client: httpx.Client | None = None) -> dict:
                             continue
                         mid = row.get('id')
                         family = family_of(mid)
-                        if not family:
+                        if family not in YDATA_FAMILIES:
                             continue
                         if family_hint is not None and family != family_hint:
                             continue
@@ -265,7 +274,7 @@ def model_catalog(*, client: httpx.Client | None = None) -> dict:
                         # silently source the same family from the legacy credential.
                         if family_hint is None and family in dedicated:
                             continue
-                        models[mid] = {'id': mid, 'family': family}
+                        models[mid] = {'id': mid, 'family': family, 'provider': 'ydata'}
                         matched += 1
                     if family_hint is not None and matched == 0:
                         unavailable.add(family_hint)
@@ -286,7 +295,7 @@ def model_catalog(*, client: httpx.Client | None = None) -> dict:
             )
 
     if not models:
-        raise GatewayError('ydata_no_chat_models', '当前 YData 凭据未列出支持的 GPT、Claude、DeepSeek、Kimi 或 GLM 聊天型号。')
+        raise GatewayError('ydata_no_chat_models', '当前 YData 凭据未列出支持的 GPT、DeepSeek、Kimi 或 GLM 聊天型号；Claude 仅使用 Anthropic 官方 API。')
 
     ordered = sorted(models.values(), key=lambda m: (FAMILIES.index(m['family']), m['id']))
     preferred = os.getenv('LEGAL_YDATA_DEFAULT_MODEL', 'glm-5.2').strip()
@@ -302,6 +311,74 @@ def model_catalog(*, client: httpx.Client | None = None) -> dict:
         'retrieved_at': datetime.now(timezone.utc).isoformat(),
         'notice': '后端按模型系列选择对应 YData Key；仅显示可由当前凭据发现或管理员配置的文本型号。不可用时明确报错，不会跨厂商换 Key 或自动换模型。',
     }
+    return result
+
+
+def _provider_catalog(provider: str, *, client: httpx.Client | None = None) -> dict:
+    """A selection must never wait for another processing provider's discovery."""
+    from legal import anthropic_gateway
+    if provider == 'anthropic':
+        values = {'key': _read_key('ANTHROPIC_API_KEY') or '', 'manual': os.getenv('LEGAL_ANTHROPIC_MODELS', '')}
+        fetch = anthropic_gateway.model_catalog
+    else:
+        values = {'legacy': _legacy_key() or '', 'manual': os.getenv('LEGAL_YDATA_MODELS', ''),
+                  **{family: _read_key(env_name) or '' for family, env_name in FAMILY_KEY_ENVS.items()}}
+        fetch = _ydata_catalog
+    fingerprint = hashlib.sha256(json.dumps(values, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    with _LOCK:
+        cached = _PROVIDER_CACHE.get(provider, {})
+        if client is None and cached.get('key') == fingerprint and cached.get('until', 0) > time.monotonic():
+            return json.loads(json.dumps(cached['catalog']))
+    catalog = fetch(client=client)
+    if client is None:
+        with _LOCK:
+            _PROVIDER_CACHE[provider] = {'key': fingerprint, 'until': time.monotonic() + TTL_SECONDS, 'catalog': catalog}
+    return json.loads(json.dumps(catalog))
+
+
+def model_catalog(*, client: httpx.Client | None = None) -> dict:
+    from legal import anthropic_gateway
+    cache_key = _cache_fingerprint(os.getenv('LEGAL_YDATA_MODELS', '').strip())
+    with _LOCK:
+        if client is None and _CACHE.get('key') == cache_key and _CACHE.get('until', 0) > time.monotonic():
+            return json.loads(json.dumps(_CACHE['catalog']))
+    catalogs, errors = [], []
+    ydata_declared = bool(_legacy_key() or any(_read_key(env_name) for env_name in FAMILY_KEY_ENVS.values()))
+    anthropic_declared = bool(anthropic_gateway.configured() or os.getenv('LEGAL_ANTHROPIC_MODELS', '').strip()
+                              or _read_key('YDATA_CLAUDE_API_KEY'))
+    for provider, declared in (('ydata', ydata_declared), ('anthropic', anthropic_declared)):
+        if not declared:
+            continue
+        try:
+            catalogs.append(_provider_catalog(provider, client=client))
+        except GatewayError as exc:
+            errors.append((provider, exc))
+    if not catalogs:
+        if errors:
+            raise errors[0][1]
+        raise GatewayError('ydata_not_configured', '模型密钥未配置。Claude 请设置 ANTHROPIC_API_KEY，其他系列请配置 YDATA_API_KEY 或对应 YDATA_*_API_KEY。')
+    models = [model for catalog in catalogs for model in catalog['models']]
+    models.sort(key=lambda model: (FAMILIES.index(model['family']), model['id']))
+    available = [family for family in FAMILIES if any(model['family'] == family for model in models)]
+    providers = list(dict.fromkeys(model['provider'] for model in models))
+    sources = {catalog['provider']: catalog['catalog_source'] for catalog in catalogs}
+    unavailable = {family for catalog in catalogs for family in catalog.get('unavailable_families', [])}
+    for provider, _ in errors:
+        unavailable.update(('Claude',) if provider == 'anthropic' else YDATA_FAMILIES)
+    preferred = os.getenv('LEGAL_YDATA_DEFAULT_MODEL', 'glm-5.2').strip()
+    result = {
+        'provider': providers[0] if len(providers) == 1 else 'mixed',
+        'models': models, 'families': list(FAMILIES), 'available_families': available,
+        'unavailable_families': [family for family in FAMILIES if family in unavailable and family not in available],
+        'catalog_source': next(iter(sources.values())) if len(set(sources.values())) == 1 else 'mixed',
+        'catalog_sources': sources,
+        'default_model': preferred if any(model['id'] == preferred for model in models) else models[0]['id'],
+        'provider_errors': [{'provider': provider, 'code': exc.code, 'message': exc.message,
+                             'status_code': exc.status_code, 'retry_after': exc.retry_after, 'upstream_status': exc.upstream_status}
+                            for provider, exc in errors],
+        'retrieved_at': datetime.now(timezone.utc).isoformat(),
+        'notice': 'Claude 直接使用 Anthropic 官方 API；GPT、DeepSeek、Kimi、GLM 使用各自的 YData 凭据。仅列出接口发现或管理员明确配置的型号；不会自动切换提供方或模型。',
+    }
     if client is None:
         with _LOCK:
             _CACHE.update(key=cache_key, until=time.monotonic() + TTL_SECONDS, catalog=result)
@@ -309,12 +386,22 @@ def model_catalog(*, client: httpx.Client | None = None) -> dict:
 
 
 def select_model(model_id: str, *, client: httpx.Client | None = None) -> dict:
-    catalog = model_catalog(client=client)
+    provider = provider_for_model(model_id)
+    if provider is None:
+        raise GatewayError('legal_model_not_allowed', '所选模型不受支持，请刷新并重新选择。', 422)
+    if provider == 'anthropic':
+        from legal import anthropic_gateway
+        anthropic_gateway.key()
+    catalog = _provider_catalog(provider, client=client)
     match = next((m for m in catalog['models'] if m['id'] == model_id), None)
     if match is None:
         raise GatewayError('legal_model_not_allowed', '所选模型不在当前可用列表，请刷新并重新选择。', 422)
-    _key_for_family(match['family'])
-    return {'provider': 'ydata', **match, 'catalog_source': catalog['catalog_source']}
+    if match['provider'] == 'anthropic':
+        from legal import anthropic_gateway
+        anthropic_gateway.key()
+    else:
+        _key_for_family(match['family'])
+    return {**match, 'catalog_source': catalog.get('catalog_sources', {}).get(match['provider'], catalog['catalog_source'])}
 
 
 def _output_tokens() -> int:
@@ -325,8 +412,11 @@ def _output_tokens() -> int:
         return 8192
 
 
-def default_output_tokens() -> int:
-    """The output budget every request gets unless a caller asks for more."""
+def default_output_tokens(selection: dict | None = None) -> int:
+    """The output budget a request gets unless a caller asks for more, for the selected model's provider."""
+    if isinstance(selection, dict) and selection.get('provider') == 'anthropic':
+        from legal import anthropic_gateway
+        return anthropic_gateway.default_output_tokens()
     return _output_tokens()
 
 
@@ -485,12 +575,15 @@ def _complete(client: httpx.Client, key: str, request: dict, on_delta: Progress 
     return content, finish, thinking
 
 
-def _prepare(selection: dict, client: httpx.Client | None) -> tuple[dict, str]:
-    """The review's own model and the key of its family; never another model or vendor."""
-    if not isinstance(selection, dict) or selection.get('provider') != 'ydata':
-        raise GatewayError('legacy_review_restart_required', '旧任务未记录 YData 模型及授权，请选择模型并新建审查。', 409)
+def _prepare(selection: dict, client: httpx.Client | None) -> dict:
+    """The review's own model, through the recipient the user authorized; never another model or vendor."""
+    if (not isinstance(selection, dict) or selection.get('provider') not in ('ydata', 'anthropic')
+            or selection.get('provider') != provider_for_model(selection.get('id', ''))):
+        raise GatewayError('legacy_review_restart_required', '本轮模型接收方与当前路由不一致，请重新选择模型并授权后新建审查。', 409)
     model = select_model(selection.get('id', ''), client=client)
-    return model, _key_for_family(model['family'])
+    if model['provider'] != selection['provider']:
+        raise GatewayError('legacy_review_restart_required', '本轮模型接收方已变化，请重新选择模型并授权后新建审查。', 409)
+    return model
 
 
 def _exchange(model: dict, key: str, messages: list[dict], tokens: int | None, on_delta: Progress | None,
@@ -498,7 +591,7 @@ def _exchange(model: dict, key: str, messages: list[dict], tokens: int | None, o
     request = {'model': model['id'], 'messages': messages, **_token_budget(model['id'], tokens)}
     seconds = CHAT_STREAM_SECONDS if chat else STREAM_SECONDS
     if client is None:
-        with _client(CHAT_IDLE_SECONDS if chat else 300) as owned:
+        with (_client(CHAT_IDLE_SECONDS) if chat else _client()) as owned:
             return _complete(owned, key, request, on_delta, seconds, chat)
     return _complete(client, key, request, on_delta, seconds, chat)
 
@@ -515,9 +608,14 @@ def chat(messages: list[dict], selection: dict, *, max_tokens: int | None = None
 
     Unlike chat_json, an answer stopped at the output limit, or still being written when its time
     is up, is returned with finish="length" so the caller can ask the model to continue, the way a
-    chat app does. Messages are sent as given; contract text in them must already be redacted.
+    chat app does. Claude goes to Anthropic's official API. Messages are sent as given; contract
+    text in them must already be redacted.
     """
-    model, key = _prepare(selection, client)
+    model = _prepare(selection, client)
+    if model['provider'] == 'anthropic':
+        from legal import anthropic_gateway
+        return anthropic_gateway.chat(messages, model, max_tokens=max_tokens, on_delta=on_delta, client=client)
+    key = _key_for_family(model['family'])
     started = time.monotonic()
     try:
         content, finish, thinking = _exchange(model, key, messages, max_tokens, on_delta, client, chat=True)
@@ -534,7 +632,11 @@ def chat(messages: list[dict], selection: dict, *, max_tokens: int | None = None
 
 
 def chat_json(system: str, payload: dict, selection: dict, *, client: httpx.Client | None = None) -> dict:
-    model, key = _prepare(selection, client)
+    model = _prepare(selection, client)
+    if model['provider'] == 'anthropic':
+        from legal import anthropic_gateway
+        return anthropic_gateway.chat_json(system, payload, model, client=client)
+    key = _key_for_family(model['family'])
     messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}]
     # JSON is required by the prompt and checked locally. Do not impose an unsupported
     # response_format/temperature/thinking option on every gateway model family.

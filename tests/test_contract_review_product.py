@@ -315,7 +315,8 @@ def test_search_redirect_cannot_leak_authorization():
             laws._read(client, 'POST', 'https://api.tavily.com/search', headers={'Authorization':'Bearer test'}, json={'query':'public law'})
 
 
-def test_api_requires_permission_redaction_and_consent(db, monkeypatch):
+@pytest.mark.parametrize('provider,model_id', [('ydata', 'glm-5.2'), ('anthropic', 'claude-test')])
+def test_api_requires_permission_redaction_and_consent(db, monkeypatch, provider, model_id):
     router_module = pytest.importorskip('api.routers.contract_review')
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -325,7 +326,7 @@ def test_api_requires_permission_redaction_and_consent(db, monkeypatch):
     application.include_router(router_module.router)
     application.dependency_overrides[router_module.get_current_user] = lambda: actor
     application.dependency_overrides[router_module.require_legal_max] = lambda: actor  # Plan checks have a separate real-dependency suite.
-    monkeypatch.setattr(router_module.ydata, 'select_model', lambda mid: {'provider':'ydata','id':mid,'family':'GLM'})
+    monkeypatch.setattr(router_module.ydata, 'select_model', lambda mid: {'provider':provider,'id':mid,'family':'Claude' if provider == 'anthropic' else 'GLM'})
     def member(mid, user, min_role='viewer', require_active=False):
         if user['id'] != 'u1' or mid != 'm1': raise HTTPException(403, 'no access')
         return {'matter':{'id':'m1','org_id':'o1'}, 'role':'lead'}
@@ -334,7 +335,7 @@ def test_api_requires_permission_redaction_and_consent(db, monkeypatch):
     submitted = []
     monkeypatch.setattr(engine, 'submit', submitted.append)
     client = TestClient(application)
-    profile = {'our_role':'采购方','contract_type':'采购合同','external_processing_confirmed':True,'external_processing_provider':'ydata','model_id':'glm-5.2'}
+    profile = {'our_role':'采购方','contract_type':'采购合同','external_processing_confirmed':True,'external_processing_provider':provider,'model_id':model_id}
     denied = client.post('/legal/contracts', data={'matter_id':'m1'}, files={'file':('sample.txt',b'fixture','text/plain')})
     assert denied.status_code == 409 and store.contract_list('m1') == []
     upload = client.post('/legal/contracts', data={'matter_id':'m1', 'original_upload_confirmed':'true', 'upload_notice_version':'original-upload-v1'}, files={'file':('sample.txt','甲方；联系人：张三；付款100万元。'.encode(),'text/plain')})
@@ -347,8 +348,13 @@ def test_api_requires_permission_redaction_and_consent(db, monkeypatch):
     assert client.post(f'/legal/contracts/{cid}/reviews', json=profile).status_code == 422
     profile['our_party'] = {'block_id': 'p1', 'quote': '甲方'}
     assert '张三' in client.get(f'/legal/contracts/{cid}/original-text').text
+    mismatch = client.post(f'/legal/contracts/{cid}/reviews', json={**profile, 'external_processing_provider': 'ydata' if provider == 'anthropic' else 'anthropic'})
+    assert mismatch.status_code == 409 and mismatch.json()['detail']['error'] == 'legal_model_provider_changed'
+    assert submitted == []
     response = client.post(f'/legal/contracts/{cid}/reviews', json=profile)
     assert response.status_code == 202 and len(submitted) == 1
+    assert response.json()['profile']['model']['provider'] == provider
+    assert response.json()['profile']['external_processing_provider'] == provider
     assert client.post(f'/legal/contracts/{cid}/reviews', json=profile).json()['id'] == response.json()['id']
     assert len(submitted) == 1
     actor['id'] = 'u2'

@@ -10,6 +10,7 @@ import { exportConflict, exportQuery, pendingExportPrompt } from './exportFlow';
 import type { ExportPrompt, RevisionFormat } from './exportFlow';
 import { emptyTransactionInputs, transactionAmount } from './transactionInput';
 import { changeScenario, currentScenario, scenarioRoleValid } from './scenarioInput';
+import { processingProvider, refreshedModelSelection, reviewRouteKey, selectedModel } from './modelProcessing';
 import { fileTitle, tierLabel, tierOf } from './labels';
 import { partyCandidates } from './text';
 import { ReviewReport } from './report';
@@ -103,9 +104,12 @@ export default class LegalDesk extends React.Component<Props, State> {
     this.timer = setInterval(() => void this.poll(), 2500);
     document.addEventListener('visibilitychange', this.refreshOnReturn);
   }
-  componentDidUpdate() {
+  componentDidUpdate(_previousProps: Props, previousState: State) {
     const title = deskTitle();
     if (document.title !== title) document.title = title;
+    if (this.state.questionConsent && reviewRouteKey(previousState.review) !== reviewRouteKey(this.state.review)) {
+      this.setState({ questionConsent: false });
+    }
   }
   componentWillUnmount() {
     this.live = false; this.generation++; clearInterval(this.timer); document.title = this.priorTitle;
@@ -132,6 +136,10 @@ export default class LegalDesk extends React.Component<Props, State> {
   private fail(e: unknown) {
     if (!this.live) return;
     this.setState({ error: errorText(e) });
+    if (e && typeof e === 'object' && 'code' in e && e.code === 'legal_model_provider_changed') {
+      this.setState({ consent: false, questionConsent: false });
+      void this.loadModels();
+    }
     if (e && typeof e === 'object' && 'status' in e && e.status === 401) { this.props.logout(); return; }
     if (e && typeof e === 'object' && 'status' in e && e.status === 403) {
       const deny = () => this.setState({ denied: true, contract: null, review: null, policies: [], contracts: [], answers: [], originalBlocks: null });
@@ -161,8 +169,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     try {
       const catalog = await this.api<Catalog>('/legal/models');
       if (!this.live || seq !== this.modelGeneration) return;
-      const modelId = catalog.models.some(m => m.id === this.state.modelId) ? this.state.modelId : catalog.default_model;
-      this.setState(state => ({ catalog, modelId, consent: modelId === state.modelId ? state.consent : false }));
+      this.setState(state => ({ catalog, ...refreshedModelSelection(state.catalog, catalog, state.modelId, state.consent) }));
     } catch (e) { if (this.live && seq === this.modelGeneration) this.setState({ catalog: null, modelError: errorText(e), modelId: '', consent: false }); }
     finally { if (this.live && seq === this.modelGeneration) this.setState({ modelsLoading: false }); }
   };
@@ -261,11 +268,13 @@ export default class LegalDesk extends React.Component<Props, State> {
   private start = async () => {
     const s = this.state;
     if (!s.contract || !s.modelId || !s.consent || !s.ourRole || !s.ourPartyBlock || !s.ourPartyQuote) return;
+    const provider = processingProvider(selectedModel(s.catalog, s.modelId));
+    if (!provider || s.modelsLoading) throw new Error('处理方尚未确认，请刷新模型列表并重新选择。');
     if (!scenarioRoleValid(s.caps?.scenario_catalog, s.contractType, s.ourRole)) throw new Error('请重新选择我方身份。');
     const amount = transactionAmount(s.dealValue);
     if (!amount.valid) throw new Error('交易金额格式有误。');
     const review = await this.api<Review>(`/legal/contracts/${s.contract.id}/reviews`, jsonRequest('POST', {
-      model_id: s.modelId, external_processing_provider: 'ydata', external_processing_confirmed: true,
+      model_id: s.modelId, external_processing_provider: provider, external_processing_confirmed: true,
       scenario_revision: s.caps?.scenario_catalog?.revision,
       our_party: { block_id: s.ourPartyBlock, quote: s.ourPartyQuote }, our_role: s.ourRole, contract_type: s.contractType, jurisdiction: '中国大陆', transaction_date: s.date || null,
       transaction_context: { performance_stage: s.performanceStage, attachments_status: s.attachmentsStatus, business_priority: s.businessPriority,
@@ -373,12 +382,13 @@ export default class LegalDesk extends React.Component<Props, State> {
   };
   private ask = async () => {
     const r = this.state.review, question = this.state.question.trim();
-    if (!r || !question || this.state.questionBusy || !this.state.questionConsent) return;
+    const provider = processingProvider(r?.profile?.model);
+    if (!r || !question || !provider || this.state.questionBusy || !this.state.questionConsent) return;
     const seq = this.generation;
     this.setState({ questionBusy: true, error: '' });
     try {
       const answer = await this.api<Answer>(`/legal/reviews/${r.id}/questions`, jsonRequest('POST', {
-        question, request_id: crypto.randomUUID(), external_processing_confirmed: true,
+        question, request_id: crypto.randomUUID(), external_processing_provider: provider, external_processing_confirmed: true,
       }));
       if (this.live && seq === this.generation && this.state.review?.id === r.id) this.setState(s => ({ answers: [...s.answers, answer], question: '' }));
     } catch (e) { this.fail(e); }
@@ -424,7 +434,7 @@ export default class LegalDesk extends React.Component<Props, State> {
       : !partyValid ? pick('请选择我方主体', 'Choose our party')
       : !amountValid ? pick('交易金额格式有误', 'Enter a valid amount')
       : s.modelsLoading ? pick('正在加载模型…', 'Loading models…')
-      : !s.modelId || s.caps?.model_configured === false ? pick('暂无可用模型，请刷新后重试', 'No model is available; refresh and try again')
+      : !processingProvider(selectedModel(s.catalog, s.modelId)) || s.caps?.model_configured === false ? pick('暂无可用模型，请刷新后重试', 'No model is available; refresh and try again')
       : !s.consent ? pick('请勾选模型分析授权', 'Tick the consent box for model analysis') : '';
     const canStart = !startIssue && !s.busy;
     const values: SetupValues = { contractType: s.contractType, ourRole: s.ourRole, ourPartyBlock: s.ourPartyBlock, ourPartyQuote: s.ourPartyQuote,
@@ -460,7 +470,9 @@ export default class LegalDesk extends React.Component<Props, State> {
       onQuestion={question => this.setState({ question })} onQuestionConsent={questionConsent => this.setState({ questionConsent })} onAsk={() => void this.ask()} />;
     else if (stage === 'export' && r) rail = <ReleasePanel review={r} contract={c} open={open} busy={s.busy}
       onCheck={() => void this.run(async () => {
-        const review = await this.api<Review>(`/legal/reviews/${r.id}/draft-check`, jsonRequest('POST', { request_id: crypto.randomUUID(), external_processing_confirmed: true }));
+        const provider = processingProvider(r.profile?.model);
+        if (!provider) throw new Error('处理方尚未确认，请刷新模型列表并重新选择。');
+        const review = await this.api<Review>(`/legal/reviews/${r.id}/draft-check`, jsonRequest('POST', { request_id: crypto.randomUUID(), external_processing_provider: provider, external_processing_confirmed: true }));
         if (this.live && this.state.review?.id === review.id) this.setState({ review });
       })}
       onReport={() => void this.run(() => this.download('md'))}
