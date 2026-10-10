@@ -5,7 +5,9 @@ import { apiBase } from '../api/config';
 import type { Answer, Api, Block, Capabilities, Catalog, Contract, ContractSummary, Decision, Finding, Matter, Policy, Review, ReviewTier, User, Workspace } from './types';
 import './LegalDesk.css';
 import '@fontsource-variable/inter/wght.css';
-import { uploadIssue } from './deskLogic';
+import { draftFirst, uploadIssue } from './deskLogic';
+import { exportConflict, exportQuery, pendingExportPrompt } from './exportFlow';
+import type { ExportPrompt, RevisionFormat } from './exportFlow';
 import { emptyTransactionInputs, transactionAmount } from './transactionInput';
 import { changeScenario, currentScenario, scenarioRoleValid } from './scenarioInput';
 import { fileTitle, tierLabel, tierOf } from './labels';
@@ -39,12 +41,13 @@ type State = {
   busy: boolean; loading: boolean; error: string; modelError: string; modelsLoading: boolean;
   tab: 'review' | 'policies'; view: DeskView; pane: 'rail' | 'paper'; railTab: RailTab; tone: ToneFilter;
   selected: string | null; located: { id: string; n: number } | null;
+  paperMode: 'revised' | 'changes';
   ourRole: string; contractType: string; date: string; instructions: string; consent: boolean; modelId: string;
   terms: string; preview: Block[] | null; libraryQuery: string; question: string; answers: Answer[]; questionBusy: boolean; questionConsent: boolean;
   ourPartyBlock: string; ourPartyQuote: string; excludedTerms: string; originalBlocks: Block[] | null;
   notice: string; hint: string; denied: boolean; reviewTier: ReviewTier;
   performanceStage: string; attachmentsStatus: string; businessPriority: string; dealValue: string; currency: string;
-  exportFormat: 'docx' | 'txt' | null; pendingFile: File | null; confirmingRedaction: boolean; archivePolicy: Policy | null;
+  exportPrompt: ExportPrompt | null; pendingFile: File | null; confirmingRedaction: boolean; archivePolicy: Policy | null;
 };
 /**
  * Errors and notices are kept as the Chinese the desk or the service wrote and translated
@@ -58,9 +61,9 @@ const RAIL_LABEL: Record<Stage, Pair> = {
 const deskTitle = () => pick('合同审查 · CausalGraph', 'Contract review · CausalGraph');
 /** Everything that belongs to one open contract; reset whenever another one opens. */
 const freshContract = () => ({
-  exportFormat: null, pendingFile: null, confirmingRedaction: false, originalBlocks: null, ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '',
+  exportPrompt: null, pendingFile: null, confirmingRedaction: false, originalBlocks: null, ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '',
   review: null, preview: null, terms: '', consent: false, answers: [], question: '', questionConsent: false,
-  view: 'work' as DeskView, pane: 'rail' as const, railTab: 'notes' as RailTab, tone: 'all' as ToneFilter, selected: null, located: null,
+  view: 'work' as DeskView, pane: 'rail' as const, railTab: 'notes' as RailTab, tone: 'all' as ToneFilter, selected: null, located: null, paperMode: 'changes' as const,
 });
 
 /** Own the desk's request lifecycle; test previews may inject a synthetic API. */
@@ -70,12 +73,12 @@ export default class LegalDesk extends React.Component<Props, State> {
   declare context: React.ContextType<typeof I18nContext>;
   state: State = { workspace: null, matters: [], contracts: [], contract: null, review: null, policies: [], caps: null, catalog: null,
     busy: false, loading: true, error: '', modelError: '', modelsLoading: false, tab: 'review', view: 'work', pane: 'rail', railTab: 'notes', tone: 'all',
-    selected: null, located: null, ourRole: '', contractType: '采购合同', date: '', instructions: '', consent: false, modelId: '',
+    selected: null, located: null, paperMode: 'changes', ourRole: '', contractType: '采购合同', date: '', instructions: '', consent: false, modelId: '',
     terms: '', preview: null, libraryQuery: '', question: '', answers: [],
     ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '', originalBlocks: null,
     questionBusy: false, questionConsent: false, notice: '', hint: '', denied: false, reviewTier: 'standard',
     performanceStage: '未知', attachmentsStatus: '未知', businessPriority: '综合审查', dealValue: '', currency: 'CNY',
-    exportFormat: null, pendingFile: null, confirmingRedaction: false, archivePolicy: null };
+    exportPrompt: null, pendingFile: null, confirmingRedaction: false, archivePolicy: null };
   private live = false;
   private generation = 0;
   private operation = false;
@@ -170,7 +173,8 @@ export default class LegalDesk extends React.Component<Props, State> {
     const seq = this.generation;
     try {
       const updated = await this.api<Review>(`/legal/reviews/${r.id}`);
-      if (this.live && seq === this.generation && this.state.review?.id === r.id) this.setState({ review: updated });
+      if (this.live && seq === this.generation && this.state.review?.id === r.id) this.setState(s => ({ review: updated,
+        pane: draftFirst(updated) ? 'paper' : s.pane, paperMode: draftFirst(updated) ? 'revised' : s.paperMode }));
     } catch (e) { this.fail(e); }
     finally { this.polling = false; }
   }
@@ -194,7 +198,7 @@ export default class LegalDesk extends React.Component<Props, State> {
       const review = await this.api<Review>(`/legal/reviews/${contract.reviews[0].id}`);
       if (!this.live || seq !== this.generation) return;
       const context = review.profile?.transaction_context;
-      this.setState({ review, ourRole: review.profile?.our_role || '',
+      this.setState({ review, pane: draftFirst(review) ? 'paper' : 'rail', paperMode: draftFirst(review) ? 'revised' : 'changes', ourRole: review.profile?.our_role || '',
         ourPartyBlock: review.profile?.our_party?.block_id || '', ourPartyQuote: review.profile?.our_party?.quote || '',
         contractType: review.profile?.contract_type || '采购合同', instructions: review.profile?.instructions || '',
         reviewTier: tierOf(review), date: review.profile?.transaction_date || '',
@@ -264,7 +268,7 @@ export default class LegalDesk extends React.Component<Props, State> {
         deal_value: amount.value, currency: s.currency },
       instructions: s.instructions, fresh_review: Boolean(s.review), review_tier: s.reviewTier, review_mode: s.reviewTier === 'deep' ? 'multi_agent' : 'standard',
     }));
-    if (this.live) this.setState({ review, view: 'work', pane: 'rail', railTab: 'notes', tone: 'all', selected: null, located: null, answers: [], question: '', questionConsent: false });
+    if (this.live) this.setState({ review, view: 'work', pane: draftFirst(review) ? 'paper' : 'rail', paperMode: draftFirst(review) ? 'revised' : 'changes', railTab: 'notes', tone: 'all', selected: null, located: null, answers: [], question: '', questionConsent: false });
   };
   /** Numbered findings of the open review, in reading order. */
   private numbered() {
@@ -280,13 +284,16 @@ export default class LegalDesk extends React.Component<Props, State> {
     const current = this.state.review;
     if (!this.live || !current || current.id !== r.id) return;
     const decisions = { ...current.decisions, [f.id]: decision };
-    this.setState(s => ({ review: s.review ? { ...s.review, draft_check: undefined, draft_approval: undefined, decisions } : null }), () => {
+    this.setState(s => ({ review: s.review ? { ...s.review, draft_check: undefined, draft_approval: undefined, export_state: undefined, decisions } : null, exportPrompt: null }), () => {
       // A decision moves on to the next finding still waiting, so the list can be worked top to bottom.
       if (value === 'pending') return;
       const ids = filterByTone(this.numbered().open, this.state.tone).map(x => x.finding.id);
       const next = nextUndecided(ids, decisions, f.id);
       if (next !== f.id) this.select(next);
     });
+    // Refresh the canonical fingerprint after a saved edit; never reuse an earlier export confirmation.
+    const updated = await this.api<Review>(`/legal/reviews/${r.id}`);
+    if (this.live && this.state.review?.id === r.id) this.setState({ review: updated });
   };
   private showOriginal = async () => {
     const c = this.state.contract; if (!c) return;
@@ -317,21 +324,48 @@ export default class LegalDesk extends React.Component<Props, State> {
   private locate = (blockId: string) => {
     this.setState({ located: { id: blockId, n: ++this.locateCount }, pane: 'paper' }, () => this.reveal(blockId));
   };
-  private download = async (format: 'docx' | 'txt' | 'md', confirmed = false) => {
-    const r = this.state.review, c = this.state.contract; if (!r || !c) return;
-    if (format !== 'md' && !confirmed) { this.setState({ exportFormat: format, error: '' }); return; }
-    const response = await fetch(`${apiBase()}/legal/reviews/${r.id}/export?format=${format === 'md' ? 'json' : format}`, withAuth());
-    if (!response.ok) throw await readApiError(response);
+  private download = async (format: RevisionFormat | 'md', confirmed = false) => {
+    let r = this.state.review;
+    const c = this.state.contract, seq = this.generation; if (!r || !c) return;
+    const current = () => this.live && seq === this.generation && this.state.review?.id === r!.id;
+    if (format !== 'md' && !r.export_state) {
+      r = await this.api<Review>(`/legal/reviews/${r.id}`);
+      if (!current()) return;
+      this.setState({ review: r });
+    }
+    const prompt = this.state.exportPrompt;
+    if (format !== 'md' && !confirmed) {
+      const next = pendingExportPrompt(r, format);
+      if (next) { this.setState({ exportPrompt: next, error: '' }); return; }
+    }
+    if (confirmed && (!prompt || prompt.format !== format)) return;
+    const fingerprint = confirmed ? prompt?.fingerprint : r.export_state?.fingerprint;
+    const response = await fetch(`${apiBase()}/legal/reviews/${r.id}/export?${exportQuery(format, fingerprint, confirmed)}`, withAuth());
+    if (!current()) return;
+    if (!response.ok) {
+      const conflict = response.status === 409 ? exportConflict(await response.clone().json().catch(() => null)) : null;
+      if (format !== 'md' && conflict) {
+        if (conflict.code === 'export_confirmation_required' && conflict.pendingCount > 0) {
+          this.setState({ exportPrompt: { format, pendingCount: conflict.pendingCount, fingerprint: conflict.fingerprint }, error: '' });
+        } else {
+          const updated = await this.api<Review>(`/legal/reviews/${r.id}`);
+          if (current()) this.setState({ review: updated, exportPrompt: null, pane: 'paper', paperMode: 'revised', notice: '修订稿已更新，请查看后再次导出。' });
+        }
+        return;
+      }
+      throw await readApiError(response);
+    }
     let blob: Blob;
     if (format === 'md') {
       const data: Review = await response.json();
       if (data.id !== r.id) throw new Error('报告与当前审查不一致，请刷新页面。');
       blob = new Blob([ReviewReport(data)], { type: 'text/markdown;charset=utf-8' });
     } else blob = await response.blob();
+    if (!current()) return;
     const url = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = url; a.download = `${format === 'md' ? pick('合同审查报告', 'Contract review report') : format === 'docx' ? pick('合同修订版', 'Contract redline') : pick('合同修订文本', 'Revised contract text')}.${format}`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
-    if (this.live) this.setState({ exportFormat: null, notice: format === 'md' ? '审查报告已导出' : format === 'docx' ? 'Word 修订版已导出' : '修订文本已导出' });
+    if (current()) this.setState({ exportPrompt: null, notice: format === 'md' ? '审查报告已导出' : format === 'docx' ? 'Word 修订版已导出' : '修订文本已导出' });
   };
   private ask = async () => {
     const r = this.state.review, question = this.state.question.trim();
@@ -374,7 +408,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     const s = this.state, r = s.review;
     const blocks = s.preview || c.blocks;
     const outline = clauseOutline(blocks);
-    const { open, excluded } = this.numbered();
+    const { open } = this.numbered();
     const items = stage === 'running' || stage === 'results' ? open : stage === 'export' ? open.filter(x => isRevised(r?.decisions[x.finding.id])) : [];
     const selected = stage === 'results' ? (open.some(x => x.finding.id === s.selected) ? s.selected : open[0]?.finding.id ?? null) : null;
     const selectedBlock = open.find(x => x.finding.id === selected)?.finding.block_id ?? null;
@@ -413,34 +447,31 @@ export default class LegalDesk extends React.Component<Props, State> {
       onRefreshModels={() => void this.loadModels()} onStart={() => void this.run(this.start)}
       onBack={r && !isActive(r) ? () => this.setState({ view: 'work' }) : undefined} />;
     else if (stage === 'running' && r) rail = <ReviewProgress review={r} canCancel={(s.caps?.review_engine_version || 0) >= 2} busy={s.busy} onCancel={() => this.reviewAction('cancel')} />;
-    else if (stage === 'results' && r) rail = <ResultsPanel review={r} blocks={c.blocks} open={open} excluded={excluded} clauseOf={id => placeLabel(outline, id)}
+    else if (stage === 'results' && r) rail = <ResultsPanel review={r} blocks={c.blocks} open={open} clauseOf={id => placeLabel(outline, id)}
       selected={selected} tone={s.tone} tab={s.railTab} busy={s.busy} followup={Boolean(s.caps?.followup_questions)}
       answers={s.answers} question={s.question} questionBusy={s.questionBusy} questionConsent={s.questionConsent}
       onTab={railTab => this.setState({ railTab })} onTone={tone => this.setState({ tone })} onSelect={this.select} onLocate={this.locate}
       onDecision={(f, value, text, legalBasis, manual) => void this.run(() => this.decide(f, value, text, legalBasis, manual))}
-      onExport={() => this.setState({ view: 'export' })} onResume={() => this.reviewAction('resume')} onHint={hint => this.setState({ hint })}
+      onExport={() => void this.run(() => this.download(c.format === 'docx' ? 'docx' : 'txt'))} onResume={() => this.reviewAction('resume')} onHint={hint => this.setState({ hint })}
       onQuestion={question => this.setState({ question })} onQuestionConsent={questionConsent => this.setState({ questionConsent })} onAsk={() => void this.ask()} />;
     else if (stage === 'export' && r) rail = <ReleasePanel review={r} contract={c} open={open} busy={s.busy}
       onCheck={() => void this.run(async () => {
         const review = await this.api<Review>(`/legal/reviews/${r.id}/draft-check`, jsonRequest('POST', { request_id: crypto.randomUUID(), external_processing_confirmed: true }));
         if (this.live && this.state.review?.id === review.id) this.setState({ review });
       })}
-      onApprove={fingerprint => void this.run(async () => {
-        const review = await this.api<Review>(`/legal/reviews/${r.id}/draft-approval`, jsonRequest('POST', { fingerprint, confirmed: true }));
-        if (this.live && this.state.review?.id === review.id) this.setState({ review });
-      })}
       onReport={() => void this.run(() => this.download('md'))}
-      onDraft={() => void this.run(() => this.download(c.format === 'docx' ? 'docx' : 'txt'))}
-      onBack={() => this.setState({ view: 'work' })} />;
+      onDraft={format => void this.run(() => this.download(format))}
+      onBack={() => this.setState({ view: 'work', paperMode: 'revised' })} />;
     return <main id="legal-main" tabIndex={-1} className={`lv-workspace pane-${s.pane}`} aria-label={pick('合同审查工作区', 'Contract review workspace')}>
       <div className="lv-pane-switch" role="group" aria-label={pick('工作区视图', 'Workspace view')}>
         <button aria-pressed={s.pane === 'rail'} onClick={() => this.setState({ pane: 'rail' })}>{labelOf(RAIL_LABEL, stage)}</button>
-        <button aria-pressed={s.pane === 'paper'} onClick={() => this.setState({ pane: 'paper' }, () => this.reveal(selectedBlock))}>{pick('合同正文', 'Contract text')}</button>
+        <button aria-pressed={s.pane === 'paper'} onClick={() => this.setState({ pane: 'paper' }, () => this.reveal(selectedBlock))}>{isDone(r) ? pick('修订稿', 'Revised draft') : pick('合同正文', 'Contract text')}</button>
       </div>
       <Outline entries={outline} items={items} decisions={r?.decisions || {}} running={stage === 'running'} activeBlock={selectedBlock}
         blockCount={blocks.length} pageCount={pagesOf(blocks).length} meta={meta}
         onEntry={(entry, first) => { if (stage === 'results' && first) this.select(first); else this.locate(entry.id); }} />
       <Paper contract={c} blocks={blocks} stage={stage} decisions={r?.decisions || {}} items={items} selected={selected} located={s.located}
+        mode={s.paperMode} onMode={paperMode => this.setState({ paperMode })} onExport={isDone(r) ? () => void this.run(() => this.download(c.format === 'docx' ? 'docx' : 'txt')) : undefined}
         originals={s.originalBlocks} busy={s.busy} candidates={stage === 'setup' ? partyCandidates(c.blocks) : []}
         party={{ blockId: s.ourPartyBlock, quote: s.ourPartyQuote }} detail={stage === 'running' && r ? r.stage : undefined}
         onSelect={id => { this.select(id); this.setState({ pane: 'rail' }); }} onCompare={() => void this.run(this.showOriginal)}
@@ -461,7 +492,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     const lang = this.context?.lang ?? currentLang();
     const root = lang === 'en' ? 'legal-v2 lv-en' : 'legal-v2';
     const canUpload = Boolean(s.workspace && s.caps?.encryption_configured && !s.busy && !s.loading);
-    const dialogOpen = Boolean(s.pendingFile || s.confirmingRedaction || s.archivePolicy || s.exportFormat);
+    const dialogOpen = Boolean(s.pendingFile || s.confirmingRedaction || s.archivePolicy || s.exportPrompt);
     const stage = c ? deskStage(c, r, s.view) : null;
     if (s.denied) return <div className={`${root} lv-gate`}><main className="lv-gate-card">
       <span className="lv-tile lv-tile-lg is-gray" aria-hidden="true"><Lock size={32} strokeWidth={1.5} /></span>
@@ -521,10 +552,10 @@ export default class LegalDesk extends React.Component<Props, State> {
         <p>{pick('确认后脱敏结果将锁定，模型分析需在下一步单独授权。', 'Once confirmed, the redaction is locked. Model analysis needs your separate consent in the next step.')}</p>
         {s.error && <p role="alert" className="lv-note is-error">{serverText(s.error)}</p>}
       </ConfirmDialog>}
-      {s.exportFormat && <ConfirmDialog title={pick('导出确认', 'Confirm export')} confirmLabel={pick('确认导出', 'Export')} busyLabel={pick('正在生成文件…', 'Generating the file…')} busy={s.busy}
-        onCancel={() => this.setState({ exportFormat: null, error: '' })} onConfirm={() => { const format = s.exportFormat; if (format) void this.run(() => this.download(format, true)); }}>
-        <p>{pick('修订版包含未脱敏的真实信息及删除内容，请确认接收范围。导出不会签署合同或覆盖原文件。',
-          'The revised file contains real, unredacted information and deleted text, so check who will receive it. Exporting does not sign the contract or overwrite the original.')}</p>
+      {s.exportPrompt && <ConfirmDialog title={pick('导出确认', 'Confirm export')} confirmLabel={pick('确认导出', 'Export')} busyLabel={pick('正在生成文件…', 'Generating the file…')} busy={s.busy}
+        onCancel={() => this.setState({ exportPrompt: null, error: '' })} onConfirm={() => { const prompt = s.exportPrompt; if (prompt) void this.run(() => this.download(prompt.format, true)); }}>
+        <p>{pick(`还有 ${s.exportPrompt.pendingCount} 项待处理，是否导出当前修订稿？`, `${plural(s.exportPrompt.pendingCount, 'item')} pending. Export the current draft?`)}</p>
+        <p className="lv-muted">{pick('已入稿的修改会保留，其余内容保持原文。', 'Edits already in the draft are included; all other text stays unchanged.')}</p>
         {s.error && <p role="alert" className="lv-note is-error">{serverText(s.error)}</p>}
       </ConfirmDialog>}
       {s.archivePolicy && <ConfirmDialog title={pick('归档规范', 'Archive policy')} confirmLabel={pick('确认归档', 'Archive')} busyLabel={pick('正在归档…', 'Archiving…')} busy={s.busy}

@@ -1,5 +1,6 @@
 import type { Review } from './types';
 import { findingStatus } from './findingStatus';
+import { pendingDecisions } from './deskLogic';
 import { sourceKindLabel } from './sourceLabels';
 import { coverageStatusLabel, failedSteps, kindLabel, reviewOutcome, tierLabel, tierOf } from './labels';
 import { currentLang, pick, tr, type Lang } from '../i18n/core';
@@ -15,11 +16,11 @@ const OUTCOME: Record<string, Pair> = {
   to_confirm: ['已完成（部分意见待确认）', 'Finished (some findings to confirm)'],
 };
 const EVIDENCE: Record<string, Pair> = {
-  supported: ['已有依据', 'Supported'], quick: ['极速审查，未经复核', 'Ultra-fast review, not verified'], unconfirmed: ['待核实', 'To verify'], rejected: ['复核已排除', 'Excluded on verification'],
+  supported: ['已有依据', 'Supported'], quick: ['未经独立复核', 'Not independently verified'], unconfirmed: ['待核实', 'To verify'], rejected: ['模型复核有异议', 'Disputed by model verification'],
 };
 const SEVERITY: Record<string, Pair> = { high: ['高风险', 'High risk'], medium: ['中风险', 'Medium risk'], low: ['提示', 'Advisory'] };
 const DECISION: Record<string, Pair> = {
-  pending: ['待处理', 'Pending'], accepted: ['已纳入修订', 'Included in the revision'], draft: ['手工修改（待复核）', 'Manual edit (to be checked)'], rejected: ['保留原文', 'Original kept'],
+  pending: ['待处理', 'Pending'], accepted: ['已纳入修订', 'Included in the revision'], draft: ['已入稿，待用户确认', 'In the draft, awaiting the user’s choice'], rejected: ['保留原文', 'Original kept'],
 };
 
 /** Markdown report built from the export payload; content is escaped, not rendered. Labels follow the interface language. */
@@ -93,8 +94,8 @@ export function ReviewReport(review: Review, lang: Lang = currentLang()): string
     out.push('', say(`处理决定：${label(DECISION, decision?.decision || 'pending') || decision?.decision}`, `Decision: ${label(DECISION, decision?.decision || 'pending') || decision?.decision}`));
     if (decision?.text || f.suggested_text) out.push('', say('修改后条款：', 'Revised clause:'), escaped(decision?.text || f.suggested_text));
   }
-  out.push('', review.draft_approval ? say('修订组合状态：用户已确认精确修改组合（非签署或企业授权审批）', 'Revision status: the user confirmed the exact set of edits (not a signature or corporate approval)')
-    : say('修订组合状态：尚未最终确认', 'Revision status: not yet confirmed'), '', say('## 审查范围', '## Review scope'));
+  const pending = review.export_state?.pending_count ?? pendingDecisions(review);
+  out.push('', say(`当前修订稿：还有 ${pending} 项待处理，导出由用户决定。`, `Current draft: ${pending} items pending. The user decides when to export.`), '', say('## 审查范围', '## Review scope'));
   for (const c of review.coverage) out.push('', `### ${server(c.title)} · ${coverageStatusLabel(c.status, lang)}`, server(c.note), server(c.verification_note || ''));
   for (const step of failedSteps(review, lang)) out.push('', say(`未完成：${escaped(step.title)}。${escaped(step.message)}`, `Not finished: ${escaped(step.title)}. ${escaped(step.message)}`));
   out.push('', say('本报告仅供参考，不构成法律意见，亦不保证脱敏质量、法规时效或合同整体安全。Word 修订版含真实信息及删除内容，分享前请复核。',

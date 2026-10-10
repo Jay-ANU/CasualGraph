@@ -66,7 +66,8 @@ def test_quote_retyped_with_ascii_space_is_located_verbatim():
     assert q.locate('甲方:','付款方（甲方）：') is None and q.locate('（甲方）:','付款方（甲方）：')=='（甲方）：'
 def test_uncertain_finding_keeps_its_wording_for_human_revision():
     f=verify(validate(candidate()),status='uncertain',reason='缺少验收标准附件。')['findings'][0]
-    assert f['suggested_text'] and not f['revision_allowed'] and f['title'].startswith('待确认：')
+    assert f['suggested_text'] and not f['revision_allowed'] and f['title'] == candidate()['title']
+    assert f['verification_note'] == '缺少验收标准附件。'
 @pytest.mark.parametrize('citations',[[{'source_id':'made-up','supporting_quote':LAW}],[{'source_id':'law1','supporting_quote':'伪造规定'}],None,{},[{'source_id':[],'supporting_quote':LAW}]])
 def test_forged_malformed_citations_are_not_evidence(citations):
     item=candidate('legal');item['citations']=citations
@@ -137,10 +138,24 @@ def test_any_reported_conflict_blocks_one_click_adoption():
     finding={'id':'f1','revision_allowed':True,'validation_warnings':[]}
     q.apply_cross_edit_checks([finding],{'proposal_checks':[item,{**item,'status':'conflict','reason':'付款时间冲突'}]})
     assert finding['revision_allowed'] is False and finding['cross_edit_status']=='conflict'
-def test_rejected_finding_not_shown_as_established_risk():
+def test_critic_disagreement_preserves_the_proposal_for_the_user():
     finding=verify(validate(candidate()),status='rejected',reason='初审忽略了另一条明确的付款条件。')['findings'][0]
-    assert finding['title'].startswith('复核未支持：')
-    assert '不能把它当成' in finding['impact'] and not finding['revision_allowed']
+    assert finding['verification_status'] == 'rejected' and not finding['revision_allowed']
+    assert q.finding_status(finding) == 'rejected'
+    assert finding['verification_note'] == '初审忽略了另一条明确的付款条件。'
+    for field in ('title', 'impact', 'reason', 'suggested_text'):
+        assert finding[field] == candidate()[field]
+
+def test_identical_proposals_keep_opposing_model_assessments_after_consolidation():
+    supported = verify(validate(candidate()), status='supported', reason='合成支持理由。')
+    rejected = verify(validate(candidate()), status='rejected', reason='合成反对理由。')
+    findings, _ = q.consolidate({'a': supported, 'b': rejected})
+    assert len(findings) == 1  # One paragraph edit, with both opinions visible.
+    finding = findings[0]
+    assert finding['suggested_text'] == candidate()['suggested_text']
+    assert finding['verification_status'] == 'uncertain'
+    assert '合成支持理由。' in finding['verification_note'] and '合成反对理由。' in finding['verification_note']
+    assert {a['status'] for a in finding['verification_assessments']} == {'supported', 'rejected'}
 def test_quote_cannot_bridge_artificial_excerpt_gap():
     quote='第一条 这是合成来源中的前半段。\n[…]\n第六条 这是另外的条文。'
     assert q.citations([{'source_id':'s1','supporting_quote':quote}],[{'id':'s1','text':quote}])==[]

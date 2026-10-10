@@ -18,6 +18,7 @@ type Props = {
   /** Findings drawn on the paper at this stage, already numbered. */
   items: Numbered[]; selected: string | null; located: { id: string; n: number } | null;
   originals: Block[] | null; busy: boolean;
+  mode: 'revised' | 'changes'; onMode: (mode: 'revised' | 'changes') => void; onExport?: () => void;
   candidates: PartyCandidate[]; party: { blockId: string; quote: string };
   detail?: string;
   onSelect: (id: string) => void; onParty: (blockId: string, quote: string) => void; onCompare: () => void;
@@ -59,7 +60,7 @@ export function Paper(p: Props) {
   const pages = pagesOf(p.blocks);
   const running = p.stage === 'running';
   const picking = p.stage === 'setup';
-  const marking = p.stage === 'results' || running;
+  const marking = (p.stage === 'results' && p.mode === 'changes') || running;
   const count = p.contract.replacement_count;
   return <section className={`lv-paper-desk stage-${p.stage}`} aria-label={tx('合同正文', 'Contract text')}>
     <div className="lv-desk-bar">
@@ -67,10 +68,17 @@ export function Paper(p: Props) {
         <span aria-hidden="true">·</span><span>{p.stage === 'redaction' ? tx(`自动脱敏 ${count} 处`, `${count} auto-redacted`) : tx(`已脱敏 ${count} 处`, `${count} redacted`)}</span></span>
       {p.stage === 'redaction' && <button className={`lv-toggle${p.originals ? ' is-on' : ''}`} aria-pressed={Boolean(p.originals)} disabled={p.busy} onClick={p.onCompare}>
         <Columns {...ic} size={14} />{tx('对照原件', 'Compare with original')}</button>}
-      {p.stage === 'results' && p.items.length > 0 && <span className="lv-legend" aria-hidden="true">
+      {p.stage === 'results' && p.mode === 'changes' && p.items.length > 0 && <span className="lv-legend" aria-hidden="true">
         {LEGEND.map(t => <span key={t}><i className={`lv-legend-mark tone-${t}`} />{toneLabel(t)}</span>)}</span>}
-      {p.stage === 'export' && <span className="lv-legend">{tx('修订预览', 'Revision preview')}<del>{tx('删除', 'Deleted')}</del><ins>{tx('新增', 'Inserted')}</ins></span>}
+      {p.stage === 'export' && p.mode === 'changes' && <span className="lv-legend">{tx('修订预览', 'Revision preview')}<del>{tx('删除', 'Deleted')}</del><ins>{tx('新增', 'Inserted')}</ins></span>}
       {running && p.detail && <span className="lv-desk-detail">{serverText(p.detail)}</span>}
+      {p.onExport && <div className="lv-draft-toolbar">
+        <div role="group" aria-label={tx('修订稿显示方式', 'Draft display')}>
+          <button className={`lv-toggle${p.mode === 'revised' ? ' is-on' : ''}`} aria-pressed={p.mode === 'revised'} onClick={() => p.onMode('revised')}>{tx('修订稿', 'Revised draft')}</button>
+          <button className={`lv-toggle${p.mode === 'changes' ? ' is-on' : ''}`} aria-pressed={p.mode === 'changes'} onClick={() => p.onMode('changes')}>{tx('修订痕迹', 'Tracked changes')}</button>
+        </div>
+        <button className="lv-primary lv-btn-sm" disabled={p.busy} onClick={p.onExport}>{tx('导出修订稿', 'Export draft')}</button>
+      </div>}
     </div>
     <div className="lv-sheets">
       {pages.map((page, i) => <article className="lv-sheet" key={`${page.page}-${i}`}>
@@ -83,7 +91,9 @@ export function Paper(p: Props) {
           const located = p.located?.id === block.id;
           const after = revised ? p.decisions[revised.finding.id].text : '';
           const head = block.text.slice(0, headingEnd(block.text));
+          const afterHead = after.slice(0, headingEnd(after));
           const body = original ? <Compare redacted={block.text} original={original.text} />
+            : revised && p.mode === 'revised' ? <>{afterHead && <strong className="lv-para-heading"><RichText text={afterHead} /></strong>}<RichText text={after.slice(afterHead.length)} /></>
             // The clause heading stays set in bold when the revision keeps it.
             : revised && head && after.startsWith(head) ? <><strong className="lv-para-heading"><RichText text={head} /></strong><Redline before={block.text.slice(head.length)} after={after.slice(head.length)} /></>
             : revised ? <Redline before={block.text} after={after} />

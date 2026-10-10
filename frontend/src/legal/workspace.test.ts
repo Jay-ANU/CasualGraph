@@ -27,15 +27,15 @@ describe('desk stage and stepper', () => {
 
 describe('finding numbers', () => {
   const blocks = [block('p1', '第一条 标的\n甲方采购设备。'), block('p2', '第二条 付款\n甲方预付全款，乙方另行通知交货。')];
-  it('number open findings in reading order and keep rejected ones apart', () => {
+  it('number every finding, including model disagreements, in reading order', () => {
     const later = finding('later', { block_id: 'p2', original_quote: '乙方另行通知交货' });
     const earlier = finding('earlier', { block_id: 'p2', original_quote: '甲方预付全款' });
     const first = finding('first', { block_id: 'p1', severity: 'low' });
     const missing = finding('missing', { block_id: null });
     const rejected = finding('rejected', { verification_status: 'rejected' });
     const { open, excluded } = numberFindings([missing, later, rejected, earlier, first], blocks);
-    expect(open.map(x => [x.finding.id, x.n])).toEqual([['first', 1], ['earlier', 2], ['later', 3], ['missing', 4]]);
-    expect(excluded.map(f => f.id)).toEqual(['rejected']);
+    expect(open.map(x => [x.finding.id, x.n])).toEqual([['rejected', 1], ['first', 2], ['earlier', 3], ['later', 4], ['missing', 5]]);
+    expect(excluded).toEqual([]);
   });
   it('counts and filters by tone', () => {
     const { open } = numberFindings([finding('a'), finding('b', { severity: 'medium' }), finding('c', { verification_status: 'uncertain' }), finding('d', { severity: 'low' })], blocks);

@@ -78,26 +78,33 @@ def no_search(*args):
     raise AssertionError('this tier must not search')
 
 
-def test_ultra_fast_is_one_round_of_review_calls_without_research_or_verification(runtime):
+def test_ultra_fast_reviews_the_complete_contract_once_and_prepares_a_draft(runtime):
     seen, kinds = run_tier(runtime, 'ultra_fast', retrieve=no_search)
     p = runtime['payload']
-    assert kinds == ['review'] * 4 and all(s.endswith(v2.QUICK) for s, _ in seen)
+    assert kinds == ['review'] and seen[0][0].endswith(v2.QUICK)
+    assert {r['id'] for r in seen[0][1]['rules']} == {r['id'] for r in p['plan']} | {'whole_contract'}
     assert runtime['status'] == 'completed' and p['stage'].startswith('极速审查完成（未做法规检索和独立复核）')
     assert p['research']['status'] == 'skipped' and not p['searches']
-    assert all(f['verification_status'] == 'skipped' and not f['revision_allowed'] for f in p['findings'])
+    assert all(f['verification_status'] == 'skipped' and f['revision_allowed'] for f in p['findings'])
     assert {quality.finding_status(f) for f in p['findings']} == {'quick'}
     assert p['summary']['high'] == len(p['findings']) and '未经独立复核' in p['summary']['notice']
+    assert len(p['decisions']) == 1 and p['metrics']['model_calls'] == 1
+    draft = next(iter(p['decisions'].values()))
+    assert draft == {'decision': 'draft', 'block_id': 'p1', 'text': '甲方应在验收后60日内支付全部价款。',
+                     'version': 1, 'manual': False, 'source': 'model', 'legal_basis_confirmed': False}
+    assert '修订稿已就绪' in p['stage'] and not p.get('draft_approval')
 
 
-def test_fast_verifies_each_group_but_skips_research_and_the_compatibility_pass(runtime):
+def test_fast_reviews_parallel_groups_without_a_critic_and_prepares_a_draft(runtime):
     seen, kinds = run_tier(runtime, 'fast', retrieve=no_search)
     p = runtime['payload']
-    assert sorted(kinds) == ['review'] * 4 + ['verify'] * 4
-    assert runtime['status'] == 'completed' and p['stage'].startswith('快速审查完成（已逐项复核')
+    assert sorted(kinds) == ['review'] * 4
+    assert runtime['status'] == 'completed' and p['stage'].startswith('快速审查完成（未做法规检索和独立复核）')
     assert all(f['revision_allowed'] and f['cross_edit_status'] == 'unchecked' and f['cross_edit_note'] == v2.UNCHECKED for f in p['findings'])
+    assert len(p['decisions']) == 1
 
 
-def test_fast_still_blocks_two_different_replacements_for_one_paragraph(runtime):
+def test_fast_leaves_conflicting_paragraph_alternatives_for_the_user(runtime):
     def model(system, data):
         raw = fake_model(system, data)
         if system not in (v2.INTAKE,) and not system.startswith(v2.VERIFY):
@@ -108,7 +115,101 @@ def test_fast_still_blocks_two_different_replacements_for_one_paragraph(runtime)
     findings = runtime['payload']['findings']
     assert len({f['suggested_text'] for f in findings}) > 1
     assert all(f['cross_edit_status'] == 'conflict' and not f['revision_allowed'] for f in findings)
-    assert runtime['status'] == 'partial'
+    assert runtime['status'] == 'completed' and not runtime['payload']['decisions']
+
+
+def test_ultra_fast_does_not_wait_for_a_model_to_approve_legal_wording(runtime):
+    def model(system, data):
+        raw = fake_model(system, data)
+        raw['findings'][0].update(kind='legal', law_refs=[], missing_facts=['交易日期需确认'])
+        return raw
+    _, kinds = run_tier(runtime, 'ultra_fast', model=model, retrieve=no_search)
+    assert kinds == ['review'] and runtime['status'] == 'completed'
+    p = runtime['payload']
+    assert p['findings'][0]['evidence_status'] == 'unverified'
+    assert next(iter(p['decisions'].values()))['decision'] == 'draft'
+
+
+def test_direct_draft_includes_all_policies_and_full_paragraphs(runtime, monkeypatch):
+    contract = store.contract('c1')
+    contract['payload']['redacted_blocks'].append({'id': 'p2', 'text': '第二段完整保留的合同内容。', 'page': 2})
+    monkeypatch.setattr(store, 'contract', lambda cid: deepcopy(contract))
+    runtime['payload']['policies'] = [{'id': 'company1', 'text': '合成公司要求', 'title': '合成规范'}]
+    seen, _ = run_tier(runtime, 'ultra_fast', retrieve=no_search)
+    data = seen[0][1]
+    assert data['company_policies'] == runtime['payload']['policies']
+    assert data['contract_blocks'] == quality.model_blocks(contract['payload']['redacted_blocks'])
+
+
+@pytest.mark.parametrize('code', ['ydata_invalid_json', 'ydata_truncated', 'ydata_rate_limited'])
+def test_ultra_fast_has_one_bounded_recovery_and_no_hidden_review_loop(runtime, monkeypatch, code):
+    monkeypatch.setattr(v2, 'RATE_LIMIT_PAUSE', 0)
+    monkeypatch.setattr(v2, 'TRANSIENT_PAUSE', 0)
+    monkeypatch.setattr(v2.random, 'uniform', lambda *a: 0)
+    def model(system, data):
+        raise ydata.GatewayError(code, '合成失败。', 502)
+    seen, kinds = run_tier(runtime, 'ultra_fast', model=model, retrieve=no_search)
+    assert len(seen) == v2.QUICK_MAX_CALLS == 2
+    assert kinds == ['review', 'review']
+    assert runtime['status'] == 'partial' and not runtime['payload']['decisions']
+
+
+def test_ultra_fast_bad_anchors_are_visible_as_an_incomplete_result(runtime):
+    def model(system, data):
+        raw = fake_model(system, data)
+        raw['findings'].append({**raw['findings'][0], 'block_id': 'missing', 'title': '不存在的段落'})
+        return raw
+    run_tier(runtime, 'ultra_fast', model=model, retrieve=no_search)
+    assert runtime['status'] == 'partial' and runtime['payload']['retryable']
+    assert len(runtime['payload']['decisions']) == 1
+    assert 'direct_draft' in runtime['payload']['batch_errors']
+
+
+def test_ultra_fast_resume_rebuilds_model_drafts_but_preserves_human_decisions(runtime):
+    def incomplete_model(system, data):
+        raw = fake_model(system, data)
+        raw['findings'].append(None)
+        return raw
+    run_tier(runtime, 'ultra_fast', model=incomplete_model, retrieve=no_search)
+    assert runtime['status'] == 'partial' and runtime['payload']['decisions']
+    _, kinds = run_tier(runtime, 'ultra_fast', retrieve=no_search)
+    assert kinds == ['review'] and runtime['status'] == 'completed'
+    draft = next(iter(runtime['payload']['decisions'].values()))
+    draft.update(decision='accepted', user_id='u1', text='甲方应在验收后45日内支付全部价款。')
+    expected = deepcopy(runtime['payload']['decisions'])
+    runtime['status'] = 'queued'
+    _, kinds = run_tier(runtime, 'ultra_fast', retrieve=no_search)
+    assert not kinds and runtime['payload']['decisions'] == expected
+
+
+def test_draft_assembly_never_arbitrarily_chooses_a_conflicting_paragraph():
+    blocks = [{'id': 'p1', 'text': '甲方应在验收后90日内支付全部价款。'}]
+    findings = [{'id': 'f1', 'block_id': 'p1', 'suggested_text': blocks[0]['text'].replace('90', '60')},
+                {'id': 'f2', 'block_id': 'p1', 'suggested_text': blocks[0]['text'].replace('90', '30')}]
+    assert v2.prepare_draft(findings, blocks, {'redacted_blocks': blocks}) == {}
+
+
+def test_auto_draft_uses_the_exporters_text_checks_instead_of_a_similarity_threshold(runtime):
+    def model(system, data):
+        raw = fake_model(system, data)
+        raw['findings'][0]['suggested_text'] = '采购方在全部商品完成验收后的次月底结清合同约定的所有采购费用。'
+        return raw
+    run_tier(runtime, 'ultra_fast', model=model, retrieve=no_search)
+    assert runtime['status'] == 'completed'
+    f = runtime['payload']['findings'][0]
+    assert f['revision_allowed']
+    assert runtime['payload']['decisions'][f['id']]['text'] == f['suggested_text']
+
+
+def test_generated_identity_information_is_not_inserted_into_an_unexportable_draft(runtime):
+    def model(system, data):
+        raw = fake_model(system, data)
+        raw['findings'][0]['suggested_text'] += ' 联系人：张三。'
+        return raw
+    run_tier(runtime, 'ultra_fast', model=model, retrieve=no_search)
+    assert runtime['payload']['findings'][0]['suggested_text']
+    assert not runtime['payload']['findings'][0]['revision_allowed']
+    assert not runtime['payload']['decisions']
 
 
 def test_standard_and_deep_keep_research_verification_and_the_compatibility_pass(runtime):
@@ -208,7 +309,7 @@ def test_importer_brings_external_skills_in_as_inert_drafts(tmp_path):
     registry.reload()
 
 
-def test_rate_limits_back_off_up_to_three_times_without_losing_the_truncation_retry(runtime, monkeypatch):
+def test_fast_rate_limits_back_off_without_losing_the_truncation_retry(runtime, monkeypatch):
     monkeypatch.setattr(v2, 'RATE_LIMIT_PAUSE', 0.01)
     monkeypatch.setattr(v2.random, 'uniform', lambda a, b: 0.0)
     failures = {'limited': 0, 'truncated': 0}
@@ -222,7 +323,7 @@ def test_rate_limits_back_off_up_to_three_times_without_losing_the_truncation_re
                 failures['truncated'] += 1
                 raise ydata.GatewayError('ydata_truncated', '截断', 502)
         return fake_model(system, data)
-    run_tier(runtime, 'ultra_fast', model=model, retrieve=no_search)
+    run_tier(runtime, 'fast', model=model, retrieve=no_search)
     assert failures == {'limited': 3, 'truncated': 1}
     assert runtime['status'] == 'completed' and not runtime['payload']['batch_errors']
 
@@ -235,7 +336,7 @@ def test_a_fourth_rate_limit_pauses_the_review_and_keeps_it_retryable(runtime, m
         if data['rules'][0]['id'] == 'whole_contract':
             raise ydata.GatewayError('ydata_rate_limited', '限流', 429)
         return fake_model(system, data)
-    run_tier(runtime, 'ultra_fast', model=model, retrieve=no_search)
+    run_tier(runtime, 'fast', model=model, retrieve=no_search)
     assert runtime['payload']['retryable'] and 'consistency' in runtime['payload']['batch_errors']
 
 

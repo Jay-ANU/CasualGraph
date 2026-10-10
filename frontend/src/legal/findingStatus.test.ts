@@ -9,7 +9,7 @@ const finding = (overrides: Partial<Finding> = {}): Finding => ({
 describe('audit risk summary', () => {
   it('never counts rejected or uncertain candidates as high risks', () => {
     expect(findingCounts([finding(), finding({ verification_status: 'rejected' }), finding({ verification_status: 'uncertain' }), finding({ evidence_status: 'unverified' })]))
-      .toEqual({ high: 1, unconfirmed: 2, rejected: 1, actionable: 3 });
+      .toEqual({ high: 1, unconfirmed: 2, rejected: 1, actionable: 4 });
   });
   it('requires explicit support, evidence and no missing facts', () => {
     expect(findingStatus(finding({ verification_status: undefined }))).toBe('unconfirmed');
@@ -30,23 +30,23 @@ describe('revision choices', () => {
     const state = revisionState(finding({ suggested_text: suggestion, revision_allowed: true }), { ...base, text: suggestion });
     expect(state).toMatchObject({ adoptable: true, decision: 'accepted', canSubmit: true });
   });
-  it('turns an unconfirmed or edited suggestion into a confirmed human revision', () => {
+  it('lets users accept unverified suggestions and save their own edits directly', () => {
     const unconfirmed = finding({ suggested_text: suggestion, revision_allowed: false, verification_status: 'uncertain' });
-    expect(revisionState(unconfirmed, { ...base, text: suggestion })).toMatchObject({ decision: 'draft', canSubmit: false, issue: '请确认保存为人工修订。' });
-    expect(revisionState(unconfirmed, { ...base, text: suggestion, manual: true })).toMatchObject({ decision: 'draft', canSubmit: true });
+    expect(revisionState(unconfirmed, { ...base, text: suggestion })).toMatchObject({ decision: 'accepted', canSubmit: true, issue: '' });
+    expect(revisionState(unconfirmed, { ...base, text: suggestion, manual: true })).toMatchObject({ decision: 'accepted', canSubmit: true });
     const edited = finding({ suggested_text: suggestion, revision_allowed: true });
-    expect(revisionState(edited, { ...base, text: '甲方应在验收后30日内付款。', manual: true }).decision).toBe('draft');
+    expect(revisionState(edited, { ...base, text: '甲方应在验收后30日内付款。', manual: true }).decision).toBe('accepted');
   });
   it('lets a reviewer write a revision where the model gave none', () => {
     const noSuggestion = finding({ suggested_text: '', revision_allowed: false });
     expect(revisionState(noSuggestion, { ...base, text: base.original, manual: true }).issue).toBe('修订内容与原文相同。');
     expect(revisionState(noSuggestion, { ...base, text: suggestion, manual: true }).canSubmit).toBe(true);
   });
-  it('never revises from rejected findings or missing clauses, and legal edits need a confirmed basis', () => {
-    expect(revisionState(finding({ verification_status: 'rejected' }), { ...base, text: suggestion, manual: true }).canSubmit).toBe(false);
+  it('keeps only document constraints; model opinions never veto the user', () => {
+    expect(revisionState(finding({ verification_status: 'rejected' }), { ...base, text: suggestion }).canSubmit).toBe(true);
     expect(revisionState(finding({ block_id: null }), { ...base, text: suggestion, manual: true }).canSubmit).toBe(false);
     const legal = finding({ kind: 'legal', suggested_text: suggestion, revision_allowed: true, evidence_status: 'model_cited' });
-    expect(revisionState(legal, { ...base, text: suggestion }).issue).toBe('请先确认已核对法规版本及适用性。');
+    expect(revisionState(legal, { ...base, text: suggestion }).issue).toBe('');
     expect(revisionState(legal, { ...base, text: suggestion, legalBasis: true }).decision).toBe('accepted');
   });
 });

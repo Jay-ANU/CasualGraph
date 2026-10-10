@@ -105,10 +105,10 @@ describe('live review activity', () => {
     expect(reviewEvents(null, b)).toEqual([]);
     expect(reviewEvents(review({ id: 'other' }), b)).toEqual([]);
   });
-  it('summarises bursts of findings and skips excluded ones', () => {
+  it('summarises new findings including model disagreements', () => {
     const many = ['a', 'b', 'c', 'd'].map(id => finding(id, { severity: 'medium' }));
     const texts = reviewEvents(review({}), review({ findings: [...many, finding('x', { verification_status: 'rejected' })] })).map(e => e.text);
-    expect(texts).toEqual(['发现中风险意见：付款保障', '发现中风险意见：付款保障', '另有 2 条新意见']);
+    expect(texts).toEqual(['发现中风险意见：付款保障', '发现中风险意见：付款保障', '另有 3 条新意见']);
   });
 });
 

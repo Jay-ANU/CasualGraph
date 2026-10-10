@@ -88,6 +88,9 @@ const RULES: Rule[] = [
     : `${REVIEW_LABEL[m[1]]} finished${REVIEW_SCOPE[m[2] || '']}; ${plural(Number(m[3]), 'finding')} need${m[3] === '1' ? 's' : ''} your confirmation`],
   [/^(极速审查|快速审查|本轮检查|协作检查)完成(（[^）]*）)?，请逐项确认$/, m => m[2] && !(m[2] in REVIEW_SCOPE) ? null
     : `${REVIEW_LABEL[m[1]]} finished${REVIEW_SCOPE[m[2] || '']}; confirm each finding`],
+  [/^(极速审查|快速审查|本轮检查|协作检查)完成(（[^）]*）)?，修订稿已就绪，可直接查看、修改并导出$/, m => m[2] && !(m[2] in REVIEW_SCOPE) ? null
+    : `${REVIEW_LABEL[m[1]]} finished${REVIEW_SCOPE[m[2] || '']}; your draft is ready to read, edit and export`],
+  [/^还有 (\d+) 项待处理，是否导出当前修订稿？$/, m => `${plural(Number(m[1]), 'item')} pending. Export the current draft?`],
   // Agent notes while a team review runs.
   [/^第 (\d+)\/(\d+) 项：(.+)$/s, m => `Item ${m[1]}/${m[2]}: ${titleList(m[3], '、')}`],
   [/^复核([^：]+)：(.+)$/s, m => AGENT_TITLE.test(m[1]) ? `Verifying ${known(m[1])}: ${titleList(m[2], '、')}` : null],

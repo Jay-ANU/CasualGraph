@@ -1,8 +1,8 @@
-"""Exact-text, whole-draft checks and human approval before reconstructed export.
+"""User-controlled draft export, with optional model advice on the current text.
 
-A model checks only the selected combination. It cannot approve a contract.
-Every decision mutation invalidates both checks and human approval. Publication
-uses compare-and-swap after external calls; late results cannot bless a new draft.
+Export is local and requires only a current draft plus user acknowledgement of
+remaining items. A model cannot veto a user's revision or export. Fingerprints
+and deterministic document checks prevent confirmation or output of stale text.
 """
 from __future__ import annotations
 from collections import Counter
@@ -12,9 +12,9 @@ import time
 from uuid import uuid4
 from fastapi import HTTPException
 from legal import review_store as store, ydata
-from legal.review_quality import edit_warnings, text
+from legal.review_quality import text
 
-VERSION = 1
+VERSION = 2
 SCHEMA = '''CREATE TABLE IF NOT EXISTS legal_draft_checks (
     id TEXT PRIMARY KEY, review_id TEXT NOT NULL, user_id TEXT NOT NULL,
     request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL,
@@ -50,50 +50,74 @@ def snapshot(r: dict, c: dict) -> dict:
     p, cp = r['payload'], c['payload']
     if p.get('audit_foundation_version') != 1 or cp.get('redaction_version') != 2:
         raise HTTPException(409, '历史审查没有新版脱敏和主体绑定，请重新上传并审查；历史报告仍可导出。')
-    if p.get('profile', {}).get('external_processing_provider') != 'ydata':
-        raise HTTPException(409, '本轮未记录原模型外发授权，请新建审查。')
     if r['status'] not in ('completed', 'partial') or p.get('engine_version') != 2:
-        raise HTTPException(409, '请先完成 v2 审查，再检查实际修订组合。')
+        raise HTTPException(409, '请先完成审查，再导出当前修订稿。')
     if c['status'] != 'ready' or p.get('contract_revision') != c['revision']:
         raise HTTPException(409, '原件或脱敏版本已变化，请重新审查。')
+    from legal.contract_documents import restore
     findings = {f['id']: f for f in p.get('findings', [])}
     original = [{'id': b['id'], 'text': b['text']} for b in cp['redacted_blocks']]
     blocks = {b['id']: b['text'] for b in original}
+    source = cp.get('blocks', [])
+    if (not original or len(blocks) != len(original)
+            or [b['id'] for b in source] != [b['id'] for b in original]
+            or any(restore(b['text'], cp.get('mapping', {})) != source[i]['text'] for i, b in enumerate(original))):
+        raise HTTPException(409, '原文定位或脱敏映射已变化，请重新审查。')
     selected, occupied = [], set()
     for fid, decision in sorted(p.get('decisions', {}).items()):
         if decision.get('decision') not in ('accepted', 'draft'):
             continue
         f = findings.get(fid)
-        if not f or f.get('block_id') not in blocks or f['block_id'] in occupied:
+        if (not f or f.get('block_id') not in blocks or f['block_id'] in occupied
+                or decision.get('block_id') != f['block_id']):
             raise HTTPException(409, '修改定位缺失或同段存在冲突，请重新选择。')
-        # A human revision carries the reviewer's responsibility and is checked below with the
-        # whole combination; an adopted suggestion must still carry the critic's support.
         human = decision.get('manual') is True
-        if f.get('verification_status') == 'rejected' or (not human and (
-                f.get('revision_allowed') is not True or f.get('verification_status') != 'supported' or f.get('missing_facts'))):
-            raise HTTPException(409, '候选意见尚未通过审查，不能通过组合检查绕过。')
-        if f['kind'] == 'legal' and not decision.get('legal_basis_confirmed'):
-            raise HTTPException(409, '法律修改仍需核对依据版本与适用条件。')
         replacement = decision.get('text', '')
-        if edit_warnings(blocks[f['block_id']], replacement):
-            raise HTTPException(422, '修改文本未通过主体或完整性检查。')
+        store.validate_replacement(blocks[f['block_id']], replacement, cp)
         occupied.add(f['block_id'])
         selected.append({'finding_id': fid, 'block_id': f['block_id'], 'text': replacement,
                          'text_hash': digest(replacement), 'version': decision.get('version', 0),
-                         'manual': human or replacement != f.get('suggested_text'), 'kind': f['kind'],
-                         'reason': f['reason'], 'citations': f.get('citations', []), 'law_refs': f.get('law_refs', [])})
-    if not selected:
-        raise HTTPException(409, '请先选择至少一项修改。审查报告无需修订批准即可导出。')
+                         'manual': human or replacement != f.get('suggested_text'), 'kind': f.get('kind', 'commercial'),
+                         'reason': f.get('reason', ''), 'citations': f.get('citations', []), 'law_refs': f.get('law_refs', [])})
     changes = {item['block_id']: item['text'] for item in selected}
     final = [{'id': b['id'], 'text': changes.get(b['id'], b['text'])} for b in original]
     identity = {'review_id': r['id'], 'contract_id': c['id'], 'revision': c['revision'],
                 'source_hash': cp.get('content_hash') or digest(cp.get('blocks', [])),
+                'source_blocks_hash': digest(source), 'source_package_hash': digest(cp.get('original_b64')),
                 'redacted_hash': digest(original), 'mapping_hash': digest(cp.get('mapping', {})),
                 'profile': p.get('profile'), 'transaction_brief': p.get('transaction_brief'), 'policies': p.get('policies', []),
                 'findings': p.get('findings', []), 'coverage': p.get('coverage', []),
                 'decisions': p.get('decisions', {}), 'final_hash': digest(final)}
-    return {'fingerprint': digest(identity), 'final_hash': digest(final),
+    return {'fingerprint': digest(identity), 'final_hash': digest(final), 'pending_count': pending_count(p),
             'original_contract': original, 'final_contract': final, 'selected_changes': selected}
+
+
+def pending_count(payload: dict) -> int:
+    """One count per finding awaiting a user's accept/reject choice, including drafts."""
+    decisions = payload.get('decisions', {})
+    return sum(decisions.get(fid, {}).get('decision') not in ('accepted', 'rejected')
+               for fid in {f['id'] for f in payload.get('findings', [])})
+
+
+def export_state(r: dict, c: dict) -> dict:
+    pending = pending_count(r['payload'])
+    state = {'ready': False, 'pending_count': pending, 'selected_count': 0, 'fingerprint': None,
+             'confirmation_required': pending > 0}
+    try:
+        data = snapshot(r, c)
+    except HTTPException as exc:
+        state['reason'] = exc.detail
+    else:
+        state.update(ready=True, selected_count=len(data['selected_changes']), fingerprint=data['fingerprint'])
+    return state
+
+
+def export_conflict(code: str, data: dict):
+    pending = data['pending_count']
+    message = (f'还有 {pending} 项待处理，是否导出当前修订稿？' if code == 'export_confirmation_required'
+               else '修订稿已变化，请刷新后重新导出。')
+    raise HTTPException(409, {'code': code, 'message': message,
+                              'pending_count': pending, 'fingerprint': data['fingerprint']})
 
 
 def validate_check(raw: object, selected: list[dict]) -> dict:
@@ -132,7 +156,11 @@ def check(rid: str, user_id: str, request_id: str, authorize, *, model=None) -> 
     with store.transaction() as conn:
         conn.execute(SCHEMA)
         r, c = current(conn, rid)
+        if r['payload'].get('profile', {}).get('external_processing_provider') != 'ydata':
+            raise HTTPException(409, '本轮未记录原模型外发授权，请新建审查或直接导出当前稿。')
         data = snapshot(r, c)
+        if not data['selected_changes']:
+            raise HTTPException(409, '当前没有修订需要模型复核，可以直接导出当前稿。')
         old = conn.execute('SELECT * FROM legal_draft_checks WHERE review_id=? AND user_id=? AND request_id=?',
                            (rid, user_id, request_id)).fetchone()
         if old:
@@ -173,7 +201,7 @@ def check(rid: str, user_id: str, request_id: str, authorize, *, model=None) -> 
         authorize()
         result = {'id': check_id, 'fingerprint': data['fingerprint'], 'final_hash': data['final_hash'],
                   'created_at': now, **validate_check(raw, data['selected_changes']),
-                  'notice': '模型复核不是签署批准，也不认证法律适用。仍须人工确认精确修订组合。'}
+                  'notice': '模型复核仅供参考，不认证法律适用，也不限制您导出当前修订稿。'}
         for item in result['checks'] + [result['whole_contract']]:
             item['reason'] = redact_note(item['reason'], c['payload'])
         result['missing_facts'] = [redact_note(x, c['payload']) for x in result['missing_facts']]
@@ -204,26 +232,29 @@ def approve(rid: str, user_id: str, fingerprint: str, confirmed: bool) -> dict:
     with store.transaction() as conn:
         r, c = current(conn, rid)
         data, p = snapshot(r, c), r['payload']
-        checked = p.get('draft_check', {})
-        if fingerprint != data['fingerprint'] or checked.get('fingerprint') != fingerprint or checked.get('status') != 'verified':
-            raise HTTPException(409, '修订组合没有通过当前版本核验，或检查后发生了变化。')
+        if fingerprint != data['fingerprint']:
+            export_conflict('export_stale', data)
         for decision in p.get('decisions', {}).values():
             if decision.get('decision') == 'draft':
-                decision.update(decision='accepted', version=decision['version'] + 1,
-                                user_id=user_id, approved_at=time.time())
+                decision.update(decision='accepted', version=decision.get('version', 0) + 1,
+                                source='user', user_id=user_id, approved_at=time.time())
         approved_data = snapshot(r, c)
         approval = {'version': VERSION, 'fingerprint': approved_data['fingerprint'], 'final_hash': approved_data['final_hash'],
-                    'check_id': checked['id'], 'user_id': user_id, 'approved_at': time.time()}
+                    'user_id': user_id, 'approved_at': time.time()}
         p['draft_approval'] = approval
         conn.execute('UPDATE legal_reviews SET payload=?,updated_at=? WHERE id=?', (store.encode(p), time.time(), rid))
         store.audit(conn, user_id, c['matter_id'], c['org_id'], 'review.draft_approved', rid,
-                    {'fingerprint': approval['fingerprint'], 'check_id': checked['id']})
+                    {'fingerprint': approval['fingerprint']})
         return approval
 
 
-def assert_exportable(r: dict, c: dict) -> dict:
+def assert_exportable(r: dict, c: dict, *, confirmed: bool = False, fingerprint: str | None = None) -> dict:
     data = snapshot(r, c)
-    approval = r['payload'].get('draft_approval', {})
-    if approval.get('version') != VERSION or approval.get('fingerprint') != data['fingerprint'] or approval.get('final_hash') != data['final_hash']:
-        raise HTTPException(409, '导出前请核验并人工确认实际修订组合；任何改动都会使旧确认失效。')
+    if fingerprint is not None and fingerprint != data['fingerprint']:
+        export_conflict('export_stale', data)
+    if data['pending_count']:
+        if confirmed is not True:
+            export_conflict('export_confirmation_required', data)
+        if fingerprint != data['fingerprint']:
+            export_conflict('export_stale', data)
     return data

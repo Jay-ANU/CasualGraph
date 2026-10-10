@@ -138,18 +138,21 @@ def select(runtime, text=None, decision='accepted'):
     return store.decide(rid, 'u1', 'f1', decision, text or f['suggested_text'], 0, manual_edit_confirmed=True)
 
 
-def test_manual_edit_cannot_reuse_candidate_approval(runtime):
-    with pytest.raises(HTTPException) as exc:
-        select(runtime, runtime[2]['suggested_text'].replace('60', '30'))
-    assert exc.value.status_code == 409
-    select(runtime, runtime[2]['suggested_text'].replace('60', '30'), 'draft')
-    assert store.review(runtime[0])['payload']['decisions']['f1']['decision'] == 'draft'
+@pytest.mark.parametrize('decision', ['accepted', 'draft'])
+def test_user_can_save_or_accept_their_edited_text_without_model_approval(runtime, decision):
+    select(runtime, runtime[2]['suggested_text'].replace('60', '30'), decision)
+    payload = store.review(runtime[0])['payload']
+    assert payload['decisions']['f1']['decision'] == decision
+    assert payload['decisions']['f1']['manual'] is True
+    assert payload['decisions']['f1']['source'] == 'user'
+    assert 'draft_approval' not in payload and 'draft_check' not in payload
 
 
-def test_selection_alone_never_authorizes_export(runtime):
+def test_user_acceptance_is_sufficient_to_export_without_a_model_call(runtime, monkeypatch):
     select(runtime)
-    with pytest.raises(HTTPException):
-        release.assert_exportable(store.review(runtime[0]), store.contract(runtime[1]))
+    monkeypatch.setattr(release.ydata, 'chat_json', lambda *args: pytest.fail('export must be local'))
+    data = release.assert_exportable(store.review(runtime[0]), store.contract(runtime[1]))
+    assert data['pending_count'] == 0 and '60日' in data['final_contract'][0]['text']
 
 
 def test_exact_selected_combination_then_human_approval(runtime):
@@ -225,7 +228,6 @@ def test_idempotent_check_does_not_call_model_twice(runtime):
 
 def test_wrong_approval_hash_fails(runtime):
     select(runtime)
-    release.check(runtime[0], 'u1', 'hash', lambda: None, model=supported)
     with pytest.raises(HTTPException):
         release.approve(runtime[0], 'u1', '0' * 64, True)
 
@@ -253,14 +255,15 @@ def test_failed_model_never_leaves_export_approval(runtime):
         release.check(runtime[0], 'u1', 'failure', lambda: None, model=fail)
     assert 'draft_check' not in store.review(runtime[0])['payload']
     assert 'draft_approval' not in store.review(runtime[0])['payload']
+    assert release.assert_exportable(store.review(runtime[0]), store.contract(runtime[1]))['pending_count'] == 0
 
 
-def test_uncertain_combination_cannot_be_human_approved(runtime):
+def test_uncertain_model_advice_does_not_veto_user_approval_or_export(runtime):
     select(runtime)
     checked = release.check(runtime[0], 'u1', 'uncertain', lambda: None, model=lambda *args: {})
     assert checked['status'] == 'needs_review'
-    with pytest.raises(HTTPException):
-        release.approve(runtime[0], 'u1', checked['fingerprint'], True)
+    release.approve(runtime[0], 'u1', checked['fingerprint'], True)
+    assert release.assert_exportable(store.review(runtime[0]), store.contract(runtime[1]))['pending_count'] == 0
 
 
 def test_new_sensitive_identity_in_manual_edit_is_not_sent(runtime):
@@ -277,16 +280,17 @@ def test_disclosure_does_not_certify_configured_region(monkeypatch):
     assert 'Sydney' in d['storage_region']
 
 
-def test_changed_transaction_brief_invalidates_exact_export_approval(runtime):
+def test_changed_transaction_brief_invalidates_the_preview_fingerprint(runtime):
     select(runtime)
     rid, cid, _ = runtime
     checked = release.check(rid, 'u1', 'context', lambda: None, model=supported)
     release.approve(rid, 'u1', checked['fingerprint'], True)
     r = store.review(rid)
+    fingerprint = release.snapshot(r, store.contract(cid))['fingerprint']
     r['payload']['transaction_brief'] = {'context': {'attachments_status':'存在未提供附件'}}
     with pytest.raises(HTTPException) as error:
-        release.assert_exportable(r, store.contract(cid))
-    assert error.value.status_code == 409
+        release.assert_exportable(r, store.contract(cid), fingerprint=fingerprint)
+    assert error.value.status_code == 409 and error.value.detail['code'] == 'export_stale'
 
 
 def set_finding(runtime, **update):
@@ -297,30 +301,206 @@ def set_finding(runtime, **update):
         conn.execute('UPDATE legal_reviews SET payload=? WHERE id=?', (store.encode(payload), runtime[0]))
 
 
-def test_unconfirmed_finding_can_become_a_human_revision_but_not_a_one_click_adoption(runtime):
+@pytest.mark.parametrize('verification', ['uncertain', 'rejected', 'unreviewed', None])
+@pytest.mark.parametrize('decision', ['accepted', 'draft'])
+def test_model_status_never_blocks_the_users_revision_choice(runtime, verification, decision):
     rid, cid, f = runtime
-    set_finding(runtime, revision_allowed=False, verification_status='uncertain')
-    with pytest.raises(HTTPException):
-        store.decide(rid, 'u1', 'f1', 'accepted', f['suggested_text'], 0)
-    with pytest.raises(HTTPException):
-        store.decide(rid, 'u1', 'f1', 'draft', f['suggested_text'], 0)
-    store.decide(rid, 'u1', 'f1', 'draft', f['suggested_text'], 0, manual_edit_confirmed=True)
-    assert store.review(rid)['payload']['decisions']['f1']['manual'] is True
-    checked = release.check(rid, 'u1', 'human-draft', lambda: None, model=supported)
-    assert checked['status'] == 'verified'
-    release.approve(rid, 'u1', checked['fingerprint'], True)
-    assert release.assert_exportable(store.review(rid), store.contract(cid))['final_hash'] == checked['final_hash']
+    set_finding(runtime, revision_allowed=False, verification_status=verification, missing_facts=['尚有事实未补充'])
+    saved = store.decide(rid, 'u1', 'f1', decision, f['suggested_text'], 0)
+    assert saved['decision'] == decision and saved['manual_edit_confirmed'] is False
+    data = release.snapshot(store.review(rid), store.contract(cid))
+    assert data['pending_count'] == (1 if decision == 'draft' else 0)
+    exported = release.assert_exportable(store.review(rid), store.contract(cid), confirmed=True, fingerprint=data['fingerprint'])
+    assert exported['final_contract'][0]['text'] == f['suggested_text']
 
 
-def test_rejected_finding_cannot_seed_a_revision(runtime):
+def test_rejected_model_advice_allows_manual_revision_and_confirmed_export(runtime):
     set_finding(runtime, revision_allowed=False, verification_status='rejected')
-    with pytest.raises(HTTPException):
-        store.decide(runtime[0], 'u1', 'f1', 'draft', '甲方应在验收后30日内支付全部合同价款。', 0, manual_edit_confirmed=True)
+    store.decide(runtime[0], 'u1', 'f1', 'draft', '甲方应在验收后30日内支付全部合同价款。', 0)
+    r, c = store.review(runtime[0]), store.contract(runtime[1])
+    state = release.export_state(r, c)
+    with pytest.raises(HTTPException) as error:
+        release.assert_exportable(r, c)
+    assert error.value.detail['code'] == 'export_confirmation_required'
+    assert error.value.detail['pending_count'] == state['pending_count'] == 1
+    data = release.assert_exportable(r, c, confirmed=True, fingerprint=state['fingerprint'])
+    assert '30日' in data['final_contract'][0]['text']
 
 
-def test_legal_revision_needs_confirmed_basis_even_as_human_draft(runtime):
+def test_legal_basis_confirmation_is_recorded_without_becoming_a_save_gate(runtime):
     set_finding(runtime, kind='legal', evidence_status='model_cited')
-    with pytest.raises(HTTPException):
-        store.decide(runtime[0], 'u1', 'f1', 'draft', runtime[2]['suggested_text'], 0, manual_edit_confirmed=True)
-    decision = store.decide(runtime[0], 'u1', 'f1', 'accepted', runtime[2]['suggested_text'], 0, legal_basis_confirmed=True)
+    saved = store.decide(runtime[0], 'u1', 'f1', 'draft', runtime[2]['suggested_text'], 0)
+    assert saved['legal_basis_confirmed'] is False
+    decision = store.decide(runtime[0], 'u1', 'f1', 'accepted', runtime[2]['suggested_text'], 1, legal_basis_confirmed=True)
     assert decision['legal_basis_confirmed'] is True and decision['manual'] is False
+
+
+def test_user_rewrite_is_not_vetoed_by_a_similarity_heuristic(runtime):
+    original = '甲方应在验收后90日内支付全部合同价款，不得拖延。'
+    replacement = '本条删除原付款安排，双方同意由受托方完成交付后结算。'
+    assert any('范围过大' in warning for warning in q.edit_warnings(original, replacement))
+    with store.transaction() as conn:
+        _, contract = release.current(conn, runtime[0])
+        contract['payload']['blocks'][0]['text'] = original
+        contract['payload']['redacted_blocks'][0]['text'] = original
+        conn.execute('UPDATE legal_contracts SET payload=? WHERE id=?', (store.encode(contract['payload']), runtime[1]))
+    saved = store.decide(runtime[0], 'u1', 'f1', 'draft', replacement, 0)
+    assert saved['text'] == replacement
+
+
+def test_pending_confirmation_needs_an_exact_current_fingerprint(runtime):
+    select(runtime, decision='draft')
+    r, c = store.review(runtime[0]), store.contract(runtime[1])
+    data = release.snapshot(r, c)
+    for fingerprint in (None, '0' * 64):
+        with pytest.raises(HTTPException) as error:
+            release.assert_exportable(r, c, confirmed=True, fingerprint=fingerprint)
+        assert error.value.detail['code'] == 'export_stale'
+    assert release.assert_exportable(r, c, confirmed=True, fingerprint=data['fingerprint'])['pending_count'] == 1
+
+
+def test_local_export_does_not_need_external_processing_authorization(runtime):
+    select(runtime)
+    r, c = store.review(runtime[0]), store.contract(runtime[1])
+    r['payload']['profile'].pop('external_processing_provider')
+    assert release.assert_exportable(r, c)['pending_count'] == 0
+
+
+@pytest.fixture
+def export_client(runtime, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api.routers import contract_review as routes
+
+    actor = {'id': 'u1', 'matter_role': 'member'}
+    application = FastAPI()
+    application.include_router(routes.router)
+    application.dependency_overrides[routes.get_current_user] = lambda: actor
+    application.dependency_overrides[routes.require_legal_max] = lambda: actor
+
+    def member(matter_id, user, min_role='viewer', require_active=False):
+        if matter_id != 'm1' or user['id'] != 'u1' or (min_role == 'member' and user['matter_role'] == 'viewer'):
+            raise HTTPException(403, 'no access')
+        return {'matter': {'id': 'm1', 'org_id': 'o1'}, 'role': user['matter_role']}
+
+    monkeypatch.setattr(routes.matters, 'require_matter_member', member)
+    monkeypatch.setattr(routes.ydata, 'chat_json', lambda *a, **kw: pytest.fail('local export called a model'))
+    monkeypatch.setattr(release, 'check', lambda *a, **kw: pytest.fail('local export called a draft check'))
+    return TestClient(application), actor
+
+
+def test_export_api_returns_pending_count_then_downloads_current_text(runtime, export_client):
+    client, _ = export_client
+    rid, cid, _ = runtime
+    state = client.get(f'/legal/reviews/{rid}').json()['export_state']
+    assert state['ready'] and state['pending_count'] == 1 and state['selected_count'] == 0
+    response = client.get(f'/legal/reviews/{rid}/export', params={'format': 'txt', 'fingerprint': state['fingerprint']})
+    detail = response.json()['detail']
+    assert response.status_code == 409 and detail['code'] == 'export_confirmation_required'
+    assert detail['pending_count'] == 1 and detail['fingerprint'] == state['fingerprint']
+    result = client.get(f'/legal/reviews/{rid}/export', params={'format': 'txt', 'confirmed': 'true', 'fingerprint': detail['fingerprint']})
+    assert result.status_code == 200 and '90日' in result.content.decode('utf-8-sig')
+    assert result.headers['cache-control'] == 'no-store'
+    assert not store.review(rid)['payload']['decisions']
+    with store.transaction() as conn:
+        audit = json.loads(conn.execute("SELECT details_json FROM audit_events WHERE action='review.exported'").fetchone()[0])
+    assert audit['pending_count'] == 1 and audit['pending_acknowledged'] is True
+
+
+def test_export_api_saves_rejected_legal_draft_and_exports_its_actual_text(runtime, export_client):
+    client, _ = export_client
+    rid, _, _ = runtime
+    set_finding(runtime, verification_status='rejected', revision_allowed=False, kind='legal', missing_facts=['事实未确认'])
+    body = {'decision': 'draft', 'text': '甲方应在验收后30日内支付全部合同价款。', 'expected_version': 0}
+    saved = client.patch(f'/legal/reviews/{rid}/findings/f1', json=body)
+    assert saved.status_code == 200 and saved.json()['legal_basis_confirmed'] is False
+    state = client.get(f'/legal/reviews/{rid}').json()['export_state']
+    assert state['pending_count'] == state['selected_count'] == 1
+    result = client.get(f'/legal/reviews/{rid}/export', params={'format': 'txt', 'confirmed': 'true', 'fingerprint': state['fingerprint']})
+    assert result.status_code == 200 and '30日' in result.content.decode('utf-8-sig')
+    accepted = client.patch(f'/legal/reviews/{rid}/findings/f1', json={**body, 'decision': 'accepted', 'expected_version': 1})
+    assert accepted.status_code == 200
+    state = client.get(f'/legal/reviews/{rid}').json()['export_state']
+    assert state['pending_count'] == 0
+    assert client.get(f'/legal/reviews/{rid}/export', params={'format': 'txt', 'fingerprint': state['fingerprint']}).status_code == 200
+
+
+def test_export_api_old_confirmation_is_rejected_even_when_count_is_unchanged(runtime, export_client):
+    client, _ = export_client
+    rid, _, f = runtime
+    store.decide(rid, 'u1', 'f1', 'draft', f['suggested_text'], 0)
+    old = client.get(f'/legal/reviews/{rid}').json()['export_state']
+    store.decide(rid, 'u1', 'f1', 'draft', f['suggested_text'].replace('60', '30'), 1)
+    stale = client.get(f'/legal/reviews/{rid}/export', params={'format': 'txt', 'confirmed': 'true', 'fingerprint': old['fingerprint']})
+    assert stale.status_code == 409 and stale.json()['detail']['code'] == 'export_stale'
+    assert stale.json()['detail']['pending_count'] == old['pending_count'] == 1
+    current = client.get(f'/legal/reviews/{rid}').json()['export_state']
+    assert current['fingerprint'] != old['fingerprint']
+    result = client.get(f'/legal/reviews/{rid}/export', params={'format': 'txt', 'confirmed': 'true', 'fingerprint': current['fingerprint']})
+    assert result.status_code == 200 and '30日' in result.content.decode('utf-8-sig')
+
+
+def test_export_api_confirmation_does_not_bypass_permissions(runtime, export_client):
+    client, actor = export_client
+    rid = runtime[0]
+    state = client.get(f'/legal/reviews/{rid}').json()['export_state']
+    actor['matter_role'] = 'viewer'
+    denied = client.get(f'/legal/reviews/{rid}/export', params={'format': 'txt', 'confirmed': 'true', 'fingerprint': state['fingerprint']})
+    assert denied.status_code == 403
+    assert client.get(f'/legal/reviews/{rid}/export', params={'format': 'json'}).status_code == 200
+    actor['id'] = 'outside-tenant'
+    assert client.get(f'/legal/reviews/{rid}').status_code == 403
+
+
+@pytest.mark.parametrize('user_edited', [False, True])
+def test_generated_drafts_can_resume_but_user_decisions_are_preserved(runtime, export_client, monkeypatch, user_edited):
+    from api.routers import contract_review as routes
+    client, _ = export_client
+    rid, _, f = runtime
+    if user_edited:
+        store.decide(rid, 'u1', 'f1', 'draft', f['suggested_text'], 0)
+    with store.transaction() as conn:
+        r, _ = release.current(conn, rid)
+        p = r['payload']
+        p['retryable'] = True
+        if not user_edited:
+            p['decisions'] = {'f1': {'decision': 'draft', 'text': f['suggested_text'], 'block_id': 'p1',
+                                     'version': 0, 'source': 'model', 'manual': False}}
+        conn.execute("UPDATE legal_reviews SET status='partial',payload=? WHERE id=?", (store.encode(p), rid))
+    submitted = []
+    monkeypatch.setattr(routes.engine, 'submit', submitted.append)
+    before = client.get(f'/legal/reviews/{rid}').json()
+    assert before['resumable'] is (not user_edited)
+    resumed = client.post(f'/legal/reviews/{rid}/resume')
+    assert resumed.status_code == (409 if user_edited else 202)
+    assert submitted == ([] if user_edited else [rid])
+    if user_edited:
+        with pytest.raises(HTTPException) as error:
+            store.queue_resume(rid)
+        assert error.value.status_code == 409
+
+
+@pytest.mark.parametrize('decision', ['accepted', 'draft', 'rejected'])
+def test_user_paragraph_choice_supersedes_automatic_draft_without_a_conflict(runtime, decision):
+    from legal.review_v2 import prepare_draft
+    rid, cid, f = runtime
+    with store.transaction() as conn:
+        r, c = release.current(conn, rid)
+        p = r['payload']
+        p['findings'].append({**deepcopy(f), 'id': 'f2'})
+        p['decisions'] = prepare_draft(p['findings'], c['payload']['redacted_blocks'], c['payload'])
+        assert set(p['decisions']) == {'f1'}
+        old_version = p['decisions']['f1']['version']
+        conn.execute('UPDATE legal_reviews SET payload=? WHERE id=?', (store.encode(p), rid))
+    replacement = f['suggested_text'].replace('60', '30') if decision != 'rejected' else ''
+    store.decide(rid, 'u1', 'f2', decision, replacement, 0)
+    r = store.review(rid)
+    displaced = r['payload']['decisions']['f1']
+    assert displaced['decision'] == 'pending' and displaced['superseded_by'] == 'f2'
+    assert displaced['version'] == old_version + 1
+    data = release.snapshot(r, store.contract(cid))
+    assert len(data['selected_changes']) == (0 if decision == 'rejected' else 1)
+    assert ('90日' if decision == 'rejected' else '30日') in data['final_contract'][0]['text']
+    with pytest.raises(HTTPException) as error:
+        store.decide(rid, 'u1', 'f1', 'accepted', f['suggested_text'], old_version)
+    assert error.value.status_code == 409

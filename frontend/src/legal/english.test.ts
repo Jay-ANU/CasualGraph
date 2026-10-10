@@ -43,7 +43,7 @@ describe('English tiers and steps', () => {
     expect(stepLabels()).toEqual(['Redact', 'Set up', 'Review', 'Resolve', 'Export']);
     expect(stepLabels('zh')).toEqual(['脱敏', '设置', '审查', '处理', '导出']);
     expect(phaseSteps(review({ review_tier: 'ultra_fast' })).map(s => s.label)).toEqual(['Read', 'Review']);
-    expect(phaseSteps(review({ review_tier: 'fast' })).map(s => s.label)).toEqual(['Read', 'Review', 'Verify']);
+    expect(phaseSteps(review({ review_tier: 'fast' })).map(s => s.label)).toEqual(['Read', 'Review']);
     expect(phaseSteps(review({ review_tier: 'deep' })).map(s => s.label)).toEqual(['Read', 'Research', 'Review', 'Finalise']);
   });
   it('states progress counts and time left', () => {
@@ -106,13 +106,13 @@ describe('English finding and review status labels', () => {
     expect(reviewStatusLabel(review({ status: 'partial', retrieval: [{ rule_id: 'i1', status: 'no_verified_source', provider: 'bing_rss', warnings: [] }] }))).toBe('Basis to verify');
     expect(reviewStatusLabel(review({ status: 'completed' }), 'zh')).toBe('待复核');
   });
-  it('explains why a revision cannot be saved yet', () => {
+  it('only blocks unusable revision text, in the selected language', () => {
     const base = { done: true, busy: false, original: '甲方应在验收后90日内付款。', legalBasis: false, manual: false };
     const unconfirmed = finding('f', { suggested_text: '甲方应在验收后60日内付款。', verification_status: 'uncertain' });
-    expect(revisionState(unconfirmed, { ...base, text: unconfirmed.suggested_text }).issue).toBe('Confirm saving this as a manual revision.');
+    expect(revisionState(unconfirmed, { ...base, text: unconfirmed.suggested_text }).canSubmit).toBe(true);
     const legal = finding('l', { kind: 'legal', suggested_text: '甲方应在验收后60日内付款。', revision_allowed: true, evidence_status: 'model_cited' });
-    expect(revisionState(legal, { ...base, text: legal.suggested_text }).issue).toBe('First confirm you have checked the version and applicability of the law.');
-    expect(revisionState(legal, { ...base, text: legal.suggested_text }, 'zh').issue).toBe('请先确认已核对法规版本及适用性。');
+    expect(revisionState(legal, { ...base, text: '' }).issue).toBe('The revision cannot be empty.');
+    expect(revisionState(legal, { ...base, text: '' }, 'zh').issue).toBe('修订内容不能为空。');
   });
   it('names unfinished steps from the service and from older reviews', () => {
     const named = review({ status: 'partial', batch_errors: { '2': '此步骤尚未完成。' },

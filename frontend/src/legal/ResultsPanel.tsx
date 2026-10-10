@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { ArrowRight, ChevronDown, FileSearch } from 'lucide-react';
+import { ArrowRight, FileSearch } from 'lucide-react';
 import type { Answer, Block, Finding, Review } from './types';
 import { revisionState } from './findingStatus';
 import { pendingDecisions } from './deskLogic';
@@ -11,7 +11,7 @@ import { FindingItem } from './FindingItem';
 import { FollowUp } from './FollowUp';
 import { ReviewDetails } from './ReviewDetails';
 import { ReviewIssue } from './ReviewStatus';
-import { CountUp, RichText } from './ui';
+import { CountUp } from './ui';
 import { ic } from './icon';
 import { pick, useI18n } from '../i18n/core';
 import { plural } from './i18n';
@@ -19,7 +19,7 @@ import { plural } from './i18n';
 export type RailTab = 'notes' | 'qa' | 'basis';
 
 type Props = {
-  review: Review; blocks: Block[]; open: Numbered[]; excluded: Finding[]; clauseOf: (blockId: string | null) => string;
+  review: Review; blocks: Block[]; open: Numbered[]; clauseOf: (blockId: string | null) => string;
   selected: string | null; tone: ToneFilter; tab: RailTab; busy: boolean; followup: boolean;
   answers: Answer[]; question: string; questionBusy: boolean; questionConsent: boolean;
   onTab: (tab: RailTab) => void; onTone: (tone: ToneFilter) => void; onSelect: (id: string) => void; onLocate: (blockId: string) => void;
@@ -32,9 +32,6 @@ const typing = (target: EventTarget | null) => target instanceof HTMLElement && 
 
 function Notes(p: Props & { done: boolean }) {
   const { tx } = useI18n();
-  const [legal, setLegal] = useState<Record<string, boolean>>({});
-  const [manual, setManual] = useState<Record<string, boolean>>({});
-  const [showExcluded, setShowExcluded] = useState(false);
   const counts = toneCounts(p.open);
   const shown = filterByTone(p.open, p.tone);
   const ids = shown.map(x => x.finding.id);
@@ -46,7 +43,7 @@ function Notes(p: Props & { done: boolean }) {
       if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target) || document.querySelector('dialog[open]')) return;
       const desk = document.querySelector('.lv-workspace');
       if (!desk || !(desk.matches(':hover') || desk.contains(document.activeElement))) return;
-      const q = p, ok = legal, list = ids;
+      const q = p, list = ids;
       const key = event.key.toLowerCase();
       if (key === 'j' || key === 'k') {
         const next = stepFinding(list, q.selected, key === 'j' ? 1 : -1);
@@ -61,9 +58,10 @@ function Notes(p: Props & { done: boolean }) {
       event.preventDefault();
       if (key === 'r') { q.onDecision(f, 'rejected', '', false, false); return; }
       const original = q.blocks.find(b => b.id === f.block_id)?.text || '';
-      const state = revisionState(f, { done, busy: q.busy, text: f.suggested_text, original, legalBasis: Boolean(ok[f.id]), manual: false });
-      if (state.adoptable && !state.issue) q.onDecision(f, 'accepted', f.suggested_text, Boolean(ok[f.id]), false);
-      else q.onHint(state.issue || pick('这条意见需在批注中编辑后保存为人工修订。', 'Edit this finding in its note and save it as a manual revision.'));
+      const text = q.review.decisions[f.id]?.text || f.suggested_text;
+      const state = revisionState(f, { done, busy: q.busy, text, original });
+      if (state.canSubmit) q.onDecision(f, 'accepted', text, false, false);
+      else q.onHint(state.issue || pick('请在批注中补充修订文本。', 'Add revision text in the note.'));
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -78,8 +76,6 @@ function Notes(p: Props & { done: boolean }) {
       {shown.length > 0 && <ol className="lv-note-list" aria-label={tx('批注', 'Notes')}>
         {shown.map(item => <FindingItem key={`${item.finding.id}-${p.review.decisions[item.finding.id]?.version || 0}`} item={item} review={p.review}
           block={p.blocks.find(b => b.id === item.finding.block_id)} clause={p.clauseOf(item.finding.block_id)} busy={p.busy} selected={p.selected === item.finding.id}
-          legalOk={Boolean(legal[item.finding.id])} manualOk={Boolean(manual[item.finding.id])}
-          onLegal={value => setLegal(state => ({ ...state, [item.finding.id]: value }))} onManual={value => setManual(state => ({ ...state, [item.finding.id]: value }))}
           onSelect={() => p.onSelect(item.finding.id)} onLocate={p.onLocate}
           onDecision={(value, text, legalBasis, manualEdit) => p.onDecision(item.finding, value, text, legalBasis, manualEdit)} />)}
       </ol>}
@@ -89,23 +85,15 @@ function Notes(p: Props & { done: boolean }) {
       </div>}
       {p.open.length > 0 && !shown.length && <div className="lv-empty-result"><p>{tx('没有符合条件的批注', 'No notes match this filter')}</p>
         <button className="lv-secondary lv-btn-sm" onClick={() => p.onTone('all')}>{tx('清除筛选', 'Clear filter')}</button></div>}
-      {p.excluded.length > 0 && <div className="lv-excluded">
-        <button className="lv-excluded-toggle" aria-expanded={showExcluded} onClick={() => setShowExcluded(!showExcluded)}>
-          {tx(`复核排除 ${p.excluded.length} 项`, `${p.excluded.length} excluded on verification`)}<ChevronDown {...ic} size={15} /></button>
-        {showExcluded && <ul>{p.excluded.map(f => <li key={f.id}>
-          <strong>{f.title}<span className="lv-muted"> · <RichText text={p.clauseOf(f.block_id)} /></span></strong>
-          {f.verification_note && <p>{tx('复核认为：', 'Verifier’s view: ')}{f.verification_note}</p>}
-        </li>)}</ul>}
-      </div>}
     </div>
-    {p.open.length > 0 && <div className="lv-rail-foot">
+    <div className="lv-rail-foot">
       <div className="lv-handled">
         <span>{tx('已处理 ', 'Handled ')}<strong className="lv-mono"><CountUp value={handled} />/{p.open.length}</strong></span>
-        <span className="lv-handled-bar" aria-hidden="true"><i style={{ width: `${Math.round((handled / p.open.length) * 100)}%` }} /></span>
-        <button className="lv-primary lv-btn-sm" disabled={!p.done} onClick={p.onExport}>{tx('导出', 'Export')}<ArrowRight {...ic} size={14} /></button>
+        <span className="lv-handled-bar" aria-hidden="true"><i style={{ width: `${p.open.length ? Math.round((handled / p.open.length) * 100) : 100}%` }} /></span>
+        <button className="lv-primary lv-btn-sm" disabled={!p.done || p.busy} onClick={p.onExport}>{tx('导出', 'Export')}<ArrowRight {...ic} size={14} /></button>
       </div>
       <p className="lv-keys" aria-hidden="true">{tx('J / K 切换 · A 采纳 · R 保留原文', 'J / K move · A accept · R keep original')}</p>
-    </div>}
+    </div>
   </>;
 }
 
@@ -135,8 +123,8 @@ export function ResultsPanel(p: Props) {
         : outcome === 'failed_steps' ? <p className="lv-note is-warn">{tx('部分审查步骤未完成，未完成部分不能据此排除风险。', 'Some review steps did not finish; they cannot rule out risk.')}</p>
         : outcome === 'evidence_gaps' ? <p className="lv-note">{tx(`${gaps} 个法律问题未取得官方原文，相关依据标注为“模型引用，待核对”。`,
           `No official text was found for ${plural(gaps, 'legal issue')}; the related basis is marked “model-cited, to verify”.`)}</p> : null}
-      {tierOf(p.review) === 'ultra_fast' && done && <p className="lv-note">{tx('极速审查未检索法规、未经独立复核，采用前请逐条确认。',
-        'An ultra-fast review does not research the law or verify findings independently. Confirm each one before adopting it.')}</p>}
+      {['ultra_fast', 'fast'].includes(tierOf(p.review)) && done && <p className="lv-note">{tx('修订稿已就绪，可直接阅读、编辑和导出。模型拟稿尚未独立复核。',
+        'Your draft is ready to read, edit and export. The model’s edits have not been independently verified.')}</p>}
       <div className="lv-tabs" role="tablist" aria-label={tx('审查结果视图', 'Result views')} onKeyDown={move}>
         {tabs.map(([value, label]) => <button key={value} id={`legal-tab-${value}`} role="tab" aria-selected={p.tab === value} aria-controls="legal-tabpanel"
           tabIndex={p.tab === value ? 0 : -1} className={p.tab === value ? 'selected' : ''} onClick={() => p.onTab(value)}>{label}</button>)}

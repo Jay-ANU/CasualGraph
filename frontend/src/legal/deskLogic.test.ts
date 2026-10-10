@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { uploadIssue, pendingDecisions } from './deskLogic';
+import { uploadIssue, pendingDecisions, draftFirst } from './deskLogic';
 import type { Finding, Review } from './types';
 const finding = (id: string, extra: Partial<Finding> = {}): Finding => ({ id, block_id: 'p1', original_quote: '合成原文', title: '付款保障', kind: 'commercial', severity: 'high', impact: '预付风险', reason: '交付时间未约定', suggested_text: '合成修改', evidence_status: 'not_applicable', missing_facts: [], citations: [], policy_ids: [], verification_status: 'supported', ...extra });
 const review = (findings: Finding[]): Review => ({ id: 'r1', status: 'completed', stage: '', resumable: false, findings, coverage: [], sources: [], decisions: {}, policies: [], notice: '' });
@@ -17,9 +17,24 @@ describe('consumer contract desk preflight', () => {
   });
 });
 describe('honest progress counts', () => {
-  it('includes manual drafts in pending work but not rejected candidates or retained originals', () => {
+  it('counts model drafts and disputed findings until a person makes a decision', () => {
     const r = review([finding('pending'), finding('draft'), finding('accepted'), finding('kept'), finding('rejected', { verification_status: 'rejected' })]);
     for (const [id, decision] of [['draft', 'draft'], ['accepted', 'accepted'], ['kept', 'rejected']]) r.decisions[id] = { decision, text: '', version: 1 };
-    expect(pendingDecisions(r)).toBe(2);
+    expect(pendingDecisions(r)).toBe(3);
+    r.findings.push(finding('pending'));
+    expect(pendingDecisions(r)).toBe(3);
+  });
+});
+
+
+describe('draft-first reviews', () => {
+  it('opens completed fast tiers on the draft, including partial results', () => {
+    for (const tier of ['ultra_fast', 'fast'] as const) {
+      expect(draftFirst({ ...review([]), review_tier: tier })).toBe(true);
+      expect(draftFirst({ ...review([]), review_tier: tier, status: 'partial' })).toBe(true);
+      expect(draftFirst({ ...review([]), review_tier: tier, status: 'running' })).toBe(false);
+      expect(draftFirst({ ...review([]), review_tier: tier, status: 'failed' })).toBe(false);
+    }
+    expect(draftFirst({ ...review([]), review_tier: 'standard' })).toBe(false);
   });
 });

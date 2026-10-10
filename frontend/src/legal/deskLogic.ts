@@ -1,5 +1,5 @@
 import type { Review } from './types';
-import { findingStatus } from './findingStatus';
+import { tierOf } from './labels';
 import { currentLang, tr, type Lang } from '../i18n/core';
 
 /**
@@ -14,6 +14,8 @@ export function uploadIssue(file: Pick<File, 'name' | 'size'>, lang: Lang = curr
 }
 
 export function pendingDecisions(review: Review): number {
-  return review.findings.filter(f => findingStatus(f) !== 'rejected'
-    && (!review.decisions[f.id] || ['pending', 'draft'].includes(review.decisions[f.id].decision))).length;
+  return new Set(review.findings.filter(f => !['accepted', 'rejected'].includes(review.decisions[f.id]?.decision)).map(f => f.id)).size;
 }
+
+/** Faster reviews deliver a readable draft as soon as the model finishes. */
+export const draftFirst = (review: Review) => ['ultra_fast', 'fast'].includes(tierOf(review)) && ['completed', 'partial'].includes(review.status);

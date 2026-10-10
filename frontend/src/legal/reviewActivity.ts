@@ -26,9 +26,7 @@ const PHASE_STEPS: { id: PhaseStep['id']; zh: string; en: string }[] = [
 /** The steps a review actually runs, in the current language: faster tiers skip research and the final pass. */
 export function phaseSteps(r: Review, lang: Lang = currentLang()): PhaseStep[] {
   const tier = tierOf(r);
-  const steps = tier === 'ultra_fast' ? PHASE_STEPS.filter(s => s.id === 'intake' || s.id === 'review')
-    : tier === 'fast' ? PHASE_STEPS.filter(s => s.id !== 'retrieval').map(s => s.id === 'coordination' ? { ...s, zh: '逐项复核', en: 'Verify' } : s)
-    : PHASE_STEPS;
+  const steps = ['ultra_fast', 'fast'].includes(tier) ? PHASE_STEPS.filter(s => s.id === 'intake' || s.id === 'review') : PHASE_STEPS;
   return steps.map(s => ({ id: s.id, label: pick(s.zh, s.en, lang) }));
 }
 
@@ -46,7 +44,7 @@ export function reviewPhase(r: Review): PhaseId {
   if (p?.phase === 'arbitration' || r.collaboration?.agents.some(a => a.id === 'arbiter' && a.status === 'running')) return 'coordination';
   if (p?.phase === 'collaboration') return 'review';
   // Single-agent reviews run their last group as the whole-contract consistency check.
-  if (p?.phase === 'review' || p?.phase === 'verification') return p.total > 1 && p.completed >= p.total - 1 ? 'coordination' : 'review';
+  if (p?.phase === 'review' || p?.phase === 'verification') return !['ultra_fast', 'fast'].includes(tierOf(r)) && p.total > 1 && p.completed >= p.total - 1 ? 'coordination' : 'review';
   if (p?.phase === 'retrieval') return 'retrieval';
   return 'intake';
 }
