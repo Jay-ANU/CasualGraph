@@ -141,8 +141,12 @@ def test_direct_draft_includes_all_policies_and_full_paragraphs(runtime, monkeyp
     assert data['contract_blocks'] == quality.model_blocks(contract['payload']['redacted_blocks'])
 
 
-@pytest.mark.parametrize('code', ['ydata_invalid_json', 'ydata_truncated', 'ydata_rate_limited'])
+@pytest.mark.parametrize('code', ['ydata_invalid_json', 'ydata_truncated', 'ydata_rate_limited',
+                                 'anthropic_invalid_json', 'anthropic_truncated', 'anthropic_rate_limited',
+                                 'anthropic_incomplete', 'anthropic_overloaded'])
 def test_ultra_fast_has_one_bounded_recovery_and_no_hidden_review_loop(runtime, monkeypatch, code):
+    if code.startswith('anthropic_'):
+        runtime['payload']['profile'].update(model={'id': 'claude-test', 'provider': 'anthropic'}, external_processing_provider='anthropic')
     monkeypatch.setattr(v2, 'RATE_LIMIT_PAUSE', 0)
     monkeypatch.setattr(v2, 'TRANSIENT_PAUSE', 0)
     monkeypatch.setattr(v2.random, 'uniform', lambda *a: 0)
@@ -152,6 +156,20 @@ def test_ultra_fast_has_one_bounded_recovery_and_no_hidden_review_loop(runtime, 
     assert len(seen) == v2.QUICK_MAX_CALLS == 2
     assert kinds == ['review', 'review']
     assert runtime['status'] == 'partial' and not runtime['payload']['decisions']
+
+
+def test_official_claude_uses_the_same_single_call_draft_flow(runtime):
+    runtime['payload']['profile'].update(model={'id': 'claude-test', 'provider': 'anthropic'}, external_processing_provider='anthropic')
+    seen, kinds = run_tier(runtime, 'ultra_fast', retrieve=no_search)
+    assert kinds == ['review'] and runtime['status'] == 'completed'
+    assert seen[0][1]['profile']['model'] == {'id': 'claude-test', 'provider': 'anthropic'}
+    assert next(iter(runtime['payload']['decisions'].values()))['decision'] == 'draft'
+
+
+def test_old_ydata_claude_review_never_sends_data_to_a_new_recipient(runtime):
+    runtime['payload']['profile']['model'] = {'id': 'claude-test', 'provider': 'ydata'}
+    seen, _ = run_tier(runtime, 'ultra_fast', retrieve=no_search)
+    assert seen == [] and runtime['status'] == 'failed'
 
 
 def test_ultra_fast_bad_anchors_are_visible_as_an_incomplete_result(runtime):

@@ -6,6 +6,8 @@ import { splitRedactions } from './text';
 import { phraseDiff } from './diff';
 import { ic } from './icon';
 import { useI18n } from '../i18n/core';
+import { processingProvider, providerLabel, selectedModel } from './modelProcessing';
+import { serverText } from './i18n';
 
 export function Spinner() {
   return <span className="lv-spinner" aria-hidden="true" />;
@@ -110,8 +112,9 @@ export function ModelSelect({ catalog, value, loading, disabled, onChange, onRef
   catalog: Catalog | null; value: string; loading: boolean; disabled: boolean;
   onChange: (id: string) => void; onRefresh: () => void;
 }) {
-  const { tx } = useI18n();
+  const { tx, lang } = useI18n();
   const families = catalog?.families.filter(family => catalog.models.some(m => m.family === family)) || [];
+  const model = selectedModel(catalog, value);
   return <div className="lv-model-control">
     <div className="lv-model">
       <select className="lv-select" aria-label={tx('审查模型', 'Review model')} value={value} disabled={disabled || loading || !catalog} onChange={e => onChange(e.target.value)}>
@@ -122,6 +125,8 @@ export function ModelSelect({ catalog, value, loading, disabled, onChange, onRef
       </select>
       <button type="button" className="lv-icon" disabled={disabled || loading} title={tx('刷新模型列表', 'Refresh model list')} aria-label={tx('刷新模型列表', 'Refresh model list')} onClick={onRefresh}><RefreshCw {...ic} /></button>
     </div>
+    {model && <p className="lv-hint" role="status">{tx('处理方：', 'Recipient: ')}{providerLabel(processingProvider(model), lang)}</p>}
     {!!catalog?.unavailable_families?.length && <p className="lv-hint" role="status">{tx(`${catalog.unavailable_families.join('、')} 暂不可用`, `${catalog.unavailable_families.join(', ')} unavailable for now`)}</p>}
+    {catalog?.provider_errors?.map(error => <p key={`${error.provider}-${error.code}`} className="lv-hint" role="status">{providerLabel(error.provider, lang)} · {serverText(error.message, lang)}</p>)}
   </div>;
 }

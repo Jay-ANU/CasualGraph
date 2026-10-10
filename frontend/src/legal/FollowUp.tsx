@@ -4,6 +4,7 @@ import { clauseLabel } from './text';
 import { RichText, Spinner } from './ui';
 import { ic } from './icon';
 import { useI18n } from '../i18n/core';
+import { processingConsent, processingProvider } from './modelProcessing';
 
 /** Starter questions; the chosen one fills the box as the user's own question, in their language. */
 const SUGGESTED: [string, string][] = [
@@ -16,7 +17,8 @@ export function FollowUp({ review, blocks, answers, question, busy, consent, onQ
   review: Review; blocks: Block[]; answers: Answer[]; question: string; busy: boolean; consent: boolean;
   onQuestion: (value: string) => void; onConsent: (value: boolean) => void; onAsk: () => void; onLocate: (id: string) => void;
 }) {
-  const { tx } = useI18n();
+  const { tx, lang } = useI18n();
+  const provider = processingProvider(review.profile?.model);
   const pending = busy && Boolean(question.trim());
   return <div className="lv-qa">
     <div className="lv-rail-body">
@@ -47,10 +49,10 @@ export function FollowUp({ review, blocks, answers, question, busy, consent, onQ
       <div className="lv-composer">
         <textarea aria-label={tx('追问本轮审查', 'Ask about this review')} maxLength={1500} rows={2} value={question} disabled={busy} onChange={e => onQuestion(e.target.value)}
           placeholder={tx('就本合同提问', 'Ask about this contract')} />
-        <button className="lv-send" aria-label={tx('发送追问', 'Send question')} disabled={busy || !question.trim() || !consent} onClick={onAsk}>{busy ? <Spinner /> : <ArrowUp {...ic} size={16} />}</button>
+        <button className="lv-send" aria-label={tx('发送追问', 'Send question')} disabled={busy || !question.trim() || !consent || !provider} onClick={onAsk}>{busy ? <Spinner /> : <ArrowUp {...ic} size={16} />}</button>
       </div>
-      <label className="lv-check lv-check-sm"><input type="checkbox" checked={consent} onChange={e => onConsent(e.target.checked)} />
-        <span>{tx('同意将问题及脱敏材料提交原审查模型', 'I agree to send my question and the redacted material to the review model')}</span></label>
+      <label className="lv-check lv-check-sm"><input type="checkbox" checked={consent && Boolean(provider)} disabled={busy || !provider} onChange={e => onConsent(e.target.checked)} />
+        <span>{processingConsent('question', provider, lang)}</span></label>
     </div>
   </div>;
 }

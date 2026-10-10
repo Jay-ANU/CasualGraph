@@ -9,7 +9,7 @@ import re
 import time
 from uuid import uuid4
 from fastapi import HTTPException
-from legal import review_quality as quality, review_store as store, skill_registry, ydata
+from legal import review_quality as quality, review_store as store, skill_registry, ydata, data_boundary
 from legal.review_v2 import all_sources
 from legal.review_plan import relevant_evidence
 from legal.law_evidence import NON_AUTHORITIES
@@ -95,8 +95,8 @@ def ask(r: dict, c: dict, user: dict, question: str, request_id: str, authorize)
     p = r['payload']
     if r['status'] not in ('completed', 'partial'):
         raise HTTPException(409, '请先完成本轮审查。')
-    if p.get('profile', {}).get('external_processing_provider') != 'ydata':
-        raise HTTPException(409, '此历史审查没有 YData 授权，请新建一轮审查。')
+    if not data_boundary.model_consent_valid(p.get('profile', {})):
+        raise HTTPException(409, '本轮模型处理方已变化或尚未授权，请选择模型并新建审查。历史稿件仍可查看和导出。')
     question = redact_note(question.strip(), c['payload'])
     if not question:
         raise HTTPException(422, '请填写需要解释的问题。')

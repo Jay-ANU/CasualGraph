@@ -3,6 +3,7 @@ import { availableTiers, tierLabel } from './labels';
 import { ScenarioPicker } from './ScenarioPicker';
 import { PartyPicker } from './PartyPicker';
 import { transactionAmount } from './transactionInput';
+import { processingConsent, processingProvider, selectedModel } from './modelProcessing';
 import { ModelSelect, Spinner } from './ui';
 import { useI18n } from '../i18n/core';
 
@@ -26,12 +27,13 @@ type Props = {
 
 /** Everything a review needs, top to bottom; any change withdraws the model-processing consent. */
 export function SetupForm(p: Props) {
-  const { tx, t } = useI18n();
+  const { tx, t, lang } = useI18n();
   const v = p.values, off = p.busy;
   // The Chinese value is what the API receives; only the visible label is translated.
   const option = (value: string) => <option key={value} value={value}>{t(value)}</option>;
   const tiers = availableTiers(p.caps);
   const amount = transactionAmount(v.dealValue);
+  const provider = processingProvider(selectedModel(p.catalog, v.modelId));
   return <section className="lv-rail-panel" aria-labelledby="legal-setup-title">
     <div className="lv-rail-head lv-rail-head-row">
       <h2 id="legal-setup-title">{tx('审查设置', 'Review settings')}</h2>
@@ -93,9 +95,8 @@ export function SetupForm(p: Props) {
       </div>
     </div>
     <div className="lv-rail-foot lv-stack">
-      <label className="lv-check"><input type="checkbox" checked={v.consent} disabled={off} onChange={e => p.onConsent(e.target.checked)} />
-        <span>{tx('同意将脱敏后的合同文本、审查重点及适用的公司规范经 YData 网关提交所选模型分析',
-          'I agree to send the redacted contract, my review focus and the applicable company policies to the selected model through the YData gateway')}</span></label>
+      <label className="lv-check"><input type="checkbox" checked={v.consent && Boolean(provider)} disabled={off || p.modelsLoading || !provider} onChange={e => p.onConsent(e.target.checked)} />
+        <span>{processingConsent('review', provider, lang)}</span></label>
       <div className="lv-submit-row">
         <button aria-describedby={p.startIssue ? 'legal-start-help' : undefined} className="lv-primary lv-start" disabled={!p.canStart} onClick={p.onStart}>
           {p.busy && <Spinner />}{p.hasReview ? tx('重新审查', 'Review again') : tx('开始审查', 'Start review')}

@@ -27,7 +27,7 @@ import threading
 import time
 from typing import Callable
 from fastapi import HTTPException
-from legal import external_law, research, review_quality as quality, review_store as store, skill_registry, ydata
+from legal import external_law, research, review_quality as quality, review_store as store, skill_registry, ydata, data_boundary
 from legal.agent_team import build_tasks, enforce_specialist_scope, initial_team
 from legal.review_plan import build_plan, relevant_evidence
 from legal.transaction_brief import apply_material_gates
@@ -43,7 +43,9 @@ RATE_LIMIT_PAUSE = 2.0
 RATE_LIMIT_RETRIES = 3
 RATE_LIMIT_MAX_WAIT = 30.0
 # A dropped connection, a gateway error or a malformed answer usually succeeds when asked again.
-TRANSIENT = frozenset({'ydata_unavailable', 'ydata_request_failed', 'ydata_invalid_json', 'ydata_response_too_large'})
+TRANSIENT = frozenset({'ydata_unavailable', 'ydata_request_failed', 'ydata_invalid_json', 'ydata_response_too_large',
+                       'anthropic_unavailable', 'anthropic_request_failed', 'anthropic_invalid_json',
+                       'anthropic_incomplete', 'anthropic_response_too_large', 'anthropic_overloaded'})
 TRANSIENT_RETRIES = 1
 TRANSIENT_PAUSE = 2.0
 STEP_TITLES = {'research': '法律检索规划', 'cross_check': '修改兼容性核对'}
@@ -61,8 +63,11 @@ def _concurrency() -> int:
 # Process-wide bound on simultaneous gateway calls, shared by every running review.
 MODEL_SLOTS = threading.BoundedSemaphore(_concurrency())
 HARD_STOP = frozenset({'ydata_not_configured', 'ydata_family_not_configured', 'ydata_key_conflict', 'ydata_unauthorized',
+                       'anthropic_not_configured', 'anthropic_catalog_invalid', 'anthropic_no_chat_models', 'anthropic_unauthorized',
+                       'anthropic_invalid_request', 'anthropic_model_unavailable', 'anthropic_request_too_large',
+                       'anthropic_billing_error',
                        'legacy_review_restart_required', 'contract_version_changed', 'legal_new_review_required'})
-PAUSE = frozenset({'legal_call_budget', 'ydata_rate_limited', 'team_paused'})
+PAUSE = frozenset({'legal_call_budget', 'ydata_rate_limited', 'anthropic_rate_limited', 'team_paused'})
 
 CONSISTENCY = {'id': 'whole_contract', 'title': '跨条款与遗漏复查',
     'checks': '只检查跨条款的问题：定义与主体、金额与时间、付款和验收、责任上限与例外、解除与终止义务之间的关联冲突；缺失的关键机制；引用但未提供的附件。不要重复单个条款内部的问题，不要把未提供的附件断言成未约定。',
@@ -229,7 +234,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
         latest = store.contract(job['contract_id'])
         if latest['status'] != 'ready' or latest['revision'] != p['contract_revision']:
             raise ydata.GatewayError('contract_version_changed', '合同版本或状态已变化，请新建审查。', 409)
-        if p.get('profile', {}).get('external_processing_provider') != 'ydata':
+        if not data_boundary.model_consent_valid(p.get('profile', {})):
             raise ydata.GatewayError('legacy_review_restart_required', '请重新确认外部处理授权并新建审查。', 409)
 
     def guarded() -> None:
@@ -294,10 +299,10 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
                 except ydata.GatewayError as exc:
                     if tier == 'ultra_fast' and counter['calls'] >= QUICK_MAX_CALLS:
                         raise
-                    if not briefer and exc.code == 'ydata_truncated':
+                    if not briefer and exc.code in ('ydata_truncated', 'anthropic_truncated'):
                         prompt, briefer = system + BRIEFER, True
                         continue
-                    if limited < RATE_LIMIT_RETRIES and exc.code == 'ydata_rate_limited':
+                    if limited < RATE_LIMIT_RETRIES and exc.code in ('ydata_rate_limited', 'anthropic_rate_limited'):
                         limited += 1
                         backoff = getattr(exc, 'retry_after', None) or RATE_LIMIT_PAUSE * 2 ** (limited - 1)
                         wait = min(RATE_LIMIT_MAX_WAIT, backoff) + random.uniform(0, 1)

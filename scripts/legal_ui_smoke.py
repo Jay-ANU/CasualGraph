@@ -31,7 +31,12 @@ contract={'id':'c1','name':'测试采购合同.txt','status':'redaction_pending'
 finding={'id':'f1','rule_id':'performance','block_id':'p1','original_quote':contract['blocks'][0]['text'],'title':'付款与交货保障不匹配','kind':'commercial','severity':'high','impact':'我方预先承担全部资金风险。','reason':'付款条件未与确定的交货期限挂钩。','suggested_text':'【脱敏1】在交货验收后支付价款，交货应在签约后三十日内完成。','evidence_status':'not_applicable','missing_facts':[],'citations':[],'policy_ids':[],'verification_status':'supported','revision_allowed':True}
 review={'id':'r1','contract_id':'c1','status':'completed','stage':'检查完成，等待人工逐条复核','resumable':False,'engine_version':2,'profile':{'model':{'id':'glm-5.2','provider':'ydata'},'review_mode':'multi_agent'},'error':None,'findings':[finding],'coverage':[{'rule_id':'performance','title':'交付、验收与付款','status':'reviewed','note':'合成测试样例'}],'sources':[],'decisions':{},'policies':[],'notice':'合成测试数据，不是法律结论。'}
 review['collaboration']={'version':1,'max_parallel':3,'call_budget':40,'agents':[{'id':'legal','title':'法律风险审查','status':'completed','completed':2,'total':2,'note':''}]}
-policies=[]; calls=[]; export_requests=[]; allowed={'value':True,'plan':'max','unavailable':False}
+policies=[]; calls=[]; export_requests=[]; review_requests=[]; model_requests=[]; allowed={'value':True,'plan':'max','unavailable':False}
+model_actions={'allowed':False,'reject_next_create':False}
+model_catalog={'provider':'mixed','models':[{'id':'gpt-fixture','family':'GPT','provider':'ydata'},
+    {'id':'claude-fixture','family':'Claude','provider':'anthropic'},{'id':'deepseek-fixture','family':'DeepSeek','provider':'ydata'},
+    {'id':'kimi-fixture','family':'Kimi','provider':'ydata'},{'id':'glm-5.2','family':'GLM','provider':'ydata'}],
+    'families':['GPT','Claude','DeepSeek','Kimi','GLM'],'default_model':'glm-5.2','notice':'synthetic','provider_errors':[]}
 # The started review stays running until the test has checked the progress view.
 running={'value':False,'step':0}
 def running_review():
@@ -65,8 +70,8 @@ def route_api(route):
         data={'allowed':allowed['value'],'plan':allowed['plan'],'required_plan':'max'}
     elif path=='/legal/workspace':data={'matter_id':'m1','org_id':'o1'}
     elif path=='/matters':data={'matters':[{'id':'m1','org_id':'o1','name':'合成测试事项'}]}
-    elif path=='/legal/capabilities':data={'review_tiers':['ultra_fast','fast','standard','deep'],'model_configured':True,'encryption_configured':True,'review_engine_version':2,'followup_questions':True,'collaboration_version':1,'audit_foundation_version':1,'draft_release_version':1,'scenario_catalog':SCENARIOS,'scenario_catalog_version':1,'upload_disclosure':{'version':'original-upload-v1','notice':'合成上传说明：原件先到后端再脱敏。','storage_region':'合成环境'},'law_search':{'provider':'synthetic','notice':'test'}}
-    elif path=='/legal/models':data={'models':[{'id':'gpt-fixture','family':'GPT'},{'id':'claude-fixture','family':'Claude'},{'id':'deepseek-fixture','family':'DeepSeek'},{'id':'kimi-fixture','family':'Kimi'},{'id':'glm-5.2','family':'GLM'}],'families':['GPT','Claude','DeepSeek','Kimi','GLM'],'default_model':'glm-5.2','notice':'synthetic'}
+    elif path=='/legal/capabilities':data={'model_gateway':'mixed','model_selection_version':2,'review_tiers':['ultra_fast','fast','standard','deep'],'model_configured':True,'encryption_configured':True,'review_engine_version':2,'followup_questions':True,'collaboration_version':1,'audit_foundation_version':1,'draft_release_version':2,'scenario_catalog':SCENARIOS,'scenario_catalog_version':1,'upload_disclosure':{'version':'original-upload-v1','notice':'合成上传说明：原件先到后端再脱敏。','storage_region':'合成环境'},'law_search':{'provider':'synthetic','notice':'test'}}
+    elif path=='/legal/models':data=model_catalog
     elif path=='/legal/contracts' and method=='GET':data={'contracts':[contract] if any(m=='POST' and p==path for m,p in calls) else []}
     elif path=='/legal/contracts' and method=='POST':
         assert b'original_upload_confirmed' in req.post_data_buffer and b'original-upload-v1' in req.post_data_buffer
@@ -78,21 +83,37 @@ def route_api(route):
         data={'blocks':contract['blocks'],'confirmed':req.post_data_json.get('confirmed')}
     elif path=='/legal/contracts/c1/reviews':
         payload=req.post_data_json
-        assert payload['model_id']=='glm-5.2' and payload['external_processing_provider']=='ydata'
+        review_requests.append(payload)
+        model=next(m for m in model_catalog['models'] if m['id']==payload['model_id'])
+        assert payload['external_processing_provider']==model['provider']
         assert payload['external_processing_confirmed'] is True and contract['status']=='ready'
-        assert payload['review_mode']=='multi_agent' and payload['review_tier']=='deep'
+        if model_actions['reject_next_create']:
+            model_actions['reject_next_create']=False
+            route.fulfill(status=409,headers=headers,content_type='application/json',body=json.dumps({'detail':{
+                'error':'legal_model_provider_changed','message':'所选模型的处理方已变化，请重新选择模型并确认外部处理方。'}},ensure_ascii=False));return
+        assert (payload['model_id'],payload['review_tier'],payload['review_mode']) in (
+            ('glm-5.2','deep','multi_agent'),('claude-fixture','ultra_fast','standard'))
         assert payload['our_party']=={'block_id':'p1','quote':'【脱敏1】'}
         assert payload['contract_type']=='销售合同' and payload['our_role']=='销售方'
         assert payload['scenario_revision']==SCENARIOS['revision']
         assert payload['our_role']=='销售方' and payload['instructions']=='重点关注付款安排'
         assert payload['transaction_context']=={'performance_stage':'谈判中','attachments_status':'未知','business_priority':'付款与回款','deal_value':'1000000.05','currency':'CNY'}
-        review['profile'].update(transaction_context=payload['transaction_context'], contract_type=payload['contract_type'], our_role=payload['our_role'], our_party=payload['our_party'], scenario=descriptor(get_scenario('销售合同'),'销售方'))
+        review['profile'].update(model=dict(model),review_tier=payload['review_tier'],review_mode=payload['review_mode'],instructions=payload['instructions'],
+            transaction_context=payload['transaction_context'], contract_type=payload['contract_type'], our_role=payload['our_role'], our_party=payload['our_party'], scenario=descriptor(get_scenario('销售合同'),'销售方'))
+        review['review_tier']=payload['review_tier']
         review['transaction_brief']={'version':1,'context':payload['transaction_context'],'context_source':'user_statement_not_independently_verified',
             'material_references':[], 'gaps':[{'code':'date_unknown','message':'交易日期未提供，法律时间适用仍需核验。','source':'not_provided'}],
             'notice':'合成背景，不是已核实交易事实。'}
         review['evidence_health']={'queried_topics':6,'topics_with_sources':4,'failed_or_empty_topics':2,'source_count':0,'non_authoritative_sources':0,'version_pending':0,'status':'gaps','notice':'合成检索状态。'}
         contract['reviews']=[{'id':'r1','status':'completed'}]
-        running['value']=True;data=running_review()
+        if payload['review_tier']=='ultra_fast':
+            running['value']=False
+            review.update(status='completed',stage='极速审查完成，修订稿已就绪，可直接查看、修改并导出。',findings=[finding],
+                decisions={'f1':{'decision':'draft','text':finding['suggested_text'],'version':1,'source':'model',
+                    'manual_edit_confirmed':False,'legal_basis_confirmed':False}})
+            review.pop('draft_check',None);review.pop('draft_approval',None)
+            data=review_view()
+        else:running['value']=True;data=running_review()
     elif path=='/legal/reviews/r1':data=running_review() if running['value'] else review_view()
     elif path.startswith('/legal/reviews/r1/findings/'):
         fid=path.rsplit('/',1)[1];payload=req.post_data_json
@@ -100,8 +121,17 @@ def route_api(route):
         assert payload['expected_version']==old.get('version',0)
         data={**payload,'version':old.get('version',0)+1,'source':'user'}
         review['decisions'][fid]=data
-    elif path in ('/legal/reviews/r1/draft-check','/legal/reviews/r1/draft-approval'):
-        raise AssertionError('Export must not call model-check or model-approval endpoints')
+    elif path=='/legal/reviews/r1/draft-approval':
+        raise AssertionError('Export must not call model-approval endpoints')
+    elif path=='/legal/reviews/r1/draft-check':
+        assert model_actions['allowed'],'Export must not call model-check endpoints'
+        payload=req.post_data_json
+        assert payload['external_processing_provider']==review['profile']['model']['provider']
+        assert payload['external_processing_confirmed'] is True
+        model_requests.append({'action':'check','provider':payload['external_processing_provider']})
+        review['draft_check']={'id':'optional','fingerprint':review_view()['export_state']['fingerprint'],'final_hash':'synthetic',
+            'status':'verified','checks':[],'whole_contract':{'status':'supported','reason':'合成可选复核完成。'},'missing_facts':[]}
+        data=review_view()
     elif path=='/legal/reviews/r1/export':
         query=parse_qs(urlparse(req.url).query);export_requests.append(query)
         view=review_view();state=view['export_state']
@@ -122,7 +152,15 @@ def route_api(route):
             text='\n'.join(blocks)
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document' if query.get('format')==['docx'] else 'text/plain; charset=utf-8'
             route.fulfill(status=200,headers=headers,content_type=mime,body=text);return
-    elif path=='/legal/reviews/r1/questions':data={'messages':[]}
+    elif path=='/legal/reviews/r1/questions':
+        if method=='GET':data={'messages':[]}
+        else:
+            assert model_actions['allowed'],'Questions require an explicit user action'
+            payload=req.post_data_json
+            assert payload['external_processing_provider']==review['profile']['model']['provider']
+            assert payload['external_processing_confirmed'] is True
+            model_requests.append({'action':'question','provider':payload['external_processing_provider']})
+            data={'id':f'q{len(model_requests)}','question':payload['question'],'answer':'合成回答：请核对合同付款节点。','status':'completed','block_refs':[{'block_id':'p1','quote':'【脱敏1】'}]}
     elif path=='/legal/policies' and method=='GET':data={'policies':policies}
     elif path=='/legal/policies' and method=='POST':
         assert req.post_data_json['contract_type']=='销售合同' and req.post_data_json['our_roles']==['销售方']
@@ -262,7 +300,19 @@ try:
         consent.check();page.get_by_role('radio',name='极速审查',exact=True).check();expect(consent).not_to_be_checked()
         expect(page.get_by_text('不检索法规、不做独立复核',exact=False)).to_be_visible()
         page.get_by_role('radio',name='深度审查',exact=True).check()
-        consent.check();page.get_by_label('审查模型').select_option('claude-fixture');expect(consent).not_to_be_checked()
+        consent.check();page.get_by_label('审查模型').select_option('claude-fixture')
+        claude_consent=page.get_by_label('同意将脱敏后的合同文本、审查重点及适用的公司规范提交 Anthropic 官方 API，由所选 Claude 模型分析')
+        expect(claude_consent).not_to_be_checked()
+        expect(page.get_by_text('处理方：Anthropic 官方 API',exact=True)).to_be_visible()
+        # A catalogue refresh can change the recipient while keeping the same model id.
+        claude_model=next(m for m in model_catalog['models'] if m['id']=='claude-fixture')
+        claude_consent.check();claude_model['provider']='ydata'
+        page.get_by_role('button',name='刷新模型列表',exact=True).click()
+        expect(consent).not_to_be_checked()
+        expect(page.get_by_label('审查模型')).to_have_value('claude-fixture')
+        consent.check();claude_model['provider']='anthropic'
+        page.get_by_role('button',name='刷新模型列表',exact=True).click()
+        expect(claude_consent).not_to_be_checked()
         page.get_by_label('审查模型').select_option('glm-5.2');consent.check()
         page.screenshot(path=str(OUT/'legal-scenario-setup.png'),full_page=True)
         page.get_by_role('button',name='开始审查',exact=True).click()
@@ -483,6 +533,67 @@ try:
         assert not any(path.endswith(('/draft-check','/draft-approval')) for _,path in calls)
         review.clear();review.update(saved_review);contract.clear();contract.update(saved_contract)
         assert not errors,errors
+        # The two recipients are exercised only through explicit model actions after all export-only checks.
+        model_actions['allowed']=True
+        review['decisions']={'f1':{'decision':'draft','text':finding['suggested_text'],'version':1,'source':'model',
+                                 'manual_edit_confirmed':False,'legal_basis_confirmed':False}}
+        page.goto('http://127.0.0.1:4173/legal?contract=c1')
+        for provider in ('ydata','anthropic'):
+            if provider=='anthropic':
+                steps.get_by_role('button',name='设置',exact=True).click()
+                page.get_by_label('审查模型').select_option('claude-fixture')
+                page.get_by_role('radio',name='极速审查',exact=True).check()
+                expect(claude_consent).not_to_be_checked()
+                page.get_by_role('group',name='界面语言').get_by_role('button',name='EN').click()
+                expect(page.get_by_label('I agree to send the redacted contract, my review focus and the applicable company policies to the selected Claude model through the Anthropic official API')).not_to_be_checked()
+                expect(page.get_by_text('Recipient: Anthropic official API',exact=True)).to_be_visible()
+                page.get_by_role('group',name='Interface language').get_by_role('button',name='中文').click()
+                # A server-side route change between choosing and starting refreshes the list and revokes consent.
+                model_actions['reject_next_create']=True
+                model_refreshes=sum(path=='/legal/models' and method=='GET' for method,path in calls)
+                claude_consent.check();page.get_by_role('button',name='重新审查',exact=True).click()
+                expect(page.get_by_role('alert').filter(has_text='处理方已变化')).to_be_visible()
+                expect(claude_consent).not_to_be_checked()
+                expect(page.get_by_role('button',name='重新审查',exact=True)).to_be_disabled()
+                expect(page.get_by_role('button',name='刷新模型列表',exact=True)).to_be_enabled()
+                assert sum(path=='/legal/models' and method=='GET' for method,path in calls)>model_refreshes
+                claude_consent.check();page.get_by_role('button',name='重新审查',exact=True).click()
+                expect(page.get_by_role('tablist',name='审查结果视图')).to_be_visible()
+                assert review_requests[-1]['model_id']=='claude-fixture'
+                assert review_requests[-1]['external_processing_provider']=='anthropic'
+                assert review['profile']['model']['provider']=='anthropic'
+                expect(page.locator('#legal-block-p1 .lv-para')).to_contain_text(finding['suggested_text'])
+                page.screenshot(path=str(OUT/'legal-anthropic-draft.png'),full_page=True)
+            recipient='Anthropic 官方 API' if provider=='anthropic' else 'YData 网关'
+            page.get_by_role('tablist',name='审查结果视图').get_by_role('tab',name='问答',exact=True).click()
+            question_consent=page.get_by_role('checkbox',name=re.compile('^同意将问题及脱敏材料.*'+recipient))
+            expect(question_consent).not_to_be_checked()
+            page.get_by_label('追问本轮审查',exact=True).fill('请说明付款节点。')
+            expect(page.get_by_role('button',name='发送追问',exact=True)).to_be_disabled()
+            question_consent.check();page.get_by_role('button',name='发送追问',exact=True).click()
+            expect(page.get_by_text('合成回答：请核对合同付款节点。',exact=True)).to_be_visible()
+            assert model_requests[-1]=={'action':'question','provider':provider}
+            steps.get_by_role('button',name='导出',exact=True).click()
+            page.get_by_text('可选：复核当前修订稿',exact=True).click()
+            check_consent=page.get_by_role('checkbox',name=re.compile('^同意将当前修改.*'+recipient))
+            expect(check_consent).not_to_be_checked()
+            expect(page.get_by_role('button',name='开始复核',exact=True)).to_be_disabled()
+            check_consent.check();page.get_by_role('button',name='开始复核',exact=True).click()
+            expect(page.get_by_text('合成可选复核完成。',exact=True)).to_be_visible()
+            assert model_requests[-1]=={'action':'check','provider':provider}
+            # Official Claude's auto-draft still exports after one user confirmation, with no extra model call.
+            model_count=len(model_requests)
+            page.get_by_role('button',name='导出修订文本',exact=True).click()
+            expect(page.get_by_role('dialog',name='导出确认')).to_contain_text('还有 1 项待处理')
+            with page.expect_download() as routed_download:page.get_by_role('button',name='确认导出',exact=True).click()
+            routed_download.value.save_as(OUT/f'{provider}-revision.txt')
+            assert (OUT/f'{provider}-revision.txt').read_text()==finding['suggested_text']
+            assert len(model_requests)==model_count
+        assert model_requests==[{'action':'question','provider':'ydata'},{'action':'check','provider':'ydata'},
+                               {'action':'question','provider':'anthropic'},{'action':'check','provider':'anthropic'}]
+        assert review_requests[0]['model_id']=='glm-5.2' and review_requests[0]['external_processing_provider']=='ydata'
+        assert not any(path.endswith('/draft-approval') for _,path in calls)
+        assert not errors,errors
         # Reduced motion: the desk renders fully with no animation left running.
         still=browser.new_context(viewport={'width':1440,'height':900},reduced_motion='reduce')
         still.add_init_script("localStorage.setItem('token','synthetic');localStorage.setItem('user',JSON.stringify({id:'u1',role:'user',plan:'max'}));")
@@ -492,7 +603,7 @@ try:
         still.close()
         assert not AXE_VIOLATIONS, AXE_VIOLATIONS
         browser.close()
-    print('PASS: actual built UI with synthetic APIs: Max gate, library, redaction compare, 20 scenarios, party picking on paper, live review, numbered findings, user-controlled export, fast model drafts, direct edits, stale confirmation, disputed findings, Word/TXT choices, policies, mobile, English switch.')
+    print('PASS: actual built UI with synthetic APIs: Max gate, library, redaction compare, 20 scenarios, party picking on paper, live review, numbered findings, user-controlled export, fast model drafts, direct edits, stale confirmation, disputed findings, Word/TXT choices, policies, mobile, English switch, Anthropic official Claude and YData routing, recipient-bound consent, provider refresh, explicit follow-up and optional check.')
 except Exception:
     try:
         page.screenshot(path=str(OUT/'failure.png'), full_page=True)

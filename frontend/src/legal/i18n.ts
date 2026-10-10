@@ -109,6 +109,8 @@ const RULES: Rule[] = [
     `No text was found on page ${m[1]}; it may be a scan. Provide a PDF with selectable text, or a DOCX.`],
   [/^YData 请求失败（HTTP (\d+)），请检查网关及所选模型的聊天接口支持。$/, m =>
     `The YData request failed (HTTP ${m[1]}). Check the gateway and that the selected model supports chat.`],
+  [/^Anthropic 请求失败（HTTP (\d+)）；没有自动切换模型或提供方。$/, m =>
+    `The Anthropic request failed (HTTP ${m[1]}); no other model or provider was used instead.`],
   [/^(.+) 模型尚未配置 YData Key，请管理员配置 (.+)。$/, m => `No YData key is configured for ${m[1]} models. Ask an administrator to set ${m[2]}.`],
 ];
 

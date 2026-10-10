@@ -44,18 +44,29 @@ def test_new_note_masks_do_not_rename_contract_tokens(qdb):
     value=questions.redact_note('真实公司（【脱敏1】）电话13812345678',{'mapping':{'【脱敏1】':'真实公司'}})
     assert value=='【脱敏1】（【脱敏1】）电话【补充脱敏1】'
     assert '\ue000' not in value
-def test_followup_idempotency_and_encryption(qdb,monkeypatch):
+@pytest.mark.parametrize('provider,model_id', [('ydata', 'glm-5.2'), ('anthropic', 'claude-test')])
+def test_followup_idempotency_and_encryption(qdb,monkeypatch,provider,model_id):
     calls=[]
     def model(*args):calls.append(args);return answer()
     monkeypatch.setattr(questions.ydata,'chat_json',model)
     r,c=context()
+    r['payload']['profile'].update(model={'id': model_id, 'provider': provider}, external_processing_provider=provider)
     first=questions.ask(r,c,{'id':'u1'},'真实公司应该何时付款？','req1',lambda:None)
     assert questions.ask(r,c,{'id':'u1'},'真实公司应该何时付款？','req1',lambda:None)==first
     assert len(calls)==1 and first['question'].startswith('【脱敏1】')
+    assert calls[0][2] == {'id': model_id, 'provider': provider}
     assert '真实公司'.encode() not in qdb.read_bytes()
     assert '应该何时付款'.encode() not in qdb.read_bytes()
     assert questions.history('r1','u2')==[]
     assert len(questions.history('r1','u1'))==1
+
+def test_old_claude_followup_does_not_switch_recipients(qdb,monkeypatch):
+    r,c=context()
+    r['payload']['profile']['model'] = {'id': 'claude-test', 'provider': 'ydata'}
+    monkeypatch.setattr(questions.ydata, 'chat_json', lambda *a: pytest.fail('recipient changed without consent'))
+    with pytest.raises(HTTPException) as error:
+        questions.ask(r,c,{'id':'u1'},'付款安排？','legacy',lambda:None)
+    assert error.value.status_code == 409
 def test_reused_request_id_different_question_rejected(qdb,monkeypatch):
     monkeypatch.setattr(questions.ydata,'chat_json',answer)
     r,c=context(); questions.ask(r,c,{'id':'u1'},'问题一','req1',lambda:None)
