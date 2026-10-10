@@ -20,6 +20,9 @@ def no_live_gateway(monkeypatch):
     monkeypatch.setenv('YDATA_API_KEY', 'synthetic-test-gateway-key')
     for env_name in ydata.FAMILY_KEY_ENVS.values():
         monkeypatch.delenv(env_name, raising=False)
+    for env_name in ('YDATA_CLAUDE_API_KEY', 'ANTHROPIC_API_KEY', 'LEGAL_ANTHROPIC_MODELS',
+                     'LEGAL_ANTHROPIC_MAX_TOKENS', 'LEGAL_ANTHROPIC_STREAM'):
+        monkeypatch.delenv(env_name, raising=False)
     monkeypatch.delenv('LEGAL_YDATA_MODELS', raising=False)
     monkeypatch.delenv('LEGAL_YDATA_DEFAULT_MODEL', raising=False)
     ydata.clear_cache()
@@ -32,11 +35,12 @@ def catalog_response():
                                             'gpt-image-test','gpt-audio-test','text-embedding-test','unrelated-test']]}
 
 
-def test_all_requested_families_are_discovered_without_invented_ids():
+def test_four_ydata_families_are_discovered_and_claude_is_not_routed_through_ydata():
     with httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=catalog_response()))) as client:
         result = ydata.model_catalog(client=client)
-    assert [m['family'] for m in result['models']] == list(ydata.FAMILIES)
-    assert len(result['models']) == 5
+    assert [m['family'] for m in result['models']] == list(ydata.YDATA_FAMILIES)
+    assert len(result['models']) == 4
+    assert all(m['provider'] == 'ydata' for m in result['models'])
     assert result['default_model'] == 'glm-5.2'
     assert 'synthetic-test-gateway-key' not in json.dumps(result)
 
@@ -44,12 +48,11 @@ def test_family_specific_keys_merge_catalog(monkeypatch):
     monkeypatch.delenv('YDATA_API_KEY')
     key_models = {
         'gpt-key': 'gpt-5-test',
-        'claude-key': 'claude-test',
         'deepseek-key': 'deepseek-test',
         'kimi-key': 'kimi-test',
         'glm-key': 'glm-5.2',
     }
-    for family, key in zip(ydata.FAMILIES, key_models):
+    for family, key in zip(ydata.YDATA_FAMILIES, key_models):
         monkeypatch.setenv(ydata.FAMILY_KEY_ENVS[family], key)
 
     def respond(request):
@@ -58,16 +61,16 @@ def test_family_specific_keys_merge_catalog(monkeypatch):
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         result = ydata.model_catalog(client=client)
-    assert [m['family'] for m in result['models']] == list(ydata.FAMILIES)
-    assert result['available_families'] == list(ydata.FAMILIES)
+    assert [m['family'] for m in result['models']] == list(ydata.YDATA_FAMILIES)
+    assert result['available_families'] == list(ydata.YDATA_FAMILIES)
     assert result['unavailable_families'] == []
 
 
 def test_selected_family_uses_its_own_key(monkeypatch):
     monkeypatch.delenv('YDATA_API_KEY')
-    inventory = ['gpt-5-test', 'claude-test', 'deepseek-test', 'kimi-test', 'glm-5.2']
+    inventory = ['gpt-5-test', 'deepseek-test', 'kimi-test', 'glm-5.2']
     keys = {}
-    for family, mid in zip(ydata.FAMILIES, inventory):
+    for family, mid in zip(ydata.YDATA_FAMILIES, inventory):
         key = family.lower() + '-key'
         keys[mid] = key
         monkeypatch.setenv(ydata.FAMILY_KEY_ENVS[family], key)
@@ -87,7 +90,7 @@ def test_selected_family_uses_its_own_key(monkeypatch):
 def test_one_broken_family_key_does_not_hide_healthy_models(monkeypatch):
     monkeypatch.delenv('YDATA_API_KEY')
     monkeypatch.setenv('YDATA_GPT_API_KEY', 'good-key')
-    monkeypatch.setenv('YDATA_CLAUDE_API_KEY', 'bad-key')
+    monkeypatch.setenv('YDATA_DEEPSEEK_API_KEY', 'bad-key')
 
     def respond(request):
         key = request.headers['Authorization'].removeprefix('Bearer ')
@@ -97,14 +100,14 @@ def test_one_broken_family_key_does_not_hide_healthy_models(monkeypatch):
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         result = ydata.model_catalog(client=client)
-    assert result['models'] == [{'id': 'gpt-5-test', 'family': 'GPT'}]
-    assert result['unavailable_families'] == ['Claude']
+    assert result['models'] == [{'id': 'gpt-5-test', 'family': 'GPT', 'provider': 'ydata'}]
+    assert result['unavailable_families'] == ['DeepSeek']
 
 
 def test_same_key_cannot_be_bound_to_two_families(monkeypatch):
     monkeypatch.delenv('YDATA_API_KEY')
     monkeypatch.setenv('YDATA_GPT_API_KEY', 'same-key')
-    monkeypatch.setenv('YDATA_CLAUDE_API_KEY', 'same-key')
+    monkeypatch.setenv('YDATA_GLM_API_KEY', 'same-key')
     assert ydata.configured() is False
     with pytest.raises(ydata.GatewayError) as exc:
         ydata.model_catalog()
@@ -119,7 +122,7 @@ def test_model_families(mid,family):
     assert ydata.family_of(mid) == family
 
 
-@pytest.mark.parametrize('mid', ['gpt-5-test','claude-test','deepseek-test','kimi-test','glm-5.2'])
+@pytest.mark.parametrize('mid', ['gpt-5-test','deepseek-test','kimi-test','glm-5.2'])
 def test_families_use_exact_selected_model_and_gateway(mid):
     sent=[]
     def respond(request):
@@ -271,8 +274,8 @@ def test_missing_key_is_not_replaced_by_research_provider_key(monkeypatch):
 
 
 def test_configured_inventory_and_unknown_model(monkeypatch):
-    monkeypatch.setenv('LEGAL_YDATA_MODELS','["glm-5.2", "claude-test"]')
-    assert ydata.select_model('claude-test')['provider']=='ydata'
+    monkeypatch.setenv('LEGAL_YDATA_MODELS','["glm-5.2", "deepseek-test"]')
+    assert ydata.select_model('deepseek-test')['provider']=='ydata'
     with pytest.raises(ydata.GatewayError) as exc: ydata.select_model('gpt-made-up')
     assert exc.value.status_code==422
     monkeypatch.setenv('LEGAL_YDATA_MODELS','["https://evil.test/"]')
@@ -282,8 +285,8 @@ def test_configured_inventory_and_unknown_model(monkeypatch):
 def test_catalog_cache_is_key_scoped_and_config_changes_invalidate_it(monkeypatch):
     monkeypatch.setenv('LEGAL_YDATA_MODELS','["glm-5.2"]')
     assert ydata.model_catalog()['models'][0]['id']=='glm-5.2'
-    monkeypatch.setenv('LEGAL_YDATA_MODELS','["claude-test"]')
-    assert ydata.model_catalog()['models'][0]['id']=='claude-test'
+    monkeypatch.setenv('LEGAL_YDATA_MODELS','["deepseek-test"]')
+    assert ydata.model_catalog()['models'][0]['id']=='deepseek-test'
     monkeypatch.setenv('YDATA_API_KEY','...')
     with pytest.raises(ydata.GatewayError): ydata.model_catalog()
 
@@ -292,7 +295,8 @@ def test_review_engine_uses_snapshot_not_global_model(monkeypatch):
     seen=[]
     monkeypatch.setattr(ydata,'chat_json',lambda system,payload,selection: seen.append(selection.copy()) or {})
     for mid in ('claude-test','glm-5.2'):
-        review_engine.model_json('JSON', {'profile':{'model':{'id':mid,'provider':'ydata'}}})
+        provider = ydata.provider_for_model(mid)
+        review_engine.model_json('JSON', {'profile':{'model':{'id':mid,'provider':provider}, 'external_processing_provider': provider}})
     assert [x['id'] for x in seen]==['claude-test','glm-5.2']
 
 

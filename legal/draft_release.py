@@ -11,7 +11,7 @@ import json
 import time
 from uuid import uuid4
 from fastapi import HTTPException
-from legal import review_store as store, ydata
+from legal import review_store as store, ydata, data_boundary
 from legal.review_quality import text
 
 VERSION = 2
@@ -156,8 +156,8 @@ def check(rid: str, user_id: str, request_id: str, authorize, *, model=None) -> 
     with store.transaction() as conn:
         conn.execute(SCHEMA)
         r, c = current(conn, rid)
-        if r['payload'].get('profile', {}).get('external_processing_provider') != 'ydata':
-            raise HTTPException(409, '本轮未记录原模型外发授权，请新建审查或直接导出当前稿。')
+        if not data_boundary.model_consent_valid(r['payload'].get('profile', {})):
+            raise HTTPException(409, '本轮模型处理方已变化或尚未授权，请新建审查或直接导出当前稿。')
         data = snapshot(r, c)
         if not data['selected_changes']:
             raise HTTPException(409, '当前没有修订需要模型复核，可以直接导出当前稿。')
