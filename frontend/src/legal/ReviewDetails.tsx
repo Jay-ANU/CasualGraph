@@ -28,6 +28,7 @@ export function ReviewDetails({ review, onLocate }: { review: Review; onLocate: 
   const scenario = review.profile?.scenario;
   const checked = review.coverage.filter(c => ['reviewed', 'not_applicable'].includes(c.status)).length;
   const skipped = review.research?.status === 'skipped';
+  const unconfigured = skipped && review.research?.reason === 'not_configured';
   return <div className="lv-basis-panel">
     <section className="lv-basis-group" aria-label={tx('审查范围', 'Review scope')}>
       <div className="lv-rail-label"><span>{tx('审查范围', 'Review scope')}</span><span className="lv-mono">{checked}/{review.coverage.length}</span></div>
@@ -40,8 +41,9 @@ export function ReviewDetails({ review, onLocate }: { review: Review; onLocate: 
     </section>
     {health && <section className="lv-basis-group" aria-label={tx('法律检索状态', 'Legal research status')}>
       <div className="lv-rail-label"><span>{tx('法律检索', 'Legal research')}</span>
-        <span className="lv-mono">{skipped ? tx('本档位不检索', 'Not searched at this depth') : `${health.topics_with_sources}/${health.queried_topics}`}</span></div>
-      {skipped && <p className="lv-hint">{tx('本档位不检索法规；意见引用的法条标注为“模型引用，待核对”。', 'This depth does not research the law; laws cited in findings are marked “model-cited, to verify”.')}</p>}
+        <span className="lv-mono">{unconfigured ? tx('未配置检索', 'No search service') : skipped ? tx('本档位不检索', 'Not searched at this depth') : `${health.topics_with_sources}/${health.queried_topics}`}</span></div>
+      {skipped && <p className="lv-hint">{unconfigured ? tx('未配置法规检索服务，本轮没有检索；意见引用的法条标注为“模型引用，待核对”。', 'No legal search service is configured, so nothing was searched; laws cited in findings are marked “model-cited, to verify”.')
+        : tx('本档位不检索法规；意见引用的法条标注为“模型引用，待核对”。', 'This depth does not research the law; laws cited in findings are marked “model-cited, to verify”.')}</p>}
       {health.status === 'gaps' && <p className="lv-note is-warn">{tx(`${health.failed_or_empty_topics} 项检索未获取到来源，相关风险无法排除。`,
         `${plural(health.failed_or_empty_topics, 'search', 'searches')} found no source, so the related risks cannot be ruled out.`)}</p>}
       {(review.research?.issues?.length || 0) > 0 && <ul className="lv-plain-list" aria-label={tx('检索规划', 'Research plan')}>{review.research!.issues.map(issue => <li key={issue.key}>

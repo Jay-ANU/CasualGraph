@@ -228,7 +228,9 @@ def test_job_idempotency_and_durable_claim(db):
     rid,created=store.create_review(c,'u1','fp',{'stage':'new','policies':[]})
     assert created and store.create_review(c,'u1','fp',{})==(rid,False)
     token=store.claim(rid); assert token and store.claim(rid) is None
+    assert store.renew(rid, token) and not store.renew(rid, 'another-worker')
     store.checkpoint(rid,token,{'stage':'checkpoint','batches':{'1':{'completed':True}}},'failed')
+    assert not store.renew(rid, token)
     assert store.review(rid)['payload']['batches']['1']['completed']
     assert store.claim(rid) is not None
     with pytest.raises(RuntimeError): store.checkpoint(rid,token,{})
@@ -382,11 +384,12 @@ def test_api_review_tiers_and_skill_snapshot(db, monkeypatch):
             'model_id': 'glm-5.2', 'our_party': {'block_id': 'p1', 'quote': '甲方'}}
     quick = client.post(f'/legal/contracts/{cid}/reviews', json={**base, 'review_tier': 'ultra_fast'}).json()
     assert quick['review_tier'] == 'ultra_fast' and quick['profile']['review_mode'] == 'standard'
+    assert quick['engine'] == 'chat' and quick['memo'] == '' and quick['live'] is None and caps['chat_review_version'] == 1
     ids = [s['id'] for s in quick['skills']]
     assert ids[0] == 'review-method' and {'ai-services', 'personal-information'} <= set(ids)
     assert all('guidance' not in s and s['reason'] for s in quick['skills'])
     stored = store.review(quick['id'])['payload']['skills']
     assert all(s['guidance'] and len(s['sha256']) == 64 for s in stored)
     legacy = client.post(f'/legal/contracts/{cid}/reviews', json={**base, 'review_mode': 'multi_agent', 'fresh_review': True}).json()
-    assert legacy['review_tier'] == 'deep' and legacy['profile']['review_mode'] == 'multi_agent'
+    assert legacy['review_tier'] == 'deep' and legacy['profile']['review_mode'] == 'multi_agent' and legacy['engine'] == 'verified'
     assert client.post(f'/legal/contracts/{cid}/reviews', json={**base, 'review_tier': 'turbo'}).status_code == 422

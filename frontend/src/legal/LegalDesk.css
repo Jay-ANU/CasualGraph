@@ -455,6 +455,38 @@
 .lv-activity-list .tone-ok i { background: var(--lv-ok); } .lv-activity-list :is(.tone-warn, .tone-mid) i { background: var(--lv-mid-mark); }
 .lv-activity-list .tone-high i { background: var(--lv-high); } .lv-activity-list .tone-low i { background: var(--lv-low); }
 
+/* A chat-style review writing: the memo as it streams in, or what the model is doing before it does. */
+.lv-writing { display: grid; gap: 8px; margin-bottom: 24px; animation: lv-rise 0.35s var(--lv-ease) both; }
+.lv-writing .lv-activity-head { margin-bottom: 0; }
+.lv-writing .lv-activity-head h3 { font-variant-numeric: tabular-nums; }
+.lv-writing-box { max-height: min(46vh, 420px); overflow-y: auto; padding: 12px 14px; border-radius: 12px; background: var(--lv-sunken); font-size: 13px; }
+.lv-writing-wait { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--lv-sunken); font-size: 13px; line-height: 1.55; color: var(--lv-ink-3); }
+
+/* The review memo: the model's own write-up, set like a document in the rail. */
+.lv-memo { display: grid; align-content: start; gap: 12px; padding-top: 16px; }
+.lv-memo-text { font-size: 13.5px; line-height: 1.7; color: var(--lv-ink-2); overflow-wrap: anywhere; }
+.lv-memo-text > :first-child { margin-top: 0; }
+.lv-memo-text :where(h1, h2, h3, h4, h5, h6) { color: var(--lv-ink); font-weight: 600; line-height: 1.4; }
+.lv-memo-text :where(h1, h2) { margin: 18px 0 6px; font-size: 15px; }
+.lv-memo-text :where(h3, h4, h5, h6) { margin: 14px 0 4px; font-size: 14px; }
+.lv-memo-text p { margin: 6px 0; }
+.lv-memo-text :where(ul, ol) { margin: 6px 0; padding-left: 1.3em; }
+.lv-memo-text ul { list-style: disc; }
+.lv-memo-text ol { list-style: decimal; }
+.lv-memo-text li { margin: 3px 0; }
+.lv-memo-text li::marker { color: var(--lv-ink-4); }
+.lv-memo-text strong { color: var(--lv-ink); font-weight: 600; }
+.lv-memo-text blockquote { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--lv-line-strong); color: var(--lv-ink-3); }
+.lv-memo-text table { display: block; max-width: 100%; margin: 8px 0; overflow-x: auto; border-collapse: collapse; font-size: 12.5px; }
+.lv-memo-text :where(th, td) { padding: 6px 8px; border: 1px solid var(--lv-line); text-align: left; vertical-align: top; }
+.lv-memo-text th { background: var(--lv-sunken); font-weight: 600; }
+.lv-memo-text code { padding: 1px 4px; border-radius: 4px; background: var(--lv-sunken); font-size: 12.5px; }
+.lv-memo-text hr { margin: 14px 0; border: 0; border-top: 1px solid var(--lv-line); }
+.lv-memo-text a { color: var(--lv-link); text-decoration: underline; text-underline-offset: 2px; }
+.lv-memo-ref { color: var(--lv-link); text-decoration: underline dotted; text-underline-offset: 3px; }
+.lv-memo-ref:hover { text-decoration-style: solid; }
+.lv-memo-ref:focus-visible { outline: none; border-radius: 3px; box-shadow: var(--lv-ring); }
+
 /* Results */
 .lv-results .lv-rail-head { padding: 20px 20px 12px; border-bottom: 1px solid var(--lv-line); }
 .lv-results-count { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }

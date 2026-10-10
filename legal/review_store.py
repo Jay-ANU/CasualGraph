@@ -205,6 +205,13 @@ def checkpoint(rid: str, token: str, payload: dict, status='running'):
             raise RuntimeError('review_lease_lost')
 
 
+def renew(rid: str, token: str) -> bool:
+    """Extend a live worker's lease while it waits on a long model answer; the payload is untouched."""
+    with transaction() as conn:
+        return conn.execute("UPDATE legal_reviews SET lease_until=? WHERE id=? AND worker_token=? AND status='running'",
+                            (time.time() + 600, rid, token)).rowcount == 1
+
+
 def _model_draft(decision: dict) -> bool:
     return decision.get('decision') == 'draft' and decision.get('source') == 'model' and decision.get('manual') is False
 

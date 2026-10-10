@@ -51,12 +51,12 @@ def guard_query(value: object, contract: str) -> str | None:
     return query
 
 
-def plan_issues(raw: object, rules: list[dict], blocks: list[dict]) -> dict:
+def plan_issues(raw: object, rules: list[dict], blocks: list[dict], limit: int = MAX_ISSUES) -> dict:
     raw = raw if isinstance(raw, dict) else {}
     rule_ids = {r['id'] for r in rules}
     contract = contract_fingerprint(blocks)
     issues, rejected = [], 0
-    for item in rows(raw.get('issues'))[:MAX_ISSUES]:
+    for item in rows(raw.get('issues'))[:limit]:
         if not isinstance(item, dict):
             continue
         laws = []

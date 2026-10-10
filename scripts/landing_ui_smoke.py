@@ -123,7 +123,7 @@ try:
         check('Five agents in the gallery', page.locator('.ap-agent-card').count() == 5)
         table = page.get_by_role('table')
         table.scroll_into_view_if_needed()
-        check('Four review depths compared over six rows', table.locator('thead th').count() == 5 and table.locator('tbody tr').count() == 6)
+        check('Four review depths compared over seven rows', table.locator('thead th').count() == 5 and table.locator('tbody tr').count() == 7)
         tiles = page.locator('.ap-tile')
         for i in range(tiles.count()):
             tiles.nth(i).scroll_into_view_if_needed()

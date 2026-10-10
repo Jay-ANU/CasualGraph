@@ -173,8 +173,11 @@ export default class LegalDesk extends React.Component<Props, State> {
     const seq = this.generation;
     try {
       const updated = await this.api<Review>(`/legal/reviews/${r.id}`);
+      // A chat-style review that has just finished opens on the memo the model wrote.
+      const finished = !isActive(updated) && Boolean(updated.memo);
       if (this.live && seq === this.generation && this.state.review?.id === r.id) this.setState(s => ({ review: updated,
-        pane: draftFirst(updated) ? 'paper' : s.pane, paperMode: draftFirst(updated) ? 'revised' : s.paperMode }));
+        pane: draftFirst(updated) ? 'paper' : s.pane, paperMode: draftFirst(updated) ? 'revised' : s.paperMode,
+        railTab: finished ? 'memo' : s.railTab }));
     } catch (e) { this.fail(e); }
     finally { this.polling = false; }
   }
@@ -199,6 +202,7 @@ export default class LegalDesk extends React.Component<Props, State> {
       if (!this.live || seq !== this.generation) return;
       const context = review.profile?.transaction_context;
       this.setState({ review, pane: draftFirst(review) ? 'paper' : 'rail', paperMode: draftFirst(review) ? 'revised' : 'changes', ourRole: review.profile?.our_role || '',
+        railTab: review.memo ? 'memo' : 'notes',
         ourPartyBlock: review.profile?.our_party?.block_id || '', ourPartyQuote: review.profile?.our_party?.quote || '',
         contractType: review.profile?.contract_type || '采购合同', instructions: review.profile?.instructions || '',
         reviewTier: tierOf(review), date: review.profile?.transaction_date || '',

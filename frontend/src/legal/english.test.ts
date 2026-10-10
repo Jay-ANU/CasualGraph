@@ -35,6 +35,8 @@ describe('English tiers and steps', () => {
     const tiers = availableTiers({ review_tiers: ['ultra_fast', 'fast', 'standard', 'deep'] });
     expect(tiers.map(t => t.title)).toEqual(['Ultra-fast', 'Fast', 'Standard', 'Deep']);
     expect(tiers[0].note).toContain('No legal research and no independent verification');
+    expect(tiers[0].note).toContain('AI chat');
+    expect(tiers[1].note).toContain('re-reads everything');
     expect(['ultra_fast', 'fast', 'standard', 'deep'].map(t => tierLabel(t as never))).toEqual(['Ultra-fast review', 'Fast review', 'Standard review', 'Deep review']);
     // The value sent to the API never changes with the language.
     expect(tiers.map(t => t.value)).toEqual(['ultra_fast', 'fast', 'standard', 'deep']);
@@ -42,8 +44,8 @@ describe('English tiers and steps', () => {
   it('labels the stepper and the live phases', () => {
     expect(stepLabels()).toEqual(['Redact', 'Set up', 'Review', 'Resolve', 'Export']);
     expect(stepLabels('zh')).toEqual(['脱敏', '设置', '审查', '处理', '导出']);
-    expect(phaseSteps(review({ review_tier: 'ultra_fast' })).map(s => s.label)).toEqual(['Read', 'Review']);
-    expect(phaseSteps(review({ review_tier: 'fast' })).map(s => s.label)).toEqual(['Read', 'Review']);
+    expect(phaseSteps(review({ review_tier: 'ultra_fast' })).map(s => s.label)).toEqual(['Read', 'Review & draft']);
+    expect(phaseSteps(review({ review_tier: 'fast' })).map(s => s.label)).toEqual(['Read', 'First read', 'Research', 'Re-read']);
     expect(phaseSteps(review({ review_tier: 'deep' })).map(s => s.label)).toEqual(['Read', 'Research', 'Review', 'Finalise']);
   });
   it('states progress counts and time left', () => {

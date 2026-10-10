@@ -10,13 +10,14 @@ import { filterByTone, isDecided, stepFinding, TONE_FILTERS, toneCounts } from '
 import { FindingItem } from './FindingItem';
 import { FollowUp } from './FollowUp';
 import { ReviewDetails } from './ReviewDetails';
+import { ReviewMemo } from './ReviewMemo';
 import { ReviewIssue } from './ReviewStatus';
 import { CountUp } from './ui';
 import { ic } from './icon';
 import { pick, useI18n } from '../i18n/core';
 import { plural } from './i18n';
 
-export type RailTab = 'notes' | 'qa' | 'basis';
+export type RailTab = 'memo' | 'notes' | 'qa' | 'basis';
 
 type Props = {
   review: Review; blocks: Block[]; open: Numbered[]; clauseOf: (blockId: string | null) => string;
@@ -104,10 +105,14 @@ export function ResultsPanel(p: Props) {
   const outcome = reviewOutcome(p.review);
   const issueShown = p.review.resumable || Boolean(p.review.error) || ['failed', 'cancelled'].includes(p.review.status);
   const urgent = p.open.filter(x => findingTone(x.finding) === 'high' && !isDecided(p.review.decisions[x.finding.id])).length;
-  const tabs: [RailTab, string][] = [['notes', tx(`批注 ${p.open.length}`, `Notes ${p.open.length}`)], ...(p.followup ? [['qa', tx('问答', 'Q&A')] as [RailTab, string]] : []), ['basis', tx('依据', 'Basis')]];
+  const memo = Boolean(p.review.memo);
+  const tabs: [RailTab, string][] = [...(memo ? [['memo', tx('意见书', 'Memo')] as [RailTab, string]] : []),
+    ['notes', tx(`批注 ${p.open.length}`, `Notes ${p.open.length}`)], ...(p.followup ? [['qa', tx('问答', 'Q&A')] as [RailTab, string]] : []), ['basis', tx('依据', 'Basis')]];
+  // A review without a memo (standard, deep, or from before chat-style reviews) opens on its notes.
+  const tab: RailTab = p.tab === 'memo' && !memo ? 'notes' : p.tab;
   const move = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
-    const i = tabs.findIndex(([value]) => value === p.tab);
+    const i = tabs.findIndex(([value]) => value === tab);
     const next = tabs[(i + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length][0];
     p.onTab(next);
     requestAnimationFrame(() => document.getElementById(`legal-tab-${next}`)?.focus());
@@ -126,15 +131,16 @@ export function ResultsPanel(p: Props) {
       {['ultra_fast', 'fast'].includes(tierOf(p.review)) && done && <p className="lv-note">{tx('修订稿已就绪，可直接阅读、编辑和导出。模型拟稿尚未独立复核。',
         'Your draft is ready to read, edit and export. The model’s edits have not been independently verified.')}</p>}
       <div className="lv-tabs" role="tablist" aria-label={tx('审查结果视图', 'Result views')} onKeyDown={move}>
-        {tabs.map(([value, label]) => <button key={value} id={`legal-tab-${value}`} role="tab" aria-selected={p.tab === value} aria-controls="legal-tabpanel"
-          tabIndex={p.tab === value ? 0 : -1} className={p.tab === value ? 'selected' : ''} onClick={() => p.onTab(value)}>{label}</button>)}
+        {tabs.map(([value, label]) => <button key={value} id={`legal-tab-${value}`} role="tab" aria-selected={tab === value} aria-controls="legal-tabpanel"
+          tabIndex={tab === value ? 0 : -1} className={tab === value ? 'selected' : ''} onClick={() => p.onTab(value)}>{label}</button>)}
       </div>
     </div>
-    <div id="legal-tabpanel" role="tabpanel" aria-labelledby={`legal-tab-${p.tab}`} className="lv-tabpanel">
-      {p.tab === 'notes' && <Notes {...p} done={done} />}
-      {p.tab === 'qa' && <FollowUp review={p.review} blocks={p.blocks} answers={p.answers} question={p.question} busy={p.questionBusy} consent={p.questionConsent}
+    <div id="legal-tabpanel" role="tabpanel" aria-labelledby={`legal-tab-${tab}`} className="lv-tabpanel">
+      {tab === 'memo' && <ReviewMemo review={p.review} blocks={p.blocks} onLocate={p.onLocate} />}
+      {tab === 'notes' && <Notes {...p} done={done} />}
+      {tab === 'qa' && <FollowUp review={p.review} blocks={p.blocks} answers={p.answers} question={p.question} busy={p.questionBusy} consent={p.questionConsent}
         onQuestion={p.onQuestion} onConsent={p.onQuestionConsent} onAsk={p.onAsk} onLocate={p.onLocate} />}
-      {p.tab === 'basis' && <div className="lv-rail-body"><ReviewDetails review={p.review} onLocate={p.onLocate} /></div>}
+      {tab === 'basis' && <div className="lv-rail-body"><ReviewDetails review={p.review} onLocate={p.onLocate} /></div>}
     </div>
   </section>;
 }

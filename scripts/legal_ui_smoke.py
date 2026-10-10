@@ -45,6 +45,12 @@ def running_review():
     return {**review,'status':'running','stage':'多个审查 Agent 正在分别检查合同','findings':[],'created_at':time.time()-95,
             'progress':{'phase':'collaboration','completed':1+step,'total':5},'metrics':{'model_calls':5+2*step},
             'collaboration':{**review['collaboration'],'agents':agents}}
+# A chat-style review (ultra_fast/fast) while the model writes its memo; the test switches it off to finish.
+writing={'value':False}
+def chat_writing_review():
+    return {**{k:v for k,v in review.items() if k!='collaboration'},'status':'running','stage':'正在通读合同并撰写审查意见','findings':[],'decisions':{},'created_at':time.time()-40,
+            'progress':{'phase':'review','completed':0,'total':1},'memo':'',
+            'live':{'step':'review','activity':'writing_memo','memo':'## 一、交易概况与我方位置\n本合同为合成采购合同。','written':860,'reasoning':0,'findings':0}}
 def review_view():
     decisions=review['decisions']
     ids={f['id'] for f in review['findings']}
@@ -93,7 +99,7 @@ def route_api(route):
         review['evidence_health']={'queried_topics':6,'topics_with_sources':4,'failed_or_empty_topics':2,'source_count':0,'non_authoritative_sources':0,'version_pending':0,'status':'gaps','notice':'合成检索状态。'}
         contract['reviews']=[{'id':'r1','status':'completed'}]
         running['value']=True;data=running_review()
-    elif path=='/legal/reviews/r1':data=running_review() if running['value'] else review_view()
+    elif path=='/legal/reviews/r1':data=chat_writing_review() if writing['value'] else running_review() if running['value'] else review_view()
     elif path.startswith('/legal/reviews/r1/findings/'):
         fid=path.rsplit('/',1)[1];payload=req.post_data_json
         old=review['decisions'].get(fid,{})
@@ -481,6 +487,34 @@ try:
         with page.expect_download() as text_download:page.get_by_role('button',name='导出文字稿',exact=True).click()
         assert text_download.value.suggested_filename.endswith('.txt') and export_requests[-1]['format']==['txt']
         assert not any(path.endswith(('/draft-check','/draft-approval')) for _,path in calls)
+        # Chat-style reviews: the memo streams in while the model writes, then the finished review opens on it.
+        review.clear();review.update(json.loads(json.dumps(saved_review)))
+        review.pop('collaboration',None)
+        review.update(review_tier='ultra_fast',engine='chat',memo='## 一、总体评价\n付款安排（p1）对我方不利，签署前必须修改。\n\n## 二、谈判策略\n- 坚持验收后付款。')
+        review['profile']['review_tier']='ultra_fast'
+        review['decisions']={'f1':{'decision':'draft','text':finding['suggested_text'],'version':1,'source':'model',
+                                 'manual_edit_confirmed':False,'legal_basis_confirmed':False}}
+        writing['value']=True
+        page.set_viewport_size({'width':1440,'height':1000})
+        page.goto('http://127.0.0.1:4173/legal?contract=c1')
+        live_panel=page.get_by_label('模型撰写进度')
+        expect(live_panel).to_contain_text('正在撰写审查意见书 · 已写 860 字')
+        expect(live_panel).to_contain_text('本合同为合成采购合同。')
+        expect(page.get_by_role('list',name='审查阶段').locator('[aria-current="step"]')).to_have_text('审查拟稿')
+        audit_layout(page,'legal-chat-writing')
+        page.set_viewport_size({'width':1440,'height':1000})
+        writing['value']=False  # the next 2.5 s poll returns the finished review with its memo
+        expect(page.get_by_role('tab',name='意见书')).to_have_attribute('aria-selected','true',timeout=15000)
+        memo=page.get_by_role('tabpanel')
+        expect(memo).to_contain_text('付款安排')
+        expect(memo.locator('li')).to_contain_text('坚持验收后付款。')
+        memo.get_by_role('button',name='p1',exact=True).click()
+        expect(page.locator('#legal-block-p1')).to_be_in_viewport()
+        page.screenshot(path=str(OUT/'legal-chat-memo-tab.png'))
+        page.get_by_role('tab',name='批注 1').click()
+        expect(page.locator('#legal-finding-f1')).to_be_visible()
+        audit_layout(page,'legal-chat-memo')
+        assert not errors,errors
         review.clear();review.update(saved_review);contract.clear();contract.update(saved_contract)
         assert not errors,errors
         # Reduced motion: the desk renders fully with no animation left running.
@@ -492,7 +526,7 @@ try:
         still.close()
         assert not AXE_VIOLATIONS, AXE_VIOLATIONS
         browser.close()
-    print('PASS: actual built UI with synthetic APIs: Max gate, library, redaction compare, 20 scenarios, party picking on paper, live review, numbered findings, user-controlled export, fast model drafts, direct edits, stale confirmation, disputed findings, Word/TXT choices, policies, mobile, English switch.')
+    print('PASS: actual built UI with synthetic APIs: Max gate, library, redaction compare, 20 scenarios, party picking on paper, live review, numbered findings, user-controlled export, fast model drafts, chat-style memo streaming, direct edits, stale confirmation, disputed findings, Word/TXT choices, policies, mobile, English switch.')
 except Exception:
     try:
         page.screenshot(path=str(OUT/'failure.png'), full_page=True)

@@ -35,6 +35,11 @@ export function ReviewReport(review: Review, lang: Lang = currentLang()): string
     say(`模型：${review.profile?.model?.id || '历史记录未提供'}`, `Model: ${review.profile?.model?.id || 'not recorded'}`),
     say(`我方角色：${review.profile?.our_role || '未记录'}`, `Our role: ${review.profile?.our_role ? tr(review.profile.our_role, lang) : 'not recorded'}`),
     say(`审查方式：${tierLabel(tierOf(review), lang)}`, `Review depth: ${tierLabel(tierOf(review), lang)}`), '', serverText(review.notice, lang)];
+  if (review.memo) {
+    // The model's own memo, one heading level down so it sits under this report's sections.
+    out.push('', say('## 审查意见书（模型撰写，未经独立复核）', '## Review memo (written by the model, not independently verified)'), '',
+      escaped(review.memo).replace(/^(#{1,5}) /gm, '#$1 '));
+  }
   if (review.profile?.scenario) {
     const scenario = review.profile.scenario;
     out.push('', say('## 审查场景', '## Scenario'), say(`${escaped(scenario.label)} · 目录版本 ${scenario.catalog_version}`, `${escaped(tr(scenario.label, lang))} · catalogue version ${scenario.catalog_version}`),
@@ -56,7 +61,9 @@ export function ReviewReport(review: Review, lang: Lang = currentLang()): string
     out.push('', say('## 审查技能', '## Review skills'), ...review.skills.map(skill => say(`${escaped(skill.name)}（v${escaped(skill.version)}）：${escaped(skill.reason)}`,
       `${server(skill.name)} (v${escaped(skill.version)}): ${server(skill.reason)}`)), say('审查技能是审查方法与检查清单，不是法律依据。', 'Review skills are methods and checklists, not legal authority.'));
   }
-  if (review.research?.status === 'skipped') out.push('', say('## 法律检索', '## Legal research'), say('本档位不检索法规；法律意见引用的法条为模型引用，待核对。', 'This depth does not research the law; laws cited in legal findings are model-cited and still need checking.'));
+  if (review.research?.status === 'skipped') out.push('', say('## 法律检索', '## Legal research'), review.research.reason === 'not_configured'
+    ? say('未配置法规检索服务，本轮没有检索；法律意见引用的法条为模型引用，待核对。', 'No legal search service was configured, so nothing was searched; laws cited in legal findings are model-cited and still need checking.')
+    : say('本档位不检索法规；法律意见引用的法条为模型引用，待核对。', 'This depth does not research the law; laws cited in legal findings are model-cited and still need checking.'));
   else if (review.evidence_health) {
     const h = review.evidence_health;
     out.push('', say('## 法律检索', '## Legal research'), say(`取得来源：${h.topics_with_sources}/${h.queried_topics} 项；版本待核验：${h.version_pending} 个来源。`,
