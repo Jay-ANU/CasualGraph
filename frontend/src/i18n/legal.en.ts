@@ -297,7 +297,6 @@ export const SERVER_EN: Record<string, string> = {
   'LEGAL_ANTHROPIC_MODELS 必须是 Claude 官方确切模型 ID 的非空 JSON 数组。': 'LEGAL_ANTHROPIC_MODELS must be a nonempty JSON array of exact official Claude model IDs.',
   'Claude 输出因长度或上下文上限停止；未发布不完整结论，可缩小范围后重试。': 'Claude stopped at its output or context limit; nothing incomplete was published. Narrow the scope and retry.',
   'Claude 未能提供本次审查结果；请检查请求内容后重试。': 'Claude could not provide this review result. Check the request and try again.',
-  'Claude 接收方已变更为 Anthropic 官方，请重新选择模型并授权后新建审查。': 'Claude now uses Anthropic directly. Select the model, confirm its recipient and start a new review.',
   'LEGAL_YDATA_MODELS 必须是 GPT、DeepSeek、Kimi、GLM 确切模型 ID 的 JSON 数组；Claude 请配置官方库存。': 'LEGAL_YDATA_MODELS must be a JSON array of exact GPT, DeepSeek, Kimi or GLM model IDs. Configure Claude in the official model catalogue.',
   '模型推理占用了大部分输出上限，结构化结果被截断；未发布不完整结论，可重试或换用其他模型。': 'The model’s reasoning used most of the output limit and the result was cut off; nothing incomplete was published. Retry or choose another model.',
   '模型输出超过长度上限被截断；未发布不完整结论，可缩小范围后重试。': 'The model’s output hit the length limit and was cut off; nothing incomplete was published. Narrow the scope and retry.',
