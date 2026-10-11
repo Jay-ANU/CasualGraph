@@ -462,6 +462,22 @@
 .lv-writing-box { max-height: min(46vh, 420px); overflow-y: auto; padding: 12px 14px; border-radius: 12px; background: var(--lv-sunken); font-size: 13px; }
 .lv-writing-wait { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--lv-sunken); font-size: 13px; line-height: 1.55; color: var(--lv-ink-3); }
 
+/* Tools the model called: one line each, what it asked for and what came back. */
+.lv-tools { display: grid; gap: 2px; padding: 6px 0; font-size: 12.5px; line-height: 1.5; }
+.lv-tool { display: grid; grid-template-columns: 16px auto minmax(0, 1fr) auto; align-items: baseline; column-gap: 8px; padding: 3px 0; color: var(--lv-ink-2); }
+.lv-tool-icon { display: inline-flex; align-self: center; color: var(--lv-ink-4); }
+.lv-tool-action { color: var(--lv-ink); font-weight: 500; white-space: nowrap; }
+.lv-tool-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--lv-ink-3); }
+.lv-tool-outcome { color: var(--lv-ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lv-tool.is-ok .lv-tool-outcome { color: var(--lv-ok-text); }
+.lv-tool.is-warn .lv-tool-outcome { color: var(--lv-mid-text); }
+.lv-tool.is-running .lv-tool-outcome { color: var(--lv-link); }
+.lv-tool-step { padding-top: 8px; font-size: 12px; font-weight: 600; color: var(--lv-ink-3); }
+@media (max-width: 520px) {
+  .lv-tool { grid-template-columns: 16px auto minmax(0, 1fr); }
+  .lv-tool-outcome { grid-column: 2 / -1; white-space: normal; }
+}
+
 /* The review memo: the model's own write-up, set like a document in the rail. */
 .lv-memo { display: grid; align-content: start; gap: 12px; padding-top: 16px; }
 .lv-memo-text { font-size: 13.5px; line-height: 1.7; color: var(--lv-ink-2); overflow-wrap: anywhere; }

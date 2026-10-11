@@ -1,4 +1,6 @@
-"""Chat-style review (ultra_fast and fast tiers). Synthetic model replies and sources only."""
+"""Chat-style review (ultra_fast and fast tiers) without tools: the conversation a route that refuses tool
+calls gets, or LEGAL_CHAT_TOOLS=0. Tool calling is covered in test_legal_chat_tools.py. Synthetic model
+replies and sources only."""
 from copy import deepcopy
 import json
 import pytest
@@ -88,6 +90,7 @@ def runtime(monkeypatch):
     monkeypatch.setattr(store, 'claim', claim)
     monkeypatch.setattr(store, 'checkpoint', checkpoint)
     monkeypatch.setattr(store, 'renew', lambda rid, token: True)
+    monkeypatch.setenv('LEGAL_CHAT_TOOLS', '0')
     monkeypatch.setattr(v2, 'RATE_LIMIT_PAUSE', 0)
     monkeypatch.setattr(v2, 'TRANSIENT_PAUSE', 0)
     monkeypatch.setattr(chat_review.random, 'uniform', lambda a, b: 0)

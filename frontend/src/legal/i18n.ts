@@ -63,6 +63,7 @@ const REVIEW_SCOPE: Record<string, string> = {
   '（未做法规检索和独立复核）': ' (no legal research or independent verification)',
   '（已逐项复核，未做法规检索和全文交叉核对）': ' (findings verified; no legal research or whole-contract cross-check)',
   '（已复读定稿，未做独立复核）': ' (re-read before finalising; no independent verification)',
+  '（按需调用工具，未做独立复核）': ' (tools used as needed; no independent verification)',
 };
 const SEARCH_NAME: Record<string, string> = { 公开搜索: 'public web search' };
 

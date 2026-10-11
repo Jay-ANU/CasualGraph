@@ -50,13 +50,17 @@ export function reviewStatusLabel(r: Pick<Review, 'status' | 'batch_errors' | 'r
   return outcome ? labelOf(OUTCOME_LABEL, outcome, lang)! : labelOf(REVIEW_STATUS, r.status, lang) ?? r.status;
 }
 
-/** Review tiers, fastest first, with what each one leaves out. */
-const TIERS: { value: ReviewTier; title: Pair; label: Pair; note: Pair }[] = [
+/** Review tiers, fastest first, with what each one leaves out. A speed tier's plain note is for a service whose model works without tools. */
+const TIERS: { value: ReviewTier; title: Pair; label: Pair; note: Pair; plain?: Pair }[] = [
   { value: 'ultra_fast', title: ['极速', 'Ultra-fast'], label: ['极速审查', 'Ultra-fast review'],
-    note: ['像在 AI 对话里上传合同：模型一次通读全文，写出审查意见书和逐条修订稿。不检索法规、不做独立复核。',
+    note: ['像在 AI 对话里上传合同：模型一次通读全文，写出审查意见书和逐条修订稿；需要时自己检索法规原文、计算金额和日期。不做独立复核。',
+      'Like uploading the contract to an AI chat: the model reads it whole in one pass and writes a review memo and clause-by-clause edits, looking up official legal text and working out sums and dates when it needs to. No independent verification.'],
+    plain: ['像在 AI 对话里上传合同：模型一次通读全文，写出审查意见书和逐条修订稿。不检索法规、不做独立复核。',
       'Like uploading the contract to an AI chat: the model reads it whole in one pass and writes a review memo and clause-by-clause edits. No legal research and no independent verification.'] },
   { value: 'fast', title: ['快速', 'Fast'], label: ['快速审查', 'Fast review'],
-    note: ['模型通读全文写出审查，按需检索法规原文，再复读全文自查定稿。不做独立复核。',
+    note: ['模型通读全文写出审查，边审边按需检索法规原文、核对条文和计算，再复读全文自查定稿。不做独立复核。',
+      'The model reads the whole contract and writes its review, looking up official legal text, checking articles and doing the sums as it goes, then re-reads everything to check and finalise. No independent verification.'],
+    plain: ['模型通读全文写出审查，按需检索法规原文，再复读全文自查定稿。不做独立复核。',
       'The model reads the whole contract and writes its review, searches official legal sources where needed, then re-reads everything to check and finalise. No independent verification.'] },
   { value: 'standard', title: ['标准', 'Standard'], label: ['标准审查', 'Standard review'],
     note: ['分组审查与法规检索同时进行，逐项复核后核对各项修改能否同时采用。',
@@ -67,10 +71,12 @@ const TIERS: { value: ReviewTier; title: Pair; label: Pair; note: Pair }[] = [
 ];
 
 /** Tiers the backend offers, in the current language; a backend from before tiers only runs standard and deep reviews. */
-export function availableTiers(caps: { review_tiers?: ReviewTier[] } | null, lang: Lang = currentLang()) {
+export function availableTiers(caps: { review_tiers?: ReviewTier[]; chat_tools?: boolean } | null, lang: Lang = currentLang()) {
   const offered: ReviewTier[] = caps?.review_tiers?.length ? caps.review_tiers : ['standard', 'deep'];
+  // A service that turned tool calling off (or predates it) describes the speed tiers without tools.
+  const tools = caps?.chat_tools === true;
   return TIERS.filter(t => offered.includes(t.value))
-    .map(t => ({ value: t.value, title: pick(...t.title, lang), note: pick(...t.note, lang) }));
+    .map(t => ({ value: t.value, title: pick(...t.title, lang), note: pick(...(tools || !t.plain ? t.note : t.plain), lang) }));
 }
 
 /** “标准审查” / “Standard review”. */

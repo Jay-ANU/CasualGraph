@@ -50,12 +50,16 @@ def running_review():
     return {**review,'status':'running','stage':'多个审查 Agent 正在分别检查合同','findings':[],'created_at':time.time()-95,
             'progress':{'phase':'collaboration','completed':1+step,'total':5},'metrics':{'model_calls':5+2*step},
             'collaboration':{**review['collaboration'],'agents':agents}}
-# A chat-style review (ultra_fast/fast) while the model writes its memo; the test switches it off to finish.
+# A chat-style review (ultra_fast/fast) while the model writes its memo and calls tools; the test switches it off to finish.
 writing={'value':False}
+tool_calls=[{'id':'c1','step':'review','name':'search_law','detail':'民法典 违约金 调整','status':'ok','count':2,'titles':['合成法规'],'sources':['law1']},
+            {'id':'c2','step':'review','name':'calculate','detail':'1000000 * 30%','status':'ok','result':'300000'},
+            {'id':'c3','step':'review','name':'check_revision','detail':'p1','status':'running'}]
 def chat_writing_review():
     return {**{k:v for k,v in review.items() if k!='collaboration'},'status':'running','stage':'正在通读合同并撰写审查意见','findings':[],'decisions':{},'created_at':time.time()-40,
-            'progress':{'phase':'review','completed':0,'total':1},'memo':'',
-            'live':{'step':'review','activity':'writing_memo','memo':'## 一、交易概况与我方位置\n本合同为合成采购合同。','written':860,'reasoning':0,'findings':0}}
+            'progress':{'phase':'review','completed':0,'total':1},'memo':'','tools_offered':True,'tool_calls':tool_calls,
+            'live':{'step':'review','activity':'writing_memo','memo':'## 一、交易概况与我方位置\n本合同为合成采购合同。','written':860,'reasoning':0,'findings':0,
+                    'tools':tool_calls,'tool_count':3}}
 def review_view():
     decisions=review['decisions']
     ids={f['id'] for f in review['findings']}
@@ -76,7 +80,7 @@ def route_api(route):
         data={'allowed':allowed['value'],'plan':allowed['plan'],'required_plan':'max'}
     elif path=='/legal/workspace':data={'matter_id':'m1','org_id':'o1'}
     elif path=='/matters':data={'matters':[{'id':'m1','org_id':'o1','name':'合成测试事项'}]}
-    elif path=='/legal/capabilities':data={'model_gateway':'mixed','model_selection_version':2,'review_tiers':['ultra_fast','fast','standard','deep'],'model_configured':True,'encryption_configured':True,'review_engine_version':2,'followup_questions':True,'collaboration_version':1,'audit_foundation_version':1,'draft_release_version':2,'scenario_catalog':SCENARIOS,'scenario_catalog_version':1,'upload_disclosure':{'version':'original-upload-v1','notice':'合成上传说明：原件先到后端再脱敏。','storage_region':'合成环境'},'law_search':{'provider':'synthetic','notice':'test'}}
+    elif path=='/legal/capabilities':data={'model_gateway':'mixed','model_selection_version':2,'review_tiers':['ultra_fast','fast','standard','deep'],'model_configured':True,'encryption_configured':True,'review_engine_version':2,'followup_questions':True,'collaboration_version':1,'audit_foundation_version':1,'draft_release_version':2,'scenario_catalog':SCENARIOS,'scenario_catalog_version':1,'upload_disclosure':{'version':'original-upload-v1','notice':'合成上传说明：原件先到后端再脱敏。','storage_region':'合成环境'},'law_search':{'provider':'synthetic','notice':'test'},'chat_tools':True,'chat_tools_version':1}
     elif path=='/legal/models':data=model_catalog
     elif path=='/legal/contracts' and method=='GET':data={'contracts':[contract] if any(m=='POST' and p==path for m,p in calls) else []}
     elif path=='/legal/contracts' and method=='POST':
@@ -304,7 +308,7 @@ try:
         expect(tiers.get_by_role('radio')).to_have_count(4)
         expect(page.get_by_role('radio',name='标准审查',exact=True)).to_be_checked()
         consent.check();page.get_by_role('radio',name='极速审查',exact=True).check();expect(consent).not_to_be_checked()
-        expect(page.get_by_text('不检索法规、不做独立复核',exact=False)).to_be_visible()
+        expect(page.get_by_text('需要时自己检索法规原文、计算金额和日期。不做独立复核。',exact=False)).to_be_visible()
         page.get_by_role('radio',name='深度审查',exact=True).check()
         consent.check();page.get_by_label('审查模型').select_option('claude-fixture')
         claude_consent=page.get_by_label('同意将脱敏后的合同文本、审查重点及适用的公司规范提交 Anthropic 官方 API，由所选 Claude 模型分析')
@@ -540,7 +544,10 @@ try:
         # Chat-style reviews: the memo streams in while the model writes, then the finished review opens on it.
         review.clear();review.update(json.loads(json.dumps(saved_review)))
         review.pop('collaboration',None)
-        review.update(review_tier='ultra_fast',engine='chat',memo='## 一、总体评价\n付款安排（p1）对我方不利，签署前必须修改。\n\n## 二、谈判策略\n- 坚持验收后付款。')
+        review.update(review_tier='ultra_fast',engine='chat',memo='## 一、总体评价\n付款安排（p1）对我方不利，签署前必须修改。\n\n## 二、谈判策略\n- 坚持验收后付款。',
+                      tools_offered=True,tool_calls=[{**c,'status':'ok'} for c in tool_calls],research={'status':'tools','issues':[],'rejected_queries':0},
+                      evidence_health={'queried_topics':0,'topics_with_sources':0,'failed_or_empty_topics':0,'source_count':0,'non_authoritative_sources':0,
+                                       'version_pending':0,'status':'not_started','notice':'合成提示'})
         review['profile']['review_tier']='ultra_fast'
         review['decisions']={'f1':{'decision':'draft','text':finding['suggested_text'],'version':1,'source':'model',
                                  'manual_edit_confirmed':False,'legal_basis_confirmed':False}}
@@ -550,6 +557,12 @@ try:
         live_panel=page.get_by_label('模型撰写进度')
         expect(live_panel).to_contain_text('正在撰写审查意见书 · 已写 860 字')
         expect(live_panel).to_contain_text('本合同为合成采购合同。')
+        # The tools the model called, as a chat app lists its searches.
+        tools_list=live_panel.get_by_role('list',name='模型调用的工具')
+        expect(tools_list.locator('li')).to_have_count(3)
+        expect(tools_list.locator('li').nth(0)).to_contain_text('检索法规民法典 违约金 调整取得 2 个官方来源')
+        expect(tools_list.locator('li').nth(1)).to_contain_text('= 300000')
+        expect(tools_list.locator('li').nth(2)).to_contain_text('进行中')
         expect(page.get_by_role('list',name='审查阶段').locator('[aria-current="step"]')).to_have_text('审查拟稿')
         audit_layout(page,'legal-chat-writing')
         page.set_viewport_size({'width':1440,'height':1000})
@@ -561,6 +574,12 @@ try:
         memo.get_by_role('button',name='p1',exact=True).click()
         expect(page.locator('#legal-block-p1')).to_be_in_viewport()
         page.screenshot(path=str(OUT/'legal-chat-memo-tab.png'))
+        page.get_by_role('tab',name='依据').click()
+        used=page.get_by_role('tabpanel').get_by_role('list',name='模型调用的工具')
+        expect(used.locator('li')).to_have_count(3)
+        expect(used.locator('li').nth(2)).to_contain_text('核对修改p1通过')
+        expect(page.get_by_role('tabpanel')).to_contain_text('模型在审查中按需查阅官方法规原文 1 次')
+        audit_layout(page,'legal-chat-tools')
         page.get_by_role('tab',name='批注 1').click()
         expect(page.locator('#legal-finding-f1')).to_be_visible()
         audit_layout(page,'legal-chat-memo')

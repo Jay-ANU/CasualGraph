@@ -223,6 +223,11 @@ export const SERVER_EN: Record<string, string> = {
     'At this depth the model reads the whole contract once and reviews and drafts it directly, without independent verification or legal research. You can edit and export the result.',
   '本档位由模型通读全文、检索法规并复读定稿，未做独立复核；你可以修改并导出。':
     'At this depth the model reads the whole contract, researches the law and re-reads before finalising, without independent verification. You can edit and export the result.',
+  '本档位由模型一次通读全文直接审查和拟稿，审查中按需调用检索和计算等工具，未做独立复核；你可以修改并导出。':
+    'At this depth the model reads the whole contract once and reviews and drafts it directly, calling search, calculation and other tools as it needs them, without independent verification. You can edit and export the result.',
+  '本档位由模型通读全文、按需调用检索等工具并复读定稿，未做独立复核；你可以修改并导出。':
+    'At this depth the model reads the whole contract, calls search and other tools as it needs them and re-reads before finalising, without independent verification. You can edit and export the result.',
+  '模型反复调用工具，没有写出审查结果；已保留检查点，可重试。': 'The model kept calling tools without writing the review. Progress is saved; you can retry.',
   '模型通读了全文，但没有单独报告本项结论；不能据此确认本项没有问题。':
     'The model read the whole contract but did not report on this item separately, so it cannot be taken as clear.',
   '法规检索没有完成；复读定稿未使用官方原文，可重试。': 'Legal research did not finish, so the re-read used no official text. You can retry.',

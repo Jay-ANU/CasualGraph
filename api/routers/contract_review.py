@@ -25,7 +25,7 @@ from legal.transaction_brief import TransactionContext, build_brief
 from legal.law_evidence import evidence_health
 from services import matters
 from legal import contract_documents as documents
-from legal import external_law, review_chat, review_engine as engine, review_store as store
+from legal import external_law, review_chat, review_engine as engine, review_store as store, review_tools
 
 router = APIRouter(prefix='/legal', tags=['contract-review'], dependencies=[Depends(require_legal_max)])
 public_router = APIRouter(prefix='/legal', tags=['contract-review'])
@@ -151,9 +151,10 @@ def _review_view(r: dict, c: dict | None = None):
             'collaboration': p.get('collaboration'), 'metrics': p.get('metrics', {}),
             'summary': p.get('summary', {}), 'progress': p.get('progress'), 'batch_errors': p.get('batch_errors', {}),
             'step_errors': p.get('step_errors', []),
-            # Chat-style tiers: the model's own review memo, and what it is writing while it runs.
+            # Chat-style tiers: the model's own review memo, what it is writing while it runs and the tools it called.
             'engine': p.get('engine'), 'memo': p.get('memo', ''),
             'live': p.get('live') if r['status'] in ('queued', 'running') else None,
+            'tools_offered': bool(p.get('tools_offered')), 'tool_calls': p.get('tool_log', []),
             'review_tier': review_tier(p.get('profile', {})), 'skills': skill_registry.public(p.get('skills')),
             'retrieval': [{'rule_id': k, 'status': s['status'], 'provider': s.get('provider', 'external'), 'warnings': s.get('warnings', []), 'issue': s.get('issue'),
                            'error': next((a['error'] for a in s.get('attempts', []) if a.get('error')), None)}
@@ -206,7 +207,9 @@ def capabilities(user: dict = Depends(get_current_user)):
             'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': draft_release.VERSION, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION,
             'scenario_catalog': scenarios.catalog(), 'upload_disclosure': data_boundary.disclosure(), 'law_search': external_law.provider_status(), 'contract_types': [scene['label'] for scene in scenarios.catalog()['scenarios']],
             'limits': {'max_upload_mb': 10, 'max_characters': documents.MAX_TEXT, 'max_blocks': documents.MAX_BLOCKS},
-            'review_tiers': list(skill_registry.TIERS), 'skills_version': skill_registry.VERSION, 'chat_review_version': 1}
+            'review_tiers': list(skill_registry.TIERS), 'skills_version': skill_registry.VERSION, 'chat_review_version': 1,
+            # Whether the speed tiers offer the model tools, and which version of them.
+            'chat_tools': review_chat.tools_enabled(), 'chat_tools_version': review_tools.VERSION}
 
 
 @router.get('/workspace')

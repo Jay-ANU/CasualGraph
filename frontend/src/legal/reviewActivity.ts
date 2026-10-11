@@ -3,6 +3,7 @@ import { findingTone, tierOf } from './labels';
 import type { Tone } from './labels';
 import { currentLang, pick, type Lang } from '../i18n/core';
 import { plural, serverText } from './i18n';
+import { toolLine } from './toolCalls';
 
 /**
  * Live progress for a running review, derived only from fields the review API
@@ -23,7 +24,10 @@ const PHASE_STEPS: { id: PhaseStep['id']; zh: string; en: string }[] = [
   { id: 'coordination', zh: '汇总复核', en: 'Finalise' },
 ];
 
-/** The speed tiers review in one conversation: ultra-fast answers once; fast reads, researches and re-reads. */
+/**
+ * The speed tiers review in one conversation: ultra-fast answers once; fast reads, then re-reads. When the
+ * model can call tools it researches the law as it reads; otherwise fast researches between the two reads.
+ */
 const CHAT_STEPS: Record<'ultra_fast' | 'fast', { id: PhaseStep['id']; zh: string; en: string }[]> = {
   ultra_fast: [{ id: 'intake', zh: '读取合同', en: 'Read' }, { id: 'review', zh: '审查拟稿', en: 'Review & draft' }],
   fast: [{ id: 'intake', zh: '读取合同', en: 'Read' }, { id: 'review', zh: '通读初审', en: 'First read' },
@@ -36,7 +40,7 @@ export const chatTier = (tier: ReviewTier): tier is 'ultra_fast' | 'fast' => tie
 /** The steps a review actually runs, in the current language. */
 export function phaseSteps(r: Review, lang: Lang = currentLang()): PhaseStep[] {
   const tier = tierOf(r);
-  const steps = chatTier(tier) ? CHAT_STEPS[tier] : PHASE_STEPS;
+  const steps = !chatTier(tier) ? PHASE_STEPS : r.tools_offered ? CHAT_STEPS[tier].filter(s => s.id !== 'retrieval') : CHAT_STEPS[tier];
   return steps.map(s => ({ id: s.id, label: pick(s.zh, s.en, lang) }));
 }
 
@@ -46,6 +50,9 @@ export function liveActivity(live: LiveWriting, lang: Lang = currentLang()): str
   const prefix = live.step === 'final' ? say('复读定稿 · ', 'Re-reading · ') : '';
   switch (live.activity) {
     case 'searching': return say('正在检索法规原文', 'Searching official legal sources');
+    case 'tools': return prefix + (live.tool_count
+      ? say(`正在调用工具 · 本轮已调用 ${live.tool_count} 次`, `Calling tools · ${plural(live.tool_count, 'call')} so far`)
+      : say('正在调用工具', 'Calling tools'));
     case 'fixing': return say('正在修正结构化结果', 'Fixing the structured result');
     case 'merging': return say('正在合并同一段落的修改', 'Merging edits to the same paragraph');
     case 'thinking': return prefix + (live.reasoning
@@ -177,6 +184,11 @@ export function reviewEvents(prev: Review | null, next: Review, lang: Lang = cur
   // Multi-agent stage text only adds a counter while agents work; agent events already say it.
   const counterOnly = Boolean(next.collaboration) && reviewPhase(next) === 'review' && reviewPhase(prev) === 'review';
   if (next.stage && next.stage !== prev.stage && !counterOnly) out.push({ text: serverText(next.stage, lang), tone: 'ink' });
+  // Each tool the model calls, once, as it starts.
+  const called = new Set((prev.live?.tools || []).map(c => c.id));
+  const calls = (next.live?.tools || []).filter(c => !called.has(c.id));
+  for (const c of calls.slice(0, 3)) out.push({ text: toolLine(c, lang), tone: 'ink' });
+  if (calls.length > 3) out.push({ text: say(`另有 ${calls.length - 3} 次工具调用`, plural(calls.length - 3, 'more tool call')), tone: 'ink' });
   const before = new Map((prev.collaboration?.agents || []).map(a => [a.id, a]));
   for (const a of next.collaboration?.agents || []) {
     const b = before.get(a.id);

@@ -3,8 +3,9 @@
 Only ANTHROPIC_API_KEY is used and the API origin is fixed. Model discovery is
 read-only; chat_json makes exactly one request and publishes only a complete JSON
 reply. chat runs one turn of a chat-style review and returns what was written,
-so the caller can continue an answer that stopped at a limit. Retries remain
-visible to the review worker's existing attempt budget.
+so the caller can continue an answer that stopped at a limit, or run the tools
+the model asked for. Retries remain visible to the review worker's existing
+attempt budget.
 """
 from __future__ import annotations
 
@@ -196,16 +197,17 @@ def _finish(reason: object):
         raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
 
 
-def _message(data: dict, strict: bool = True) -> tuple[str, object, int]:
-    """Text, stop reason and reasoning length of a complete (not streamed) message.
+def _message(data: dict, strict: bool = True, tools: bool = False) -> tuple[str, object, int, list[dict]]:
+    """Text, stop reason, reasoning length and tool calls of a complete (not streamed) message.
 
-    Strict, as for a JSON reply, any stop other than the end of the turn is an error.
+    Strict, as for a JSON reply, any stop other than the end of the turn is an error. A tool call
+    is accepted only when tools were offered.
     """
     if data.get('type') != 'message' or data.get('role') != 'assistant' or not isinstance(data.get('content'), list):
         raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
     if strict:
         _finish(data.get('stop_reason'))
-    parts, reasoning = [], 0
+    parts, reasoning, calls = [], 0, []
     for block in data['content']:
         if not isinstance(block, dict):
             raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
@@ -213,12 +215,15 @@ def _message(data: dict, strict: bool = True) -> tuple[str, object, int]:
             parts.append(block['text'])
         elif block.get('type') in ('thinking', 'redacted_thinking'):
             reasoning += len(block['thinking']) if isinstance(block.get('thinking'), str) else 0
+        elif (block.get('type') == 'tool_use' and tools and isinstance(block.get('id'), str) and isinstance(block.get('name'), str)
+              and isinstance(block.get('input'), dict)):
+            calls.append({'id': block['id'], 'name': block['name'], 'arguments': json.dumps(block['input'], ensure_ascii=False)})
         else:
             raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
     content = ''.join(parts)
     if len(content) > MAX_REPLY_CHARACTERS:
         raise ydata.GatewayError('anthropic_response_too_large', 'Anthropic 响应超出限制。', 502)
-    return content, data.get('stop_reason'), reasoning
+    return content, data.get('stop_reason'), reasoning, calls
 
 
 def _reply(data: dict) -> str:
@@ -259,12 +264,13 @@ def _stream_error(chunk: dict, upstream_status: int):
 
 
 def _read_stream(response: httpx.Response, deadline: float, on_delta: ydata.Progress | None = None,
-                 partial: bool = False) -> tuple[str, object, int]:
-    """Text, stop reason and reasoning length of a streamed message, checked event by event.
+                 partial: bool = False, tools: bool = False) -> tuple[str, object, int, list[dict]]:
+    """Text, stop reason, reasoning length and tool calls of a streamed message, checked event by event.
 
     on_delta sees text and reasoning as they arrive, for progress only. With partial, a message cut
     off by a dropped connection or the deadline is returned as far as it got, as if stopped at the
-    output limit, so the conversation can continue from there.
+    output limit, so the conversation can continue from there; a tool call still being written is
+    dropped. Tool calls are accepted only when tools were offered.
     """
     blocks: dict[int, dict] = {}
     reasoning = [0]
@@ -273,27 +279,33 @@ def _read_stream(response: httpx.Response, deadline: float, on_delta: ydata.Prog
         return ''.join(''.join(blocks[index]['parts']) for index in sorted(blocks) if blocks[index]['type'] == 'text')
 
     try:
-        stopped, finish = _read_events(response, deadline, blocks, reasoning, on_delta)
+        stopped, finish = _read_events(response, deadline, blocks, reasoning, on_delta, tools)
     except (StreamDeadline, httpx.HTTPError):
         if partial and written().strip():
-            return written(), 'max_tokens', reasoning[0]
+            return written(), 'max_tokens', reasoning[0], []
         raise
     if not stopped:
         if partial and written().strip():
-            return written(), 'max_tokens', reasoning[0]
+            return written(), 'max_tokens', reasoning[0], []
         # Even syntactically valid JSON is unusable if the native message never completed.
         raise ydata.GatewayError('anthropic_incomplete', INCOMPLETE, 502)
-    return written(), finish, reasoning[0]
+    calls = []
+    for index in sorted(blocks):
+        block = blocks[index]
+        if block['type'] == 'tool_use':
+            calls.append({'id': block['id'], 'name': block['name'],
+                          'arguments': ''.join(block['parts']) or json.dumps(block['input'], ensure_ascii=False)})
+    return written(), finish, reasoning[0], calls
 
 
 def _stream_reply(response: httpx.Response, deadline: float) -> str:
-    content, finish, _ = _read_stream(response, deadline)
+    content, finish, _, _ = _read_stream(response, deadline)
     _finish(finish)
     return content
 
 
 def _read_events(response: httpx.Response, deadline: float, blocks: dict, reasoning: list,
-                 on_delta: ydata.Progress | None) -> tuple[bool, object]:
+                 on_delta: ydata.Progress | None, tools: bool = False) -> tuple[bool, object]:
     known = {'message_start', 'content_block_start', 'content_block_delta', 'content_block_stop',
              'message_delta', 'message_stop', 'error'}
     started, stopped, finish, length = False, False, None, 0
@@ -327,6 +339,12 @@ def _read_events(response: httpx.Response, deadline: float, blocks: dict, reason
                 if index != len(blocks) or not isinstance(block, dict) or any(not existing['closed'] for existing in blocks.values()):
                     raise ValueError('invalid block start')
                 block_type = block.get('type')
+                if block_type == 'tool_use' and tools:
+                    if not isinstance(block.get('id'), str) or not isinstance(block.get('name'), str) or not isinstance(block.get('input', {}), dict):
+                        raise ValueError('invalid tool call')
+                    blocks[index] = {'type': block_type, 'id': block['id'], 'name': block['name'], 'input': block.get('input', {}),
+                                     'parts': [], 'closed': False}
+                    continue
                 if block_type not in ('text', 'thinking', 'redacted_thinking'):
                     raise ValueError('unexpected tool or content')
                 initial = block.get('text', '') if block_type == 'text' else ''
@@ -352,6 +370,12 @@ def _read_events(response: httpx.Response, deadline: float, blocks: dict, reason
                         length += len(piece)
                         if on_delta and piece:
                             on_delta(piece, 0)
+                    elif delta.get('type') == 'input_json_delta':
+                        piece = delta.get('partial_json')
+                        if block['type'] != 'tool_use' or not isinstance(piece, str):
+                            raise ValueError('invalid tool input delta')
+                        block['parts'].append(piece)
+                        length += len(piece)
                     elif delta.get('type') == 'thinking_delta' and isinstance(delta.get('thinking'), str):
                         # Reasoning is counted for progress; it is never part of the answer.
                         reasoning[0] += len(delta['thinking'])
@@ -412,28 +436,71 @@ def chat_json(system: str, payload: dict, model: dict, *, client: httpx.Client |
             owned.close()
 
 
+def _blocks(content) -> list[dict]:
+    if isinstance(content, list):
+        return content
+    return [{'type': 'text', 'text': content}] if content else []
+
+
+def _arguments(value) -> dict:
+    try:
+        parsed = json.loads(value) if isinstance(value, str) and value.strip() else {}
+    except ValueError:
+        parsed = {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _conversation(messages: list[dict]) -> tuple[str, list[dict]]:
-    """OpenAI-style messages as Anthropic's system prompt and alternating user and assistant turns."""
+    """OpenAI-style messages as Anthropic's system prompt and alternating user and assistant turns.
+
+    An assistant message that asked for tools becomes tool_use blocks, and each tool message a
+    tool_result block in the user turn that follows.
+    """
     system = '\n\n'.join(m['content'] for m in messages if m.get('role') == 'system' and isinstance(m.get('content'), str))
     turns: list[dict] = []
-    for m in messages:
-        if m.get('role') not in ('user', 'assistant') or not isinstance(m.get('content'), str):
-            continue
-        if turns and turns[-1]['role'] == m['role']:
-            turns[-1]['content'] += '\n\n' + m['content']
+
+    def add(role: str, content) -> None:
+        if turns and turns[-1]['role'] == role:
+            last = turns[-1]['content']
+            turns[-1]['content'] = (last + '\n\n' + content if isinstance(last, str) and isinstance(content, str)
+                                    else _blocks(last) + _blocks(content))
         else:
-            turns.append({'role': m['role'], 'content': m['content']})
+            turns.append({'role': role, 'content': content})
+
+    for m in messages:
+        role = m.get('role')
+        if role == 'tool':
+            add('user', [{'type': 'tool_result', 'tool_use_id': str(m.get('tool_call_id') or ''),
+                          'content': m['content'] if isinstance(m.get('content'), str) else ''}])
+        elif role == 'assistant' and m.get('tool_calls'):
+            text = m.get('content') if isinstance(m.get('content'), str) and m['content'].strip() else ''
+            add('assistant', _blocks(text) + [{'type': 'tool_use', 'id': str(call.get('id') or ''), 'name': str((call.get('function') or {}).get('name') or ''),
+                                                'input': _arguments((call.get('function') or {}).get('arguments'))}
+                                               for call in m['tool_calls'] if isinstance(call, dict)])
+        elif role in ('user', 'assistant') and isinstance(m.get('content'), str):
+            add(role, m['content'])
     if not turns or turns[0]['role'] != 'user' or turns[-1]['role'] != 'user':
         raise ydata.GatewayError('legal_conversation_invalid', '审查对话格式无效，未发送请求。', 500)
     return system, turns
 
 
+def _cached(turn: dict) -> dict:
+    """The turn with a prompt-cache breakpoint at its end."""
+    blocks = [dict(block) for block in _blocks(turn['content'])]
+    if blocks:
+        blocks[-1]['cache_control'] = {'type': 'ephemeral'}
+    return {**turn, 'content': blocks}
+
+
 def chat(messages: list[dict], model: dict, *, max_tokens: int | None = None, on_delta: ydata.Progress | None = None,
-         client: httpx.Client | None = None) -> dict:
+         client: httpx.Client | None = None, tools: list[dict] | None = None) -> dict:
     """One turn of a chat-style review, returned as Claude wrote it.
 
     An answer stopped at the output limit, or cut off by the deadline or a dropped connection, is
-    returned with finish="length" so the caller can ask Claude to continue. A refusal, a full
+    returned with finish="length" so the caller can ask Claude to continue. With tools
+    (OpenAI-style function definitions) Claude may ask for them instead: finish="tool_calls" with
+    tool_calls [{id, name, arguments}]. Each request of such a conversation repeats the contract,
+    so the contract and the latest turn are marked for Anthropic's prompt cache. A refusal, a full
     context window or any other stop is an error, as in chat_json.
     """
     if model.get('provider') != 'anthropic' or not isinstance(model.get('id'), str) or not _ID.fullmatch(model['id']):
@@ -443,6 +510,10 @@ def chat(messages: list[dict], model: dict, *, max_tokens: int | None = None, on
     stream = os.getenv('LEGAL_ANTHROPIC_STREAM', '1').strip().lower() not in ('0', 'false', 'no', 'off')
     request = {'model': model['id'], 'max_tokens': _output_tokens(model, max_tokens), 'stream': stream, 'messages': turns,
                **({'system': system} if system else {})}
+    if tools:
+        request['tools'] = [{'name': f['function']['name'], 'description': f['function'].get('description', ''),
+                             'input_schema': f['function'].get('parameters') or {'type': 'object', 'properties': {}}} for f in tools]
+        request['messages'] = [_cached(turn) if i in (0, len(turns) - 1) else turn for i, turn in enumerate(turns)]
     started = time.monotonic()
     owned = _client(CHAT_IDLE_SECONDS) if client is None else None
     active = client if client is not None else owned
@@ -452,19 +523,24 @@ def chat(messages: list[dict], model: dict, *, max_tokens: int | None = None, on
             if not response.is_success:
                 raise _status_error(response.status_code, response.headers.get('retry-after'))
             if 'text/event-stream' in response.headers.get('content-type', '').lower():
-                content, finish, reasoning = _read_stream(response, started + CHAT_STREAM_SECONDS, on_delta, partial=True)
+                content, finish, reasoning, calls = _read_stream(response, started + CHAT_STREAM_SECONDS, on_delta, partial=True, tools=bool(tools))
             else:
-                content, finish, reasoning = _message(_read_json(response), strict=False)
+                content, finish, reasoning, calls = _message(_read_json(response), strict=False, tools=bool(tools))
                 if on_delta and (content or reasoning):
                     on_delta(content, reasoning)
         if finish == 'max_tokens':
             state = 'length'
+        elif finish == 'tool_use' and calls:
+            state = 'tool_calls'
         elif finish in ('end_turn', 'stop_sequence'):
             state = 'stop'
         else:
             _finish(finish)
             state = 'stop'
-        return {'content': content, 'finish': state, 'reasoning_chars': reasoning, 'model': model['id']}
+        result = {'content': content, 'finish': state, 'reasoning_chars': reasoning, 'model': model['id']}
+        if state == 'tool_calls':
+            result['tool_calls'] = calls
+        return result
     except ydata.GatewayError as exc:
         log.warning('anthropic chat failed: model=%s code=%s upstream=%s seconds=%.1f', model['id'], exc.code,
                     exc.upstream_status, time.monotonic() - started)

@@ -391,6 +391,7 @@ def test_api_review_tiers_and_skill_snapshot(db, monkeypatch):
     quick = client.post(f'/legal/contracts/{cid}/reviews', json={**base, 'review_tier': 'ultra_fast'}).json()
     assert quick['review_tier'] == 'ultra_fast' and quick['profile']['review_mode'] == 'standard'
     assert quick['engine'] == 'chat' and quick['memo'] == '' and quick['live'] is None and caps['chat_review_version'] == 1
+    assert quick['tool_calls'] == [] and caps['chat_tools'] is True and caps['chat_tools_version'] == 1
     ids = [s['id'] for s in quick['skills']]
     assert ids[0] == 'review-method' and {'ai-services', 'personal-information'} <= set(ids)
     assert all('guidance' not in s and s['reason'] for s in quick['skills'])

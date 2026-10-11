@@ -4,7 +4,8 @@ import { pendingDecisions } from './deskLogic';
 import { sourceKindLabel } from './sourceLabels';
 import { coverageStatusLabel, failedSteps, kindLabel, reviewOutcome, tierLabel, tierOf } from './labels';
 import { currentLang, pick, tr, type Lang } from '../i18n/core';
-import { labelOf, serverText, type Pair } from './i18n';
+import { labelOf, plural, serverText, type Pair } from './i18n';
+import { legalLookups, toolAction, toolGroups, toolOutcome } from './toolCalls';
 
 const STATUS: Record<string, Pair> = {
   completed: ['已完成', 'Finished'], partial: ['部分完成', 'Partly finished'], running: ['进行中', 'In progress'], queued: ['排队中', 'Queued'],
@@ -64,10 +65,26 @@ export function ReviewReport(review: Review, lang: Lang = currentLang()): string
   if (review.research?.status === 'skipped') out.push('', say('## 法律检索', '## Legal research'), review.research.reason === 'not_configured'
     ? say('未配置法规检索服务，本轮没有检索；法律意见引用的法条为模型引用，待核对。', 'No legal search service was configured, so nothing was searched; laws cited in legal findings are model-cited and still need checking.')
     : say('本档位不检索法规；法律意见引用的法条为模型引用，待核对。', 'This depth does not research the law; laws cited in legal findings are model-cited and still need checking.'));
-  else if (review.evidence_health) {
+  else if (review.research?.status === 'tools') {
+    const lookups = legalLookups(review);
+    out.push('', say('## 法律检索', '## Legal research'), say(`模型在审查中按需查阅官方法规原文 ${lookups} 次，取得 ${review.sources.length} 个来源；没有取得原文的法条为模型引用，待核对。`,
+      `The model looked up official legal text ${plural(lookups, 'time')} as it reviewed and obtained ${plural(review.sources.length, 'source')}; laws without official text are model-cited and still need checking.`));
+  } else if (review.evidence_health) {
     const h = review.evidence_health;
     out.push('', say('## 法律检索', '## Legal research'), say(`取得来源：${h.topics_with_sources}/${h.queried_topics} 项；版本待核验：${h.version_pending} 个来源。`,
       `Sources found: ${h.topics_with_sources}/${h.queried_topics}; version to verify: ${h.version_pending} ${h.version_pending === 1 ? 'source' : 'sources'}.`), serverText(h.notice, lang));
+  }
+  const groups = toolGroups(review, lang);
+  if (groups.length) {
+    out.push('', say('## 模型调用的工具', '## Tools the model called'),
+      say('工具由本服务执行：法规检索只发送法规名称和通用法律概念，其他工具不离开本服务。', 'This service ran the tools: legal searches send only statute names and general legal terms, and the other tools never leave the service.'));
+    for (const group of groups) {
+      if (group.label) out.push('', `### ${group.label}`);
+      out.push('', ...group.calls.map(call => {
+        const outcome = toolOutcome(call, lang).text;
+        return `- ${toolAction(call, lang)}${call.detail ? say('：', ': ') + escaped(call.detail) : ''}${say(`（${outcome}）`, ` (${outcome})`)}`;
+      }));
+    }
   }
   out.push('', say('## 审查意见', '## Findings'));
   for (const [index, f] of review.findings.entries()) {

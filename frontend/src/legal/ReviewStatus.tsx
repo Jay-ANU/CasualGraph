@@ -8,6 +8,7 @@ import type { Agent } from './reviewActivity';
 import { useLiveReview, useNow } from './useLive';
 import { DrawnCheck, ProgressRing, Spinner } from './ui';
 import { MemoText } from './ReviewMemo';
+import { ToolList } from './ToolList';
 import { ic } from './icon';
 import { useI18n } from '../i18n/core';
 import { plural, serverText } from './i18n';
@@ -50,7 +51,7 @@ function AgentRow({ agent }: { agent: Agent }) {
 
 /**
  * A chat-style review shows what the model is writing as it writes it: the review memo,
- * kept scrolled to its newest line, or what the model is doing before any text arrives.
+ * kept scrolled to its newest line, the tools it calls, or what it is doing before any text arrives.
  */
 function LiveWriting({ review }: { review: Review }) {
   const { tx } = useI18n();
@@ -62,10 +63,17 @@ function LiveWriting({ review }: { review: Review }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [memo]);
   if (!live) return null;
+  const calls = live.tools || [];
+  const earlier = Math.max(0, (live.tool_count || 0) - calls.length);
   return <section className="lv-writing" aria-label={tx('模型撰写进度', 'What the model is writing')}>
     <div className="lv-activity-head"><h3>{liveActivity(live)}</h3></div>
+    {calls.length > 0 && <>
+      {earlier > 0 && <p className="lv-hint">{tx(`另有 ${earlier} 次较早的工具调用`, `${plural(earlier, 'earlier tool call')} not shown`)}</p>}
+      <ToolList calls={calls} label={tx('模型调用的工具', 'Tools the model called')} />
+    </>}
     {memo ? <div ref={box} className="lv-writing-box lv-memo-text" lang="zh-CN" aria-live="off"><MemoText text={memo} /></div>
       : <p className="lv-writing-wait"><Spinner />{live.step === 'research' ? tx('正在检索法规原文，完成后复读全文定稿。', 'Searching official legal sources; the model then re-reads the contract to finalise.')
+        : live.activity === 'tools' ? tx('模型正在调用工具，结果会交回模型继续审查。', 'The model is calling tools; the results go back to it as it reviews.')
         : tx('模型正在通读整份合同，审查意见书会在这里逐字出现。', 'The model is reading the whole contract; its review memo will appear here as it writes.')}</p>}
   </section>;
 }
@@ -93,8 +101,9 @@ export function ReviewProgress({ review, canCancel, busy, onCancel }: {
         <ProgressRing percent={live.percent} paused={queued} />
         <div className="lv-live-title">
           <h2>{queued ? tx('排队中', 'Queued') : tx('审查中', 'Reviewing')}</h2>
-          <p>{tierLabel(tierOf(review))}{chatTier(tierOf(review)) ? tx(' · 模型通读全文，写出完整审查和修订稿', ' · the model reads the whole contract and writes the full review and draft')
-            : tx(' · 发现的意见会直接标在正文上', ' · findings are marked on the text as they come in')}</p>
+          <p>{tierLabel(tierOf(review))}{!chatTier(tierOf(review)) ? tx(' · 发现的意见会直接标在正文上', ' · findings are marked on the text as they come in')
+            : review.tools_offered ? tx(' · 模型通读全文，按需调用工具，写出完整审查和修订稿', ' · the model reads the whole contract, calls tools as it needs them and writes the full review and draft')
+            : tx(' · 模型通读全文，写出完整审查和修订稿', ' · the model reads the whole contract and writes the full review and draft')}</p>
         </div>
         <Clock createdAt={review.created_at} percent={live.percent} />
       </div>

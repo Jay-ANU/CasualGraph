@@ -475,8 +475,58 @@ def _events(response: httpx.Response, deadline: float):
         yield buffer[5:].strip().decode('utf-8')
 
 
-def _reply(data: dict) -> tuple[str, str | None, int]:
-    """Text, finish reason and reasoning length of an ordinary (not streamed) completion."""
+class _Calls:
+    """Tool calls assembled from a stream, where each call's arguments arrive in pieces."""
+
+    def __init__(self):
+        self.slots: dict[int, dict] = {}
+
+    def add(self, pieces) -> int:
+        """Add one chunk's tool-call pieces; returns the characters of arguments received."""
+        size = 0
+        for piece in pieces if isinstance(pieces, list) else []:
+            if not isinstance(piece, dict):
+                continue
+            function = piece.get('function') if isinstance(piece.get('function'), dict) else {}
+            ident = piece.get('id') if isinstance(piece.get('id'), str) else ''
+            index = piece.get('index')
+            if type(index) is not int:
+                # Without an index, a piece with a new id or name starts a call; anything else continues the last one.
+                index = next((k for k, slot in self.slots.items() if ident and slot['id'] == ident), None)
+                if index is None:
+                    index = max(self.slots) if self.slots and not ident and not function.get('name') else max(self.slots, default=-1) + 1
+            slot = self.slots.setdefault(index, {'id': '', 'name': '', 'arguments': []})
+            slot['id'] = ident or slot['id']
+            if isinstance(function.get('name'), str) and function['name']:
+                slot['name'] = function['name']
+            arguments = function.get('arguments')
+            if isinstance(arguments, str):
+                slot['arguments'].append(arguments)
+                size += len(arguments)
+            elif isinstance(arguments, dict):
+                slot['arguments'] = [json.dumps(arguments, ensure_ascii=False)]
+        return size
+
+    def result(self) -> list[dict]:
+        return [{'id': slot['id'] or 'call_' + os.urandom(6).hex(), 'name': slot['name'], 'arguments': ''.join(slot['arguments']) or '{}'}
+                for _, slot in sorted(self.slots.items()) if slot['name']]
+
+
+def _turn(content: str = '', finish: str | None = None, thinking: int = 0, reasoning: str = '', calls: list | None = None) -> dict:
+    """What one completion returned: text, finish reason, reasoning (its length, and the text) and tool calls."""
+    return {'content': content, 'finish': finish, 'thinking': thinking, 'reasoning': reasoning, 'tool_calls': calls or []}
+
+
+def _reasoning(message: dict) -> str:
+    """The model's reasoning text, which some models need back while they are calling tools."""
+    for k in ('reasoning_content', 'reasoning'):
+        if isinstance(message.get(k), str):
+            return message[k]
+    return ''
+
+
+def _reply(data: dict) -> dict:
+    """An ordinary (not streamed) completion."""
     try:
         choice = data['choices'][0]
         finish = choice.get('finish_reason')
@@ -484,10 +534,12 @@ def _reply(data: dict) -> tuple[str, str | None, int]:
     except (KeyError, IndexError, TypeError, AttributeError):
         raise GatewayError('ydata_invalid_json', INCOMPLETE, 502) from None
     if not isinstance(message, dict):
-        return '', finish, 0
+        return _turn(finish=finish)
     content = message.get('content')
     thinking = sum(len(message[k]) for k in ('reasoning_content', 'reasoning') if isinstance(message.get(k), str))
-    return content if isinstance(content, str) else '', finish, thinking
+    calls = _Calls()
+    calls.add(message.get('tool_calls'))
+    return _turn(content if isinstance(content, str) else '', finish, thinking, _reasoning(message), calls.result())
 
 
 # Called with each piece of answer text and each length of reasoning as they arrive.
@@ -495,14 +547,17 @@ Progress = Callable[[str, int], None]
 
 
 def _stream_reply(client: httpx.Client, key: str, request: dict, on_delta: Progress | None = None,
-                  seconds: float = STREAM_SECONDS, partial: bool = False) -> tuple[str, str | None, int]:
+                  seconds: float = STREAM_SECONDS, partial: bool = False) -> dict:
     """A completion read while it is written. Bytes keep arriving as the model works, so a long
     structured answer is not cut off by an idle timeout on the way; it is used only once complete.
     on_delta sees the text as it arrives, for progress only. With partial, a reply still running
     when time is up, or cut off by a dropped connection, is returned as far as it got and marked
-    like one stopped at the output limit, so the conversation can continue from there."""
+    like one stopped at the output limit, so the conversation can continue from there; a tool call
+    still being written then is dropped."""
     deadline = time.monotonic() + seconds
     text: list[str] = []
+    reasoning: list[str] = []
+    calls = _Calls()
     thinking = 0
     try:
         with client.stream('POST', BASE_URL + '/chat/completions', headers=_headers(key, 'text/event-stream'),
@@ -538,6 +593,9 @@ def _stream_reply(client: httpx.Client, key: str, request: dict, on_delta: Progr
                         # Reasoning is streamed beside the answer by some models; it is never part of it.
                         reasoned = sum(len(delta[k]) for k in ('reasoning_content', 'reasoning') if isinstance(delta.get(k), str))
                         thinking += reasoned
+                        if reasoned:
+                            reasoning.append(_reasoning(delta))
+                        length += calls.add(delta.get('tool_calls'))
                         if on_delta and (piece or reasoned):
                             on_delta(piece, reasoned)
                     finish = choice.get('finish_reason') or finish
@@ -545,23 +603,23 @@ def _stream_reply(client: httpx.Client, key: str, request: dict, on_delta: Progr
                     raise GatewayError('ydata_response_too_large', 'YData 响应超出限制。', 502)
     except StreamDeadline:
         if partial and ''.join(text).strip():
-            return ''.join(text), 'length', thinking
+            return _turn(''.join(text), 'length', thinking)
         raise
     except GatewayError:
         raise
     except (httpx.HTTPError, ValueError, UnicodeError):
         if partial and ''.join(text).strip():
-            return ''.join(text), 'length', thinking
+            return _turn(''.join(text), 'length', thinking)
         raise GatewayError('ydata_unavailable', UNAVAILABLE, 502) from None
     if finish is None and not done:
         if partial and ''.join(text).strip():
-            return ''.join(text), 'length', thinking
+            return _turn(''.join(text), 'length', thinking)
         raise GatewayError('ydata_unavailable', 'YData 连接在模型输出完成前中断；未发布不完整结论，可重试。', 502)
-    return ''.join(text), finish or 'stop', thinking
+    return _turn(''.join(text), finish or 'stop', thinking, ''.join(reasoning), calls.result())
 
 
 def _complete(client: httpx.Client, key: str, request: dict, on_delta: Progress | None = None,
-              seconds: float = STREAM_SECONDS, partial: bool = False) -> tuple[str, str | None, int]:
+              seconds: float = STREAM_SECONDS, partial: bool = False) -> dict:
     if _streaming():
         try:
             return _stream_reply(client, key, request, on_delta, seconds, partial)
@@ -569,10 +627,10 @@ def _complete(client: httpx.Client, key: str, request: dict, on_delta: Progress 
             # A route that refuses a streamed request may still answer an ordinary one.
             if exc.code != 'ydata_request_failed' or not 400 <= (exc.upstream_status or 0) < 500:
                 raise
-    content, finish, thinking = _reply(_request(client, 'POST', '/chat/completions', key, json={**request, 'stream': False}))
-    if on_delta and (content or thinking):
-        on_delta(content, thinking)
-    return content, finish, thinking
+    turn = _reply(_request(client, 'POST', '/chat/completions', key, json={**request, 'stream': False}))
+    if on_delta and (turn['content'] or turn['thinking']):
+        on_delta(turn['content'], turn['thinking'])
+    return turn
 
 
 def _prepare(selection: dict, client: httpx.Client | None) -> dict:
@@ -587,8 +645,8 @@ def _prepare(selection: dict, client: httpx.Client | None) -> dict:
 
 
 def _exchange(model: dict, key: str, messages: list[dict], tokens: int | None, on_delta: Progress | None,
-              client: httpx.Client | None, chat: bool = False) -> tuple[str, str | None, int]:
-    request = {'model': model['id'], 'messages': messages, **_token_budget(model['id'], tokens)}
+              client: httpx.Client | None, chat: bool = False, tools: list[dict] | None = None) -> dict:
+    request = {'model': model['id'], 'messages': messages, **_token_budget(model['id'], tokens), **({'tools': tools} if tools else {})}
     seconds = CHAT_STREAM_SECONDS if chat else STREAM_SECONDS
     if client is None:
         with (_client(CHAT_IDLE_SECONDS) if chat else _client()) as owned:
@@ -603,29 +661,40 @@ def _failed(model_id: str, exc: GatewayError, started: float) -> None:
 
 
 def chat(messages: list[dict], selection: dict, *, max_tokens: int | None = None, on_delta: Progress | None = None,
-         client: httpx.Client | None = None) -> dict:
+         client: httpx.Client | None = None, tools: list[dict] | None = None) -> dict:
     """One turn of a conversation, returned as the model wrote it.
 
     Unlike chat_json, an answer stopped at the output limit, or still being written when its time
     is up, is returned with finish="length" so the caller can ask the model to continue, the way a
-    chat app does. Claude goes to Anthropic's official API. Messages are sent as given; contract
-    text in them must already be redacted.
+    chat app does. With tools (OpenAI-style function definitions) the model may instead ask for
+    them: finish="tool_calls", with tool_calls [{id, name, arguments}] and, when the model reasons
+    aloud, its reasoning, which some models need back in the conversation. Claude goes to
+    Anthropic's official API. Messages are sent as given; contract text in them must already be
+    redacted.
     """
     model = _prepare(selection, client)
     if model['provider'] == 'anthropic':
         from legal import anthropic_gateway
-        return anthropic_gateway.chat(messages, model, max_tokens=max_tokens, on_delta=on_delta, client=client)
+        return anthropic_gateway.chat(messages, model, max_tokens=max_tokens, on_delta=on_delta, client=client, tools=tools)
     key = _key_for_family(model['family'])
     started = time.monotonic()
     try:
-        content, finish, thinking = _exchange(model, key, messages, max_tokens, on_delta, client, chat=True)
+        turn = _exchange(model, key, messages, max_tokens, on_delta, client, chat=True, tools=tools)
+        finish, calls = turn['finish'], turn['tool_calls'] if tools else []
         if finish in ('length', 'max_tokens'):
             finish = 'length'
+        elif calls and finish in ('tool_calls', 'function_call', 'stop', 'end_turn', None):
+            finish = 'tool_calls'
         elif finish in ('stop', 'end_turn', None):
             finish = 'stop'
         else:
             raise GatewayError('ydata_incomplete', '模型没有正常完成回答；未发布不完整结论，可重试或换用其他模型。', 502)
-        return {'content': content, 'finish': finish, 'reasoning_chars': thinking, 'model': model['id']}
+        result = {'content': turn['content'], 'finish': finish, 'reasoning_chars': turn['thinking'], 'model': model['id']}
+        if finish == 'tool_calls':
+            result['tool_calls'] = calls
+        if tools and turn['reasoning']:
+            result['reasoning'] = turn['reasoning']
+        return result
     except GatewayError as exc:
         _failed(model['id'], exc, started)
         raise
@@ -642,7 +711,8 @@ def chat_json(system: str, payload: dict, selection: dict, *, client: httpx.Clie
     # response_format/temperature/thinking option on every gateway model family.
     started = time.monotonic()
     try:
-        content, finish, thinking = _exchange(model, key, messages, None, None, client)
+        turn = _exchange(model, key, messages, None, None, client)
+        content, finish, thinking = turn['content'], turn['finish'], turn['thinking']
         if finish in ('length', 'max_tokens'):
             if thinking > len(content):
                 raise GatewayError('ydata_truncated', '模型推理占用了大部分输出上限，结构化结果被截断；未发布不完整结论，可重试或换用其他模型。', 502)
