@@ -8,3 +8,5 @@ ruff
 reportlab>=4.0
 # Browser smoke test (scripts/research_ui_smoke.py). Never run `playwright install` in the cloud container.
 playwright==1.58.0
+# Validate the optional worker's serialized SDK contract without OCR/ML weights.
+docling-core==2.98.0

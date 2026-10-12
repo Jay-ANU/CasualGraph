@@ -108,6 +108,16 @@ const RULES: Rule[] = [
     `The finding mentions ${m[1]}, which is not in the contract, the attached sources or the cited laws. Check before adopting it.`],
   [/^第 (\d+) 页未提取到文字，可能为扫描页；请提供可复制文字的 PDF 或 DOCX。$/, m =>
     `No text was found on page ${m[1]}; it may be a scan. Provide a PDF with selectable text, or a DOCX.`],
+  [/^第 (\d+) 页存在可能的无边框表格；文字已保留，行列对应关系需要对照原页检查。$/, m =>
+    `Page ${m[1]} may contain a borderless table. Text is retained; check row and column relationships against the original page.`],
+  [/^第 (\d+) 页部分内容超出本地解析资源上限；已保留原页供检查。$/, m =>
+    `Some content on page ${m[1]} exceeds the local parsing limit. The original page is retained for checking.`],
+  [/^第 (\d+) 页本地结构解析未完成；已保留原页。$/, m =>
+    `Local structure parsing did not finish for page ${m[1]}. The original page is retained.`],
+  [/^第 (\d+) 页图片较多，部分图片请在原件中检查。$/, m =>
+    `Page ${m[1]} has many images. Check the remaining images in the original.`],
+  [/^第 (\d+) 页尚无可审查文字，已保留原页，等待 OCR 或人工核对。$/, m =>
+    `Page ${m[1]} has no reviewable text yet. The original page is retained for OCR or manual checking.`],
   [/^模型的结构化结果多次无法读取（(.+)），可重试。$/s, () => 'The model’s structured result could not be read after several attempts. You can retry.'],
   [/^(\d+) 条模型意见格式不完整，未能采用；可新建审查重新生成。$/, m =>
     `${plural(Number(m[1]), 'model finding was', 'model findings were')} incomplete and could not be used; start a new review to generate ${m[1] === '1' ? 'it' : 'them'} again.`],

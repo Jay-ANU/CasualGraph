@@ -1,0 +1,7 @@
+# Worker only. Do not add these ML dependencies to the Fly API image.
+docling==2.137.0
+docling-core==2.98.0
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+pypdf>=6.10,<7
+Pillow>=11,<13

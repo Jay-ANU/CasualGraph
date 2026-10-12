@@ -1,75 +1,61 @@
-"""Local-only contract parsing, deterministic redaction and anchored Word revisions."""
+"""Source-preserving contract parsing, local redaction and anchored revisions."""
 from __future__ import annotations
 
 import hashlib
-import io
 import re
+import time
 from pathlib import Path
 from typing import Any
 
-from legal.docx_redlines import open_package as _docx_parts, paragraph_text, redline_docx
+from legal.docx_redlines import redline_docx
 
 MAX_UPLOAD = 10 * 1024 * 1024
 MAX_TEXT = 60000
 MAX_BLOCKS = 500
-W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-NS = {'w': W}
-
-
-
 
 def parse_contract(data: bytes, filename: str) -> dict[str, Any]:
     if not data or len(data) > MAX_UPLOAD:
         raise ValueError('请上传不超过 10 MB 的非空文件。')
+    started = time.monotonic()
     ext = Path(filename).suffix.lower()
-    blocks: list[dict[str, Any]] = []
-    warnings: list[str] = []
     if ext == '.docx':
-        archive, root = _docx_parts(data)
-        try:
-            for index, p in enumerate(root.xpath('//w:body//w:p[not(ancestor::w:txbxContent)]', namespaces=NS)):
-                text = paragraph_text(p).strip()
-                if text:
-                    blocks.append({'id': f'p{index + 1}', 'text': text, 'anchor': index, 'page': None})
-            if root.xpath('//w:drawing|//w:pict|//w:object', namespaces=NS):
-                warnings.append('图片、文本框和嵌入对象未纳入文字审查；需要人工检查。')
-            if any(re.match(r'word/(header|footer|footnotes|endnotes|comments)', n) for n in archive.namelist()):
-                warnings.append('页眉页脚、脚注、尾注和既有批注未纳入本轮审查。')
-        finally:
-            archive.close()
+        from legal.docx_structure import parse_docx
+        from legal.document_enrichment import enrich_docx_images
+        result = parse_docx(data)
+        enrich_docx_images(result, data)
     elif ext == '.pdf':
-        from pypdf import PdfReader
-        reader = PdfReader(io.BytesIO(data))
-        if reader.is_encrypted:
-            raise ValueError('请先移除 PDF 密码保护。')
-        if len(reader.pages) > 100:
-            raise ValueError('首版最多接收 100 页 PDF，请按合同拆分。')
-        for page_no, page in enumerate(reader.pages, 1):
-            text = (page.extract_text() or '').strip()
-            if not text:
-                raise ValueError(f'第 {page_no} 页未提取到文字，可能为扫描页；请提供可复制文字的 PDF 或 DOCX。')
-            for value in re.split(r'\n\s*\n|(?=第[一二三四五六七八九十百零\d]+条)', text):
-                if value.strip():
-                    blocks.append({'id': f'p{len(blocks) + 1}', 'text': value.strip(), 'anchor': None, 'page': page_no})
-        warnings.append('PDF 表格阅读顺序和图片内容需人工复核；仅支持审查报告及文字修改稿，不回写 PDF。')
+        from legal.pdf_structure import parse_pdf
+        result = parse_pdf(data)
     elif ext == '.txt':
         try:
             text = data.decode('utf-8-sig')
         except UnicodeDecodeError as exc:
             raise ValueError('TXT 需要 UTF-8 编码。') from exc
-        for line in text.splitlines():
-            if line.strip():
-                blocks.append({'id': f'p{len(blocks) + 1}', 'text': line.strip(), 'anchor': None, 'page': None})
+        blocks = [{'id': f'p{i + 1}', 'text': line.strip(), 'anchor': None, 'page': None, 'kind': 'paragraph'}
+                  for i, line in enumerate(line for line in text.splitlines() if line.strip())]
+        result = {'blocks': blocks, 'warnings': [], 'assets': [],
+                  'document': {'version': 1, 'source': 'txt', 'body': [
+                      {'type': 'paragraph', 'id': 'node-' + b['id'], 'block_id': b['id']} for b in blocks],
+                      'pages': [], 'issues': []}}
     else:
-        raise ValueError('仅支持 DOCX、可复制文字的 PDF 和 UTF-8 TXT。')
-    if any(re.search(r'【(?:补充)?脱敏\d+】', b['text']) for b in blocks):
+        raise ValueError('仅支持 DOCX、PDF 和 UTF-8 TXT。')
+    blocks = result['blocks']
+    if any(re.search(r'【(?:补充)?脱敏\d+】', b['text'] + b.get('label', '')) for b in blocks):
         raise ValueError('原件包含系统保留的脱敏代称，请使用原始审查副本。')
-    if not blocks:
-        raise ValueError('没有提取到可审查正文。')
-    if len(blocks) > MAX_BLOCKS or sum(len(b['text']) for b in blocks) > MAX_TEXT:
-        raise ValueError('首版每份合同最多 6 万字、500 个正文段落；请拆分后审查，系统不会静默截断。')
-    return {'blocks': blocks, 'format': ext[1:], 'warnings': warnings,
-            'content_hash': hashlib.sha256(data).hexdigest()}
+    if len({block['id'] for block in blocks}) != len(blocks):
+        raise ValueError('文件包含重复文字定位，请重新导出原件后上传。')
+    # Keep scans viewable when OCR is unavailable. Creating a review requires
+    # actual text, so a failed recognizer cannot invent successful coverage.
+    if not blocks and not result.get('assets') and not result.get('document', {}).get('pages'):
+        raise ValueError('没有提取到可审查正文或可查看的图片。')
+    if len(blocks) > MAX_BLOCKS or sum(len(b['text']) + len(b.get('label', '')) for b in blocks) > MAX_TEXT:
+        raise ValueError('每份合同最多 6 万字、500 个文字块（包括单元格和识别文字）；请拆分后审查，系统不会静默截断。')
+    issues = result.get('document', {}).get('issues', [])
+    result.update(format=ext[1:], content_hash=hashlib.sha256(data).hexdigest(),
+                  parsing_status='needs_ocr' if not blocks else 'partial' if issues else 'ready',
+                  parsing_metrics={'elapsed_ms': round((time.monotonic() - started) * 1000),
+                                   'block_count': len(blocks), 'asset_count': len(result.get('assets', []))})
+    return result
 
 
 def redact_blocks(blocks: list[dict], additional_terms: list[str] | None = None,

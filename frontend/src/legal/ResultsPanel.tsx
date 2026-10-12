@@ -24,6 +24,7 @@ type Props = {
   selected: string | null; tone: ToneFilter; tab: RailTab; busy: boolean; followup: boolean;
   answers: Answer[]; question: string; questionBusy: boolean; questionConsent: boolean;
   onTab: (tab: RailTab) => void; onTone: (tone: ToneFilter) => void; onSelect: (id: string) => void; onLocate: (blockId: string) => void;
+  onSource?: (blockId: string) => void;
   onDecision: (f: Finding, value: string, text: string, legalBasis: boolean, manual: boolean) => void;
   onExport: () => void; onResume: () => void; onHint: (text: string) => void;
   onQuestion: (value: string) => void; onQuestionConsent: (value: boolean) => void; onAsk: () => void;
@@ -77,7 +78,7 @@ function Notes(p: Props & { done: boolean }) {
       {shown.length > 0 && <ol className="lv-note-list" aria-label={tx('批注', 'Notes')}>
         {shown.map(item => <FindingItem key={`${item.finding.id}-${p.review.decisions[item.finding.id]?.version || 0}`} item={item} review={p.review}
           block={p.blocks.find(b => b.id === item.finding.block_id)} clause={p.clauseOf(item.finding.block_id)} busy={p.busy} selected={p.selected === item.finding.id}
-          onSelect={() => p.onSelect(item.finding.id)} onLocate={p.onLocate}
+          onSelect={() => p.onSelect(item.finding.id)} onLocate={p.onLocate} onSource={p.onSource}
           onDecision={(value, text, legalBasis, manualEdit) => p.onDecision(item.finding, value, text, legalBasis, manualEdit)} />)}
       </ol>}
       {!p.open.length && <div className="lv-empty-result">

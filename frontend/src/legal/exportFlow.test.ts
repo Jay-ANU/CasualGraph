@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exportConflict, exportQuery, pendingExportPrompt } from './exportFlow';
+import { defaultRevisionFormat, exportConflict, exportQuery, pendingExportPrompt } from './exportFlow';
 import type { Review } from './types';
 
 const review = (pending: number): Review => ({ id: 'r1', status: 'completed', stage: '', resumable: false,
@@ -20,6 +20,17 @@ describe('user-controlled export', () => {
   });
   it('keeps report exports separate from revision confirmation', () => {
     expect(exportQuery('md', 'old-draft', true)).toBe('format=json');
+  });
+  it('exports annotated PDF with the same user confirmation and leaves parsing notes informational', () => {
+    const r = review(0);
+    r.export_state = { ...r.export_state!, appendix_count: 3, parsing_issue_count: 7 };
+    expect(defaultRevisionFormat({ format: 'pdf' })).toBe('pdf');
+    expect(defaultRevisionFormat({ format: 'docx' })).toBe('docx');
+    expect(defaultRevisionFormat({ format: 'txt' })).toBe('txt');
+    expect(pendingExportPrompt(r, 'pdf')).toBeNull();
+    expect(exportQuery('pdf', 'current-draft')).toBe('format=pdf&fingerprint=current-draft');
+    expect(pendingExportPrompt(review(2), 'pdf')).toEqual({ format: 'pdf', pendingCount: 2, fingerprint: 'current-draft' });
+    expect(exportQuery('pdf', 'current-draft', true)).toBe('format=pdf&fingerprint=current-draft&confirmed=true');
   });
   it('recognises changed drafts and updated pending counts without interpreting other errors as consent', () => {
     expect(exportConflict({ detail: { code: 'export_stale', pending_count: 2, fingerprint: 'new-draft' } }))

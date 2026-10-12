@@ -170,18 +170,19 @@ def test_native_export_includes_exact_unverified_draft_text(export_data):
 
 
 def test_native_export_refuses_decision_changed_during_generation(export_data, monkeypatch):
-    original = contract_documents.redline_docx
+    from legal import docx_redlines
+    original = docx_redlines.redline_docx_result
     def changed(*args, **kwargs):
         result = original(*args, **kwargs)
         export_data[0]['payload']['decisions']['f1']['text'] = '验收后30日付款。'
         return result
-    monkeypatch.setattr(contract_documents, 'redline_docx', changed)
+    monkeypatch.setattr(docx_redlines, 'redline_docx_result', changed)
     with pytest.raises(HTTPException) as error:
         contracts.export('r', user={'id':'u'})
     assert error.value.status_code == 409 and error.value.detail['code'] == 'export_stale'
 
 
-def test_docx_structural_limitation_offers_explicit_text_fallback(export_data):
+def test_docx_structural_limitation_preserves_original_and_adds_explicit_appendix(export_data):
     r, c = export_data
     raw = base64.b64decode(c['payload']['original_b64'])
     out = io.BytesIO()
@@ -196,8 +197,13 @@ def test_docx_structural_limitation_offers_explicit_text_fallback(export_data):
                 data = etree.tostring(root)
             target.writestr(info, data)
     c['payload'].update(original_b64=base64.b64encode(out.getvalue()).decode(), content_hash=hashlib.sha256(out.getvalue()).hexdigest())
-    with pytest.raises(HTTPException) as error:
-        contracts.export('r', user={'id':'u'})
-    assert error.value.status_code == 409 and '文字稿' in error.value.detail
+    result = contracts.export('r', user={'id':'u'})
+    assert result.status_code == 200 and result.headers['x-legal-appendix-count'] == '1'
+    with zipfile.ZipFile(io.BytesIO(result.body)) as archive:
+        root = etree.fromstring(archive.read('word/document.xml'))
+        assert root.xpath('//w:body/w:p[1]//w:t/text()', namespaces=ns) == ['验收后90日付款。']
+        assert root.xpath('//w:bookmarkStart/@w:name', namespaces=ns) == ['payment']
+        assert '验收后60日付款。' in ''.join(root.xpath('//w:t/text()', namespaces=ns))
+        assert not root.xpath('//w:body/w:p[1]/w:ins|//w:body/w:p[1]/w:del', namespaces=ns)
     text_result = contracts.export('r', format='txt', user={'id':'u'})
     assert text_result.body.decode('utf-8-sig') == '验收后60日付款。'

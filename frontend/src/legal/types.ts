@@ -1,9 +1,23 @@
-export type Block = { id: string; text: string; page: number | null };
+export type SourceLocation = { page?: number | null; block_id?: string; node_id?: string; asset_id?: string; bbox?: number[] };
+export type Block = { id: string; text: string; page: number | null; kind?: string; label?: string; heading_level?: number | null;
+  native_editable?: boolean; bbox?: number[]; table?: { id: string; cell_id: string; row: number; col: number; row_span: number; col_span: number; header?: boolean } };
+export type ParagraphNode = { type: 'paragraph'; id: string; block_id: string; page?: number | null; bbox?: number[] };
+export type ImageNode = { type: 'image'; id: string; asset_id: string; width?: number; height?: number; block_ids?: string[];
+  host_block_id?: string; page?: number | null; bbox?: number[] };
+export type TableCell = { id: string; row: number; col: number; row_span: number; col_span: number; header?: boolean; children: DocumentNode[] };
+export type TableNode = { type: 'table'; id: string; rows: { id: string; cells: TableCell[] }[]; column_widths?: number[]; page?: number | null; bbox?: number[] };
+export type DocumentNode = ParagraphNode | TableNode | ImageNode;
+export type DocumentIssue = SourceLocation & { id: string; code: string; message: string };
+export type DocumentSection = { id: string; kind: string; title: string; body: DocumentNode[]; read_only: boolean };
+export type ContractDocument = { version: 1; source: 'docx' | 'pdf' | 'txt'; body: DocumentNode[];
+  pages: { number: number; width: number; height: number }[]; issues: DocumentIssue[]; sections?: DocumentSection[] };
+export type DocumentAsset = { id: string; media_type: string; width?: number; height?: number };
 export type Policy = { our_roles?: string[]; id: string; title: string; text: string; version: number; contract_type: string };
 export type Workspace = { matter_id: string; org_id: string };
 export type Matter = { id: string; org_id: string; name: string; role?: string };
 export type ContractSummary = { id: string; name: string; status: string; revision: number; created_at?: number };
-export type Contract = ContractSummary & Workspace & { redaction_version?: number; format: string; blocks: Block[]; warnings: string[]; replacement_count: number; reviews: { id: string; status: string }[] };
+export type Contract = ContractSummary & Workspace & { redaction_version?: number; format: string; blocks: Block[]; warnings: string[]; replacement_count: number; reviews: { id: string; status: string }[];
+  document?: ContractDocument; assets?: DocumentAsset[]; original_available?: boolean; parsing_status?: string; reviewable?: boolean };
 export type Source = { id: string; title: string; url: string; retrieved_at: string; text: string; version_status: string; source_kind?: string; discovery?: string; effective_date_candidates?: { date: string; quote: string }[] };
 export type Citation = { source_id: string; supporting_quote: string };
 /** A statute the reviewing model cited; status says whether official text was attached. */
@@ -12,7 +26,8 @@ export type ResearchIssue = { key: string; issue: string; laws: { name: string; 
 export type Finding = { version_status?: string; agent_id?: string; agent_title?: string; id: string; rule_id?: string; block_id: string | null; original_quote: string; title: string; kind: string; severity: string; impact: string; reason: string; suggested_text: string; evidence_status: string; missing_facts: string[]; citations: Citation[]; law_refs?: LawRef[]; policy_ids: string[]; revision_allowed?: boolean; verification_status?: string; verification_note?: string; validation_warnings?: string[]; conflict_group?: string; requires_legal_confirmation?: boolean; cross_edit_status?: string; cross_edit_note?: string };
 export type Decision = { decision: string; text: string; version: number; legal_basis_confirmed?: boolean; manual_edit_confirmed?: boolean; source?: string };
 /** Deterministic export readiness for the current draft; no model approval is required. */
-export type ExportState = { ready: boolean; pending_count: number; selected_count: number; fingerprint: string | null; confirmation_required: boolean; reason?: string };
+export type ExportState = { ready: boolean; pending_count: number; selected_count: number; fingerprint: string | null; confirmation_required: boolean; reason?: string;
+  appendix_count?: number; parsing_issue_count?: number };
 export type TransactionContext = { performance_stage: string; attachments_status: string; business_priority: string; deal_value?: string | number | null; currency: string };
 /** How the review runs: ultra_fast and fast read the whole contract in one conversation (unverified); standard and deep verify each finding. */
 export type ReviewTier = 'ultra_fast' | 'fast' | 'standard' | 'deep';

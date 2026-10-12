@@ -143,7 +143,7 @@ describe('English places, sources, dates and upload checks', () => {
     expect(formatDate(noon, 'zh')).toBe('2020年3月5日');
   });
   it('checks uploads in English, and in Chinese for the message the desk keeps', () => {
-    expect(uploadIssue({ name: '合同.doc', size: 100 })).toBe('Only DOCX, text-based PDF and TXT files are supported. Save .doc files as .docx.');
+    expect(uploadIssue({ name: '合同.doc', size: 100 })).toBe('Only DOCX, PDF and TXT files are supported. Save .doc files as .docx.');
     expect(uploadIssue({ name: '合同.txt', size: 0 })).toBe('The file is empty.');
     expect(uploadIssue({ name: '合同.txt', size: 10 * 1024 * 1024 + 1 })).toBe('The file is over the 10 MB limit.');
     expect(uploadIssue({ name: '合同.txt', size: 0 }, 'zh')).toBe('文件内容为空。');

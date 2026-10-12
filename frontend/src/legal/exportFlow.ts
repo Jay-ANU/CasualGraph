@@ -1,7 +1,8 @@
-import type { Review } from './types';
+import type { Contract, Review } from './types';
 
-export type RevisionFormat = 'docx' | 'txt';
+export type RevisionFormat = 'docx' | 'pdf' | 'txt';
 export type ExportPrompt = { format: RevisionFormat; pendingCount: number; fingerprint: string };
+export const defaultRevisionFormat = (contract: Pick<Contract, 'format'>): RevisionFormat => contract.format === 'docx' ? 'docx' : contract.format === 'pdf' ? 'pdf' : 'txt';
 
 /** The count and fingerprint come from the same server snapshot. */
 export function pendingExportPrompt(review: Review, format: RevisionFormat): ExportPrompt | null {
