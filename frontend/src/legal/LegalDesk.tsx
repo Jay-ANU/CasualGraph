@@ -2,11 +2,12 @@ import React from 'react';
 import { AlertCircle, FileText, Lock, X } from 'lucide-react';
 import { apiFetch, jsonRequest, readApiError, withAuth } from '../api/client';
 import { apiBase } from '../api/config';
-import type { Answer, Api, Block, Capabilities, Catalog, Contract, ContractSummary, Decision, Finding, Matter, Policy, Review, ReviewTier, User, Workspace } from './types';
+import type { Answer, Api, Block, Capabilities, Catalog, Contract, ContractSummary, Decision, Finding, Matter, Policy, Review, ReviewTier, SourceLocation, User, Workspace } from './types';
 import './LegalDesk.css';
 import '@fontsource-variable/inter/wght.css';
 import { draftFirst, uploadIssue } from './deskLogic';
-import { exportConflict, exportQuery, pendingExportPrompt } from './exportFlow';
+import { defaultRevisionFormat, exportConflict, exportQuery, pendingExportPrompt } from './exportFlow';
+import { contractHasText, sourceElementIds } from './documentLayout';
 import type { ExportPrompt, RevisionFormat } from './exportFlow';
 import { emptyTransactionInputs, transactionAmount } from './transactionInput';
 import { changeScenario, currentScenario, scenarioRoleValid } from './scenarioInput';
@@ -26,6 +27,7 @@ import type { Step } from './TopBar';
 import { Library } from './Library';
 import { Outline } from './Outline';
 import { Paper } from './Paper';
+import { ParsingIssues } from './ParsingIssues';
 import { RedactionPanel } from './RedactionPanel';
 import { SetupForm } from './SetupForm';
 import type { SetupValues } from './SetupForm';
@@ -46,6 +48,7 @@ type State = {
   ourRole: string; contractType: string; date: string; instructions: string; consent: boolean; modelId: string;
   terms: string; preview: Block[] | null; libraryQuery: string; question: string; answers: Answer[]; questionBusy: boolean; questionConsent: boolean;
   ourPartyBlock: string; ourPartyQuote: string; excludedTerms: string; originalBlocks: Block[] | null;
+  sourceLocation: SourceLocation | null;
   notice: string; hint: string; denied: boolean; reviewTier: ReviewTier;
   performanceStage: string; attachmentsStatus: string; businessPriority: string; dealValue: string; currency: string;
   exportPrompt: ExportPrompt | null; pendingFile: File | null; confirmingRedaction: boolean; archivePolicy: Policy | null;
@@ -62,7 +65,7 @@ const RAIL_LABEL: Record<Stage, Pair> = {
 const deskTitle = () => pick('合同审查 · CausalGraph', 'Contract review · CausalGraph');
 /** Everything that belongs to one open contract; reset whenever another one opens. */
 const freshContract = () => ({
-  exportPrompt: null, pendingFile: null, confirmingRedaction: false, originalBlocks: null, ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '',
+  exportPrompt: null, pendingFile: null, confirmingRedaction: false, originalBlocks: null, sourceLocation: null, ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '',
   review: null, preview: null, terms: '', consent: false, answers: [], question: '', questionConsent: false,
   view: 'work' as DeskView, pane: 'rail' as const, railTab: 'notes' as RailTab, tone: 'all' as ToneFilter, selected: null, located: null, paperMode: 'changes' as const,
 });
@@ -76,7 +79,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     busy: false, loading: true, error: '', modelError: '', modelsLoading: false, tab: 'review', view: 'work', pane: 'rail', railTab: 'notes', tone: 'all',
     selected: null, located: null, paperMode: 'changes', ourRole: '', contractType: '采购合同', date: '', instructions: '', consent: false, modelId: '',
     terms: '', preview: null, libraryQuery: '', question: '', answers: [],
-    ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '', originalBlocks: null,
+    ourPartyBlock: '', ourPartyQuote: '', excludedTerms: '', originalBlocks: null, sourceLocation: null,
     questionBusy: false, questionConsent: false, notice: '', hint: '', denied: false, reviewTier: 'standard',
     performanceStage: '未知', attachmentsStatus: '未知', businessPriority: '综合审查', dealValue: '', currency: 'CNY',
     exportPrompt: null, pendingFile: null, confirmingRedaction: false, archivePolicy: null };
@@ -261,13 +264,13 @@ export default class LegalDesk extends React.Component<Props, State> {
     this.setState({ preview: preview.blocks });
     if (confirmed) {
       const contract = await this.api<Contract>(`/legal/contracts/${c.id}`);
-      if (this.live) this.setState({ contract, confirmingRedaction: false, originalBlocks: null, preview: null, pane: 'rail', notice: '脱敏已确认' });
+      if (this.live) this.setState({ contract, confirmingRedaction: false, originalBlocks: null, sourceLocation: null, preview: null, pane: 'rail', notice: '脱敏已确认' });
       if (this.state.workspace) await this.refreshList(this.state.workspace);
     }
   };
   private start = async () => {
     const s = this.state;
-    if (!s.contract || !s.modelId || !s.consent || !s.ourRole || !s.ourPartyBlock || !s.ourPartyQuote) return;
+    if (!s.contract || !contractHasText(s.contract) || !s.modelId || !s.consent || !s.ourRole || !s.ourPartyBlock || !s.ourPartyQuote) return;
     const provider = processingProvider(selectedModel(s.catalog, s.modelId));
     if (!provider || s.modelsLoading) throw new Error('处理方尚未确认，请刷新模型列表并重新选择。');
     if (!scenarioRoleValid(s.caps?.scenario_catalog, s.contractType, s.ourRole)) throw new Error('请重新选择我方身份。');
@@ -281,7 +284,7 @@ export default class LegalDesk extends React.Component<Props, State> {
         deal_value: amount.value, currency: s.currency },
       instructions: s.instructions, fresh_review: Boolean(s.review), review_tier: s.reviewTier, review_mode: s.reviewTier === 'deep' ? 'multi_agent' : 'standard',
     }));
-    if (this.live) this.setState({ review, view: 'work', pane: draftFirst(review) ? 'paper' : 'rail', paperMode: draftFirst(review) ? 'revised' : 'changes', railTab: 'notes', tone: 'all', selected: null, located: null, answers: [], question: '', questionConsent: false });
+    if (this.live) this.setState({ review, view: 'work', pane: draftFirst(review) ? 'paper' : 'rail', paperMode: draftFirst(review) ? 'revised' : 'changes', originalBlocks: null, sourceLocation: null, railTab: 'notes', tone: 'all', selected: null, located: null, answers: [], question: '', questionConsent: false });
   };
   /** Numbered findings of the open review, in reading order. */
   private numbered() {
@@ -308,21 +311,45 @@ export default class LegalDesk extends React.Component<Props, State> {
     const updated = await this.api<Review>(`/legal/reviews/${r.id}`);
     if (this.live && this.state.review?.id === r.id) this.setState({ review: updated });
   };
-  private showOriginal = async () => {
+  private showOriginal = async (location?: SourceLocation) => {
     const c = this.state.contract; if (!c) return;
-    if (this.state.originalBlocks) { this.setState({ originalBlocks: null }); return; }
+    if (!location && this.state.originalBlocks) { this.setState({ originalBlocks: null, sourceLocation: null }); return; }
+    if (!c.original_available) {
+      this.setState({ sourceLocation: location || null, originalBlocks: null, pane: 'paper' }, () => this.reveal(location?.block_id, undefined, location));
+      return;
+    }
     const seq = this.generation;
-    const data = await this.api<{ blocks: Block[] }>(`/legal/contracts/${c.id}/original-text`);
-    if (this.live && seq === this.generation && this.state.contract?.id === c.id) this.setState({ originalBlocks: data.blocks, pane: 'paper' });
+    const originals = this.state.originalBlocks || (await this.api<{ blocks: Block[] }>(`/legal/contracts/${c.id}/original-text`)).blocks;
+    const block = c.blocks.find(item => item.id === location?.block_id);
+    const source = location ? { ...location, page: location.page ?? block?.page } : null;
+    if (this.live && seq === this.generation && this.state.contract?.id === c.id) this.setState({ originalBlocks: originals, sourceLocation: source, pane: 'paper' },
+      () => { if (c.format !== 'pdf') this.reveal(source?.block_id, undefined, source || undefined); });
+  };
+  private downloadOriginal = async () => {
+    const c = this.state.contract, seq = this.generation; if (!c?.original_available) return;
+    const response = await fetch(`${apiBase()}/legal/contracts/${encodeURIComponent(c.id)}/original`, withAuth());
+    if (!response.ok) throw await readApiError(response);
+    const blob = await response.blob();
+    if (!this.live || seq !== this.generation || this.state.contract?.id !== c.id) return;
+    const url = URL.createObjectURL(blob), anchor = document.createElement('a');
+    anchor.href = url; anchor.download = c.name; document.body.appendChild(anchor); anchor.click(); anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
   };
   /** Scroll the paper to a paragraph and the rail to a finding, without moving the page itself. */
-  private reveal(blockId: string | null | undefined, findingId?: string | null) {
+  private reveal(blockId: string | null | undefined, findingId?: string | null, location?: SourceLocation) {
     requestAnimationFrame(() => {
       const scroll = (box: Element | null, el: HTMLElement | null, pad: number) => {
         if (!box || !el || !box.contains(el)) return;
+        let table = el.closest('.lv-contract-table-wrap');
+        while (table) {
+          table.scrollTo({ left: table.scrollLeft + el.getBoundingClientRect().left - table.getBoundingClientRect().left - 16, behavior: motion() });
+          table = table.parentElement?.closest('.lv-contract-table-wrap') || null;
+        }
         box.scrollTo({ top: box.scrollTop + el.getBoundingClientRect().top - box.getBoundingClientRect().top - pad, behavior: motion() });
       };
-      if (blockId) scroll(document.querySelector('.lv-paper-desk'), document.getElementById(`legal-block-${blockId}`), 96);
+      const ids = location ? sourceElementIds(location) : blockId ? [`legal-block-${blockId}`] : [];
+      const element = ids.map(id => document.getElementById(id)).find(Boolean);
+      if (element) scroll(document.querySelector('.lv-paper-desk'), element, 112);
       if (findingId) scroll(document.getElementById('legal-notes'), document.getElementById(`legal-finding-${findingId}`), 8);
     });
   }
@@ -331,11 +358,11 @@ export default class LegalDesk extends React.Component<Props, State> {
     if (!item) return;
     const hidden = !filterByTone(this.numbered().open, this.state.tone).some(x => x.finding.id === id);
     const block = item.finding.block_id;
-    this.setState(s => ({ selected: id, railTab: 'notes', tone: hidden ? 'all' : s.tone, located: block ? { id: block, n: ++this.locateCount } : s.located }),
+    this.setState(s => ({ selected: id, railTab: 'notes', originalBlocks: null, sourceLocation: null, tone: hidden ? 'all' : s.tone, located: block ? { id: block, n: ++this.locateCount } : s.located }),
       () => this.reveal(block, id));
   };
   private locate = (blockId: string) => {
-    this.setState({ located: { id: blockId, n: ++this.locateCount }, pane: 'paper' }, () => this.reveal(blockId));
+    this.setState({ located: { id: blockId, n: ++this.locateCount }, originalBlocks: null, sourceLocation: null, pane: 'paper' }, () => this.reveal(blockId));
   };
   private download = async (format: RevisionFormat | 'md', confirmed = false) => {
     let r = this.state.review;
@@ -376,9 +403,9 @@ export default class LegalDesk extends React.Component<Props, State> {
     } else blob = await response.blob();
     if (!current()) return;
     const url = URL.createObjectURL(blob), a = document.createElement('a');
-    a.href = url; a.download = `${format === 'md' ? pick('合同审查报告', 'Contract review report') : format === 'docx' ? pick('合同修订版', 'Contract redline') : pick('合同修订文本', 'Revised contract text')}.${format}`;
+    a.href = url; a.download = `${format === 'md' ? pick('合同审查报告', 'Contract review report') : format === 'docx' ? pick('合同修订版', 'Contract redline') : format === 'pdf' ? pick('合同批注版', 'Annotated contract') : pick('合同修订文本', 'Revised contract text')}.${format}`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
-    if (current()) this.setState({ exportPrompt: null, notice: format === 'md' ? '审查报告已导出' : format === 'docx' ? 'Word 修订版已导出' : '修订文本已导出' });
+    if (current()) this.setState({ exportPrompt: null, notice: format === 'md' ? '审查报告已导出' : format === 'docx' ? 'Word 修订版已导出' : format === 'pdf' ? '带批注 PDF 已导出' : '修订文本已导出' });
   };
   private ask = async () => {
     const r = this.state.review, question = this.state.question.trim();
@@ -430,6 +457,7 @@ export default class LegalDesk extends React.Component<Props, State> {
     const partyValid = s.ourPartyQuote.trim().length >= 2 && !!c.blocks.find(b => b.id === s.ourPartyBlock)?.text.includes(s.ourPartyQuote);
     const amountValid = transactionAmount(s.dealValue).valid;
     const startIssue = c.redaction_version !== 2 ? pick('当前合同需重新上传并完成脱敏确认。', 'Upload this contract again and confirm its redaction.')
+      : !contractHasText(c) ? pick('尚无可审查文字，请查看原件和解析提示；图片识别完成后再开始审查。', 'No text is available for review. Open the original and parsing notes; start after image text is recognised.')
       : !s.ourRole || !scenarioValid ? pick('请选择我方身份', 'Choose our role')
       : !partyValid ? pick('请选择我方主体', 'Choose our party')
       : !amountValid ? pick('交易金额格式有误', 'Enter a valid amount')
@@ -465,8 +493,9 @@ export default class LegalDesk extends React.Component<Props, State> {
       selected={selected} tone={s.tone} tab={s.railTab} busy={s.busy} followup={Boolean(s.caps?.followup_questions)}
       answers={s.answers} question={s.question} questionBusy={s.questionBusy} questionConsent={s.questionConsent}
       onTab={railTab => this.setState({ railTab })} onTone={tone => this.setState({ tone })} onSelect={this.select} onLocate={this.locate}
+      onSource={c.original_available ? blockId => void this.run(() => this.showOriginal({ block_id: blockId })) : undefined}
       onDecision={(f, value, text, legalBasis, manual) => void this.run(() => this.decide(f, value, text, legalBasis, manual))}
-      onExport={() => void this.run(() => this.download(c.format === 'docx' ? 'docx' : 'txt'))} onResume={() => this.reviewAction('resume')} onHint={hint => this.setState({ hint })}
+      onExport={() => void this.run(() => this.download(defaultRevisionFormat(c)))} onResume={() => this.reviewAction('resume')} onHint={hint => this.setState({ hint })}
       onQuestion={question => this.setState({ question })} onQuestionConsent={questionConsent => this.setState({ questionConsent })} onAsk={() => void this.ask()} />;
     else if (stage === 'export' && r) rail = <ReleasePanel review={r} contract={c} open={open} busy={s.busy}
       onCheck={() => void this.run(async () => {
@@ -484,19 +513,19 @@ export default class LegalDesk extends React.Component<Props, State> {
         <button aria-pressed={s.pane === 'paper'} onClick={() => this.setState({ pane: 'paper' }, () => this.reveal(selectedBlock))}>{isDone(r) ? pick('修订稿', 'Revised draft') : pick('合同正文', 'Contract text')}</button>
       </div>
       <Outline entries={outline} items={items} decisions={r?.decisions || {}} running={stage === 'running'} activeBlock={selectedBlock}
-        blockCount={blocks.length} pageCount={pagesOf(blocks).length} meta={meta}
+        blockCount={blocks.length} pageCount={c.document?.source === 'pdf' ? c.document.pages.length : pagesOf(blocks).length} meta={meta}
         onEntry={(entry, first) => { if (stage === 'results' && first) this.select(first); else this.locate(entry.id); }} />
       <Paper contract={c} blocks={blocks} stage={stage} decisions={r?.decisions || {}} items={items} selected={selected} located={s.located}
-        mode={s.paperMode} onMode={paperMode => this.setState({ paperMode })} onExport={isDone(r) ? () => void this.run(() => this.download(c.format === 'docx' ? 'docx' : 'txt')) : undefined}
+        mode={s.paperMode} onMode={paperMode => this.setState({ paperMode, originalBlocks: null, sourceLocation: null })} onExport={isDone(r) ? () => void this.run(() => this.download(defaultRevisionFormat(c))) : undefined}
         originals={s.originalBlocks} busy={s.busy} candidates={stage === 'setup' ? partyCandidates(c.blocks) : []}
+        sourceLocation={s.sourceLocation} onOriginalDownload={c.original_available ? () => void this.run(this.downloadOriginal) : undefined}
         party={{ blockId: s.ourPartyBlock, quote: s.ourPartyQuote }} detail={stage === 'running' && r ? r.stage : undefined}
-        onSelect={id => { this.select(id); this.setState({ pane: 'rail' }); }} onCompare={() => void this.run(this.showOriginal)}
+        onSelect={id => { this.select(id); this.setState({ pane: 'rail' }); }} onCompare={() => void this.run(() => this.showOriginal())}
         onParty={(ourPartyBlock, ourPartyQuote) => this.changeSetup({ ourPartyBlock, ourPartyQuote })} />
       <aside className="lv-rail" aria-label={pick('审查操作', 'Review actions')}>
-        {(legacy || c.warnings.length > 0) && <div className="lv-rail-notes">
+        {(legacy || c.warnings.length > 0 || Boolean(c.document?.issues.length)) && <div className="lv-rail-notes">
           {legacy && <p className="lv-note is-warn">{pick('该合同使用旧版脱敏，仅可查看历史报告；重新审查请重新上传。', 'This contract uses the old redaction; only past reports can be viewed. Upload it again to review it again.')}</p>}
-          {c.warnings.length > 0 && <details className="lv-disclosure"><summary>{pick(`解析提示（${c.warnings.length}）`, `Parsing notes (${c.warnings.length})`)}</summary>
-            <div className="lv-disclosure-body">{c.warnings.map((w, i) => <p key={i}>{serverText(w)}</p>)}</div></details>}
+          <ParsingIssues contract={c} onLocate={location => void this.run(() => this.showOriginal(location))} />
         </div>}
         {rail}
       </aside>

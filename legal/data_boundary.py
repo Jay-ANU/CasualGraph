@@ -17,6 +17,7 @@ def disclosure() -> dict:
     return {'version': NOTICE_VERSION, 'storage_region': os.getenv('LEGAL_STORAGE_REGION', '').strip()[:120] or '未核验，请向运营方确认',
             'region_verified': False, 'provider': 'mixed', 'raw_upload_before_redaction': True,
             'notice': '上传的是原件，会先传至 CasualGraph 后端解析并加密保存，再在后端脱敏；不是浏览器本地脱敏。'
+                      '配置私有文档识别服务时，需要识别的 PDF 页或图片会交给同一运营方的私有服务处理。原图不会发送给审查模型，只有确认后的脱敏识别文字进入模型。'
                       '后续外发的正文、补充要求和公司规范须另行确认：Claude 直接交给 Anthropic 官方，其他模型经 YData 处理。'
                       '地域、保留期限及处理方协议需运营方核验；勾选不构成合规认证。敏感真实材料请先完成组织审批。'}
 

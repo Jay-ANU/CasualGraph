@@ -67,7 +67,7 @@ jobs:
           python-version: '3.11'
       - name: Install browser test runtime
         run: |
-          pip install playwright==1.58.0
+          pip install playwright==1.58.0 -r ../requirements.txt
           python -m playwright install --with-deps chromium
       - name: Landing, research and contract UI browser checks (mock APIs)
         working-directory: .

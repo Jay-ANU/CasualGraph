@@ -108,6 +108,7 @@ jobs:
                   assert legal['product']=='contract-review'
                   assert legal['model_gateway']=='mixed' and legal['model_selection_version']==2
                   assert legal['draft_release_version']==2
+                  assert legal['document_structure_version']==1
                   try:
                       urllib.request.urlopen('https://casualgraph.fly.dev/legal/contracts?matter_id=probe', timeout=20)
                   except urllib.error.HTTPError as e:

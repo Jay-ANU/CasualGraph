@@ -249,6 +249,12 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
     def generate(agent_id: str, system: str, data: dict) -> dict:
         request = {**deepcopy(data), 'profile': deepcopy(p['profile']), 'transaction_brief': deepcopy(p.get('transaction_brief')),
                    'agent_context': {'id': agent_id, 'collaboration_version': agents.COLLABORATION_VERSION if team else None}}
+        from legal.document_context import model_structure, model_request_blocks, STRUCTURE_GUIDANCE
+        structure = model_structure(contract['payload'].get('document'))
+        if structure is not None and 'contract_blocks' in request:
+            request['document_structure'] = structure
+            request['contract_blocks'] = model_request_blocks(request['contract_blocks'], structure)
+            system += '\n' + STRUCTURE_GUIDANCE
         if len(system) + len(json.dumps(request, ensure_ascii=False)) > MAX_INPUT_CHARACTERS:
             raise ydata.GatewayError('legal_context_budget', '本步骤上下文超过预算；未静默截断合同，请缩小审查范围。', 422)
         prompt, briefer, limited, transient, wait = system, False, 0, 0, 0.0
@@ -370,6 +376,7 @@ def run_review(rid: str, *, model: Callable | None = None, retrieve: Callable | 
 
         def input_hash(task: dict) -> str:
             return _digest({'task': {k: v for k, v in task.items() if k != 'prompt'}, 'prompt': task['prompt'], 'blocks': blocks,
+                            'document_structure': contract['payload'].get('document'),
                             'profile': p['profile'], 'transaction_brief': p.get('transaction_brief'),
                             **({'skills': skills} if skills else {})})
 

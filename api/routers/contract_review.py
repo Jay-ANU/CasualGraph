@@ -25,6 +25,7 @@ from legal.transaction_brief import TransactionContext, build_brief
 from legal.law_evidence import evidence_health
 from services import matters
 from legal import contract_documents as documents
+from legal import document_context, document_assets
 from legal import external_law, review_chat, review_engine as engine, review_store as store
 
 router = APIRouter(prefix='/legal', tags=['contract-review'], dependencies=[Depends(require_legal_max)])
@@ -108,6 +109,8 @@ def _access(c: dict, user: dict, write=False):
     access = matters.require_matter_member(c['matter_id'], user, 'member' if write else 'viewer', require_active=write)
     with store.transaction() as conn:
         store.org_access(conn, access['matter']['org_id'], str(user['id']))
+    c['_can_view_original'] = bool((write or access.get('role') in ('member', 'lead'))
+                                   and access['matter'].get('status', 'active') == 'active')
     return access['matter']
 
 
@@ -123,13 +126,20 @@ def _review(rid, user, write=False):
     return r, c
 
 
-def _view(c: dict):
+def _view(c: dict, can_view_original: bool | None = None):
     p = c['payload']
-    redacted, mapping = documents.redact_blocks(p['blocks'])
+    if 'redacted_blocks' in p:
+        redacted, mapping = p['redacted_blocks'], p.get('mapping', {})
+    else:
+        redacted, mapping = documents.redact_blocks(p['blocks'])
+    original_available = c.get('_can_view_original', False) if can_view_original is None else can_view_original
     return {'id': c['id'], 'matter_id': c['matter_id'], 'org_id': c['org_id'], 'name': p['name'],
             'format': p['format'], 'redaction_version': p.get('redaction_version', 1), 'revision': c['revision'], 'status': c['status'],
-            'blocks': p.get('redacted_blocks', redacted), 'warnings': p['warnings'],
-            'replacement_count': len(p.get('mapping', mapping)), 'reviews': store.reviews(c['id'])}
+            'blocks': document_context.public_blocks(redacted), 'warnings': p['warnings'],
+            'document': document_context.public_structure(p.get('document')), 'assets': document_context.public_assets(p.get('assets', [])),
+            'parsing_status': p.get('parsing_status', 'ready'), 'reviewable': bool(redacted),
+            'original_available': bool(original_available and p.get('original_b64')),
+            'replacement_count': len(mapping), 'reviews': store.reviews(c['id'])}
 
 
 def _review_view(r: dict, c: dict | None = None):
@@ -164,6 +174,7 @@ def _review_view(r: dict, c: dict | None = None):
 @public_router.get('/version')
 def version():
     return {'product': 'contract-review', 'version': '1.0.0', 'law_source': 'external', 'rules_source': 'database',
+            'document_structure_version': document_context.VERSION,
             'max_only': True, 'model_gateway': 'mixed', 'model_selection_version': 2, 'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': draft_release.VERSION, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION}
 
 
@@ -196,6 +207,7 @@ def models():
 
 @router.get('/capabilities')
 def capabilities(user: dict = Depends(get_current_user)):
+    from legal.document_ocr import ocr_status
     from services.crypto import get_fernet
     try:
         get_fernet()
@@ -203,6 +215,7 @@ def capabilities(user: dict = Depends(get_current_user)):
     except Exception:
         encrypted = False
     return {'product': 'contract-review', 'model_configured': ydata.configured(), 'model_gateway': 'mixed', 'model_selection_version': 2, 'encryption_configured': encrypted,
+            'document_structure_version': document_context.VERSION, 'document_ocr': ocr_status(),
             'review_engine_version': 2, 'followup_questions': True, 'collaboration_version': 1, 'audit_foundation_version': 1, 'draft_release_version': draft_release.VERSION, 'transaction_brief_version': 1, 'evidence_screening_version': 1, 'scenario_catalog_version': scenarios.VERSION,
             'scenario_catalog': scenarios.catalog(), 'upload_disclosure': data_boundary.disclosure(), 'law_search': external_law.provider_status(), 'contract_types': [scene['label'] for scene in scenarios.catalog()['scenarios']],
             'limits': {'max_upload_mb': 10, 'max_characters': documents.MAX_TEXT, 'max_blocks': documents.MAX_BLOCKS},
@@ -237,9 +250,9 @@ def upload(matter_id: str = Form(...), file: UploadFile = File(...),
         parsed.update(name=(file.filename or '合同')[:200], original_b64=base64.b64encode(data).decode())
         parsed['upload_disclosure'] = {**data_boundary.disclosure(), 'user_id': str(user['id']), 'confirmed_at': time.time()}
         cid = store.create_contract(access['matter'], str(user['id']), parsed)
-        return _view(store.contract(cid))
+        return _view(store.contract(cid), True)
     except (zipfile.BadZipFile, etree.XMLSyntaxError, PdfReadError) as exc:
-        raise HTTPException(422, '文件结构无法解析，请提供有效的 DOCX、文字 PDF 或 UTF-8 TXT。') from exc
+        raise HTTPException(422, '文件结构无法解析，请提供有效的 DOCX、PDF 或 UTF-8 TXT。') from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except (RuntimeError, KeyError) as exc:
@@ -261,7 +274,7 @@ def redaction(cid: str, request: RedactionRequest, user: dict = Depends(get_curr
     blocks, mapping = documents.redact_blocks(c['payload']['blocks'], request.additional_terms, request.excluded_terms)
     if request.confirmed:
         store.confirm_redaction(cid, str(user['id']), request.revision, blocks, mapping)
-    return {'blocks': blocks, 'replacement_count': len(mapping), 'confirmed': request.confirmed}
+    return {'blocks': document_context.public_blocks(blocks), 'replacement_count': len(mapping), 'confirmed': request.confirmed}
 
 
 @router.get('/policies')
@@ -292,6 +305,8 @@ def start_review(cid: str, request: ReviewRequest, user: dict = Depends(get_curr
         raise HTTPException(409, '请先确认脱敏，并授权将脱敏合同及适用公司规范交给已配置模型审查。')
     if c['payload'].get('redaction_version') != 2:
         raise HTTPException(409, '此合同仍使用旧版脱敏，请重新上传并检查新脱敏预览。历史报告仍可查看。')
+    if not c['payload'].get('redacted_blocks'):
+        raise HTTPException(422, '尚未识别出可审查文字。原件已保留，可先查看；请启用文档识别服务后重新上传，或提供包含文字的 Word/PDF。')
     catalog = scenarios.catalog()
     if request.scenario_revision and request.scenario_revision != catalog['revision']:
         raise HTTPException(409, '合同场景目录已更新，请刷新并重新确认审查类型与我方角色。')
@@ -354,13 +369,14 @@ def decision(rid: str, fid: str, request: DecisionRequest, user: dict = Depends(
 
 
 @router.get('/reviews/{rid}/export')
-def export(rid: str, format: Literal['json', 'docx', 'txt'] | None = None, user: dict = Depends(get_current_user),
+def export(rid: str, format: Literal['json', 'docx', 'txt', 'pdf'] | None = None, user: dict = Depends(get_current_user),
            confirmed: bool = False, fingerprint: Annotated[str | None, Query(pattern=r'^[a-f0-9]{64}$')] = None):
     r, c = _review(rid, user)
     if r['status'] not in ('completed', 'partial'):
         raise HTTPException(409, '请在审查完成后导出。')
     # Require editing permission for reconstructed originals: viewers can only export redacted reports.
     p, cp = r['payload'], c['payload']
+    appendix_count = 0
     format = format or ('docx' if cp['format'] == 'docx' else 'json')
     if format == 'json':
         content = json.dumps(_review_view(r, c), ensure_ascii=False, indent=2).encode()
@@ -374,16 +390,28 @@ def export(rid: str, format: Literal['json', 'docx', 'txt'] | None = None, user:
             if cp['format'] != 'docx':
                 raise HTTPException(422, '仅 DOCX 原件可导出 Word 修订；其他格式请选择文字修改稿。')
             try:
-                original = base64.b64decode(cp['original_b64'], validate=True)
-                if cp.get('content_hash') and hashlib.sha256(original).hexdigest() != cp['content_hash']:
-                    raise ValueError('原件内容已变化，请重新上传后审查。')
-                # The redline writer returns the original bytes when nothing changed.
-                content = documents.redline_docx(original, cp['blocks'], changes)
+                from legal.docx_redlines import redline_docx_result
+                original = document_assets.original_bytes(cp)
+                # Unsupported objects remain intact; their changes are explicitly
+                # included in an appendix. Integrity failures still reject stale data.
+                result = redline_docx_result(original, cp['blocks'], changes)
+                content, appendix_count = result['content'], len(result['unapplied'])
             except ValueError as exc:
                 raise HTTPException(409, f'{exc} 如需当前文字内容，可选择文字稿。') from exc
             except (KeyError, zipfile.BadZipFile, etree.XMLSyntaxError) as exc:
                 raise HTTPException(409, '原始 Word 文件无法读取，请重新上传或选择文字稿。') from exc
             mime, filename = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', f'revised-{rid[:8]}.docx'
+        elif format == 'pdf':
+            if cp['format'] != 'pdf':
+                raise HTTPException(422, '仅 PDF 原件可导出带批注的原 PDF。')
+            from legal.pdf_annotations import annotated_pdf
+            try:
+                original = document_assets.original_bytes(cp)
+                content = annotated_pdf(original, cp['blocks'], changes)
+            except (ValueError, PdfReadError) as exc:
+                raise HTTPException(409, f'原 PDF 无法生成批注副本：{exc}') from exc
+            appendix_count = sum(changes.get(b['id'], b['text']) != b['text'] for b in cp['blocks'])
+            mime, filename = 'application/pdf', f'annotated-{rid[:8]}.pdf'
         else:
             content = '\n\n'.join(changes.get(b['id'], b['text']) for b in cp['blocks']).encode('utf-8-sig')
             mime, filename = 'text/plain; charset=utf-8', f'revised-{rid[:8]}.txt'
@@ -395,9 +423,10 @@ def export(rid: str, format: Literal['json', 'docx', 'txt'] | None = None, user:
             draft_release.assert_exportable(latest, latest_contract, confirmed=confirmed, fingerprint=export_snapshot['fingerprint'])
             details.update(fingerprint=export_snapshot['fingerprint'], final_hash=export_snapshot['final_hash'],
                            file_hash=hashlib.sha256(content).hexdigest(), pending_count=export_snapshot['pending_count'],
-                           pending_acknowledged=confirmed is True)
+                           pending_acknowledged=confirmed is True, appendix_count=appendix_count)
         store.audit(conn, str(user['id']), c['matter_id'], c['org_id'], 'review.exported', rid, details)
-    return Response(content=content, media_type=mime, headers={'Content-Disposition': f'attachment; filename="{filename}"', 'Cache-Control': 'no-store'})
+    return Response(content=content, media_type=mime, headers={'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Legal-Appendix-Count': str(appendix_count)})
 
 class QuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1500)
@@ -453,8 +482,37 @@ def original_text(cid: str, user: dict = Depends(get_current_user)):
     c = _contract(cid, user, True)
     with store.transaction() as conn:
         store.audit(conn, str(user['id']), c['matter_id'], c['org_id'], 'contract.original_viewed', cid)
-    return Response(json.dumps({'blocks': c['payload']['blocks']}, ensure_ascii=False),
+    return Response(json.dumps({'blocks': document_context.public_blocks(c['payload']['blocks'])}, ensure_ascii=False),
                     media_type='application/json', headers={'Cache-Control': 'no-store'})
+
+
+@router.get('/contracts/{cid}/original')
+def original_file(cid: str, user: dict = Depends(get_current_user)):
+    c = _contract(cid, user, True)
+    try:
+        content = document_assets.original_bytes(c['payload'])
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    extension = c['payload']['format']
+    with store.transaction() as conn:
+        store.audit(conn, str(user['id']), c['matter_id'], c['org_id'], 'contract.original_viewed', cid, {'format': extension})
+    return Response(content, media_type=document_assets.SOURCE_MIMES[extension],
+                    headers={'Content-Disposition': f'inline; filename="original-{cid[:8]}.{extension}"',
+                             'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@router.get('/contracts/{cid}/assets/{asset_id}')
+def original_asset(cid: str, asset_id: str, user: dict = Depends(get_current_user)):
+    c = _contract(cid, user, True)
+    try:
+        content, mime = document_assets.asset_preview(c['payload'], asset_id)
+    except KeyError as exc:
+        raise HTTPException(404, '图片不存在。') from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    with store.transaction() as conn:
+        store.audit(conn, str(user['id']), c['matter_id'], c['org_id'], 'contract.asset_viewed', cid, {'asset_id': asset_id})
+    return Response(content, media_type=mime, headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
 class DraftCheckRequest(BaseModel):

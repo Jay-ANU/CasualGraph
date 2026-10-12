@@ -33,6 +33,7 @@ from legal import data_boundary, external_law, research, review_quality as quali
 from legal.review_multiagent import block_conflicting_edits
 from legal.review_plan import build_plan, relevant_evidence
 from legal.transaction_brief import apply_material_gates
+from legal.document_context import render_contract, STRUCTURE_GUIDANCE
 
 TIERS = ('ultra_fast', 'fast')
 VERSION = 1
@@ -229,7 +230,7 @@ def live_view(written: str) -> tuple[str, int, str]:
     return _unfence(memo).strip(), count, 'writing_result' if result >= 0 else 'writing_memo'
 
 
-def document(p: dict, blocks: list[dict], rules: list[dict], policies: list[dict], skills: list[dict], warnings: list[str]) -> str:
+def document(p: dict, blocks: list[dict], rules: list[dict], policies: list[dict], skills: list[dict], warnings: list[str], structure: dict | None = None) -> str:
     """The contract and its brief as one document, the way a chat app passes an uploaded file."""
     profile = p.get('profile', {})
     lines = ['【审查任务】', '请站在我方立场审查下面这份合同：先写审查意见书，再给出结构化结果；需要修改的条款直接给出修改后的完整段落。',
@@ -266,8 +267,8 @@ def document(p: dict, blocks: list[dict], rules: list[dict], policies: list[dict
         lines += ['《%s》\n%s' % (s['name'], s['guidance']) for s in skills]
     if warnings:
         lines += ['', '【文件解析提示】'] + ['- ' + w for w in warnings]
-    lines += ['', '【合同全文】（每段以段落编号开头，引用时使用该编号）']
-    lines += ['[%s]%s %s' % (b['id'], '（第%s页）' % b['page'] if b.get('page') else '', b['text']) for b in blocks]
+    lines += ['', '【合同全文】（每个文字块以编号开头，引用及修改时使用该编号）', STRUCTURE_GUIDANCE,
+              render_contract(blocks, structure)]
     return '\n'.join(lines)
 
 
@@ -307,12 +308,19 @@ def anchor(bid: str | None, quote: str, revised: str, blocks: list[dict]) -> tup
         located = quality.locate(quote, by_id[bid])
         if located:
             return bid, located
+    # A repeated price/term in different cells or pictures must never be relocated
+    # by similarity. Source identity is a document check, not model approval.
+    fixed = {b['id'] for b in blocks if b.get('table') or b.get('asset_id')}
+    if bid in fixed and quote:
+        return None, ''
     hits = [b['id'] for b in blocks if quote and b['id'] != bid and quality.locate(quote, b['text'])]
+    if len(hits) > 1 and any(i in fixed for i in hits):
+        return None, ''
     candidates = ([bid] if bid in by_id else []) + hits
     if revised:
         if not candidates:
             # Neither a usable number nor a quote: the paragraph the replacement clearly rewrites, if any.
-            best = max(((_similarity(text, revised), i) for i, text in by_id.items()), default=(0.0, None))
+            best = max(((_similarity(text, revised), i) for i, text in by_id.items() if i not in fixed), default=(0.0, None))
             candidates = [best[1]] if best[0] >= .6 else []
         chosen = max(candidates, key=lambda i: _similarity(by_id[i], revised)) if len(candidates) > 1 else (candidates or [None])[0]
     elif len(hits) == 1 and len(quote) >= 8:
@@ -592,7 +600,7 @@ def run_review(rid: str, *, model: Model | None = None, retrieve: Callable | Non
         rules = p['plan'] + [WHOLE]
         skills = skill_registry.prompt_items(p.get('skills'))
         opening = [{'role': 'system', 'content': SYSTEM + (DRAFT if tier == 'fast' else '')},
-                   {'role': 'user', 'content': document(p, blocks, rules, policies, skills, warnings)}]
+                   {'role': 'user', 'content': document(p, blocks, rules, policies, skills, warnings, contract['payload'].get('document'))}]
         key = _digest({'version': VERSION, 'tier': tier, 'opening': opening})
         state = p.get('chat') if (p.get('chat') or {}).get('input_hash') == key else None
         if state is None:

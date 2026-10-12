@@ -41,6 +41,7 @@ export function ReleasePanel({ review, contract, open, busy, onCheck, onReport, 
 }) {
   const { tx } = useI18n();
   const docx = contract.format === 'docx';
+  const pdf = contract.format === 'pdf';
   const adopted = open.filter(x => isRevised(review.decisions[x.finding.id]));
   const pending = review.export_state?.pending_count ?? pendingDecisions(review);
   return <section id="legal-release" className="lv-rail-panel" aria-labelledby="legal-release-title">
@@ -53,17 +54,22 @@ export function ReleasePanel({ review, contract, open, busy, onCheck, onReport, 
         <strong>{tx(`已写入 ${adopted.length} 项修改`, `${plural(adopted.length, 'edit')} in the current draft`)}</strong>
         <p role="status">{pending > 0 ? tx(`还有 ${pending} 项待处理，可继续导出当前稿。`, `${plural(pending, 'item')} pending. You can still export this draft.`)
           : tx('没有待处理项，点击即可下载。', 'No pending items. Download in one click.')}</p>
+        {(review.export_state?.appendix_count || 0) > 0 && <p>{tx(`${review.export_state!.appendix_count} 项修改将列入附录，原件对应内容保留。`,
+          `${plural(review.export_state!.appendix_count!, 'edit')} will appear in the appendix; the corresponding original content is retained.`)}</p>}
         <div className="lv-release-marks">{adopted.map(x => <Marker key={x.finding.id} n={x.n} finding={x.finding} state="revised" size="sm" number />)}
           <button className="lv-text-button" onClick={onBack}>{tx('查看与编辑修订稿', 'Read and edit the draft')}</button></div>
       </div>
       <div className="lv-export-list">
         <div className="lv-export-row">
           <span className="lv-tile is-gray"><FileDown {...ic} size={18} /></span>
-          <div><strong>{docx ? tx('Word 修订版', 'Tracked-changes Word') : tx('修订文本', 'Revised text')}</strong>
-            <span>{docx ? tx('以修订痕迹写入原文件 · DOCX', 'Edits as tracked changes in the original · DOCX') : tx('纯文本，不含修订痕迹 · TXT', 'Plain text without tracked changes · TXT')}</span></div>
-          <button className="lv-primary lv-btn-sm" disabled={busy} onClick={() => onDraft(docx ? 'docx' : 'txt')}>{docx ? tx('导出 Word 修订版', 'Export Word') : tx('导出修订文本', 'Export revised text')}</button>
+          <div><strong>{docx ? tx('Word 修订版', 'Tracked-changes Word') : pdf ? tx('带批注原 PDF', 'Annotated original PDF') : tx('修订文本', 'Revised text')}</strong>
+            <span>{docx ? tx('原文件中保留修订痕迹；无法直接改写的内容列入附录 · DOCX', 'Tracked changes in the original; edits to read-only content are listed in an appendix · DOCX')
+              : pdf ? tx('原页不变，修改列入批注和附录 · PDF', 'Original pages retained; edits appear in comments and an appendix · PDF')
+                : tx('纯文本，不含修订痕迹 · TXT', 'Plain text without tracked changes · TXT')}</span></div>
+          <button className="lv-primary lv-btn-sm" disabled={busy} onClick={() => onDraft(docx ? 'docx' : pdf ? 'pdf' : 'txt')}>{docx ? tx('导出 Word 修订版', 'Export Word')
+            : pdf ? tx('导出带批注 PDF', 'Export annotated PDF') : tx('导出修订文本', 'Export revised text')}</button>
         </div>
-        {docx && <div className="lv-export-row">
+        {(docx || pdf) && <div className="lv-export-row">
           <span className="lv-tile is-gray"><FileText {...ic} size={18} /></span>
           <div><strong>{tx('文字稿', 'Text version')}</strong><span>{tx('不保留原排版和修订痕迹 · TXT', 'Without original layout or tracked changes · TXT')}</span></div>
           <button className="lv-secondary lv-btn-sm" disabled={busy} onClick={() => onDraft('txt')}>{tx('导出文字稿', 'Export text')}</button>

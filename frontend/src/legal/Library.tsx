@@ -41,7 +41,7 @@ export function Library({ contracts, matterName, loading, disabled, busy, query,
         <span className="lv-tile" aria-hidden="true"><FileText size={30} strokeWidth={1.5} /></span>
         <div className="lv-upload-copy">
           <p className="lv-upload-title">{dragging ? tx('松开以上传', 'Drop to upload') : tx('拖入合同，开始新的审查', 'Drop a contract here to start a review')}</p>
-          <p className="lv-upload-spec">{tx('.docx、文本型 .pdf、.txt · 单个文件不超过 10 MB', '.docx, text-based .pdf or .txt · up to 10 MB per file')}</p>
+          <p className="lv-upload-spec">{tx('.docx、.pdf、.txt · 单个文件不超过 10 MB', '.docx, .pdf or .txt · up to 10 MB per file')}</p>
           <ul className="lv-assurances" aria-label={tx('隐私保护', 'Privacy safeguards')}>
             <li><ShieldCheck {...ic} size={14} />{tx('自动脱敏', 'Automatic redaction')}</li>
             <li><Lock {...ic} size={14} />{tx('加密存储', 'Encrypted storage')}</li>

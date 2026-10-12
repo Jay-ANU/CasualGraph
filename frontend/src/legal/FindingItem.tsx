@@ -11,10 +11,12 @@ import { Redline, RichText } from './ui';
 import { ic } from './icon';
 import { useI18n } from '../i18n/core';
 import { labelOf, serverText, type Pair } from './i18n';
+import { sourceLabel } from './documentLayout';
 
 type Props = {
   item: Numbered; review: Review; block?: Block; clause: string; busy: boolean; selected: boolean;
   onSelect: () => void; onLocate: (blockId: string) => void;
+  onSource?: (blockId: string) => void;
   onDecision: (value: string, text: string, legalBasis: boolean, manual: boolean) => void;
 };
 
@@ -26,7 +28,7 @@ const DECISION_NOTE: Record<string, Pair> = {
 };
 
 /** One finding in the rail: a single line until selected, then its reasoning, basis and the revision to decide on. */
-export function FindingItem({ item: { finding: f, n }, review: r, block, clause, busy, selected, onSelect, onLocate, onDecision }: Props) {
+export function FindingItem({ item: { finding: f, n }, review: r, block, clause, busy, selected, onSelect, onLocate, onSource, onDecision }: Props) {
   const { tx } = useI18n();
   const decision = r.decisions[f.id];
   const decided = isDecided(decision);
@@ -61,6 +63,8 @@ export function FindingItem({ item: { finding: f, n }, review: r, block, clause,
       </span>
     </button>
     {selected && <div className="lv-note-body">
+      {block && onSource && <button className="lv-text-button lv-finding-source" disabled={busy} onClick={() => onSource(block.id)}>
+        {tx('查看原件：', 'View original: ')}{sourceLabel({ block_id: block.id }, block)}</button>}
       <div className="lv-note-sec"><span className="lv-note-label">{tx('风险说明', 'Why it matters')}</span><p>{f.reason}</p></div>
       {f.missing_facts.length > 0 && <div className="lv-note-sec"><span className="lv-note-label">{tx('待补充', 'Facts needed')}</span><p className="is-warn">{f.missing_facts.join('；')}</p></div>}
       {(laws.length > 0 || sources.length > 0 || policies.length > 0 || unsupported) && <div className="lv-note-sec"><span className="lv-note-label">{tx('依据', 'Basis')}</span>
@@ -84,6 +88,8 @@ export function FindingItem({ item: { finding: f, n }, review: r, block, clause,
       {(status === 'unconfirmed' || status === 'rejected') && f.verification_note && <div className="lv-note-sec"><span className="lv-note-label">{tx('模型复核意见', 'Model verification opinion')}</span><p className="lv-muted">{serverText(f.verification_note)}</p></div>}
       {decision?.source === 'model' && decision.decision === 'draft' && <p className="lv-note">{tx('这项修改已写入 AI 拟稿，你可以直接编辑、采纳或保留原文。', 'This edit is in the AI draft. You can edit it, accept it or keep the original.')}</p>}
       {showRevision && <div className="lv-note-sec">
+        {block?.native_editable === false && <p className="lv-note">{tx('此处修改作为补充修订导出，原 Word/PDF 内容保留；文字稿会使用修改后的文字。',
+          'This edit is exported as a supplemental revision. Original Word/PDF content is retained; the text version uses the revised wording.')}</p>}
         <span className="lv-note-label lv-note-label-row">{f.suggested_text && !drafting ? tx('修改建议', 'Suggested edit') : tx('修订文本', 'Revised text')}
           <button className="lv-text-button" disabled={busy} onClick={() => setEditing(!editing)}>{editing ? tx('查看对比', 'Show changes') : tx('编辑', 'Edit')}</button></span>
         {editing ? <textarea className="lv-textarea lv-serif" aria-label={tx('编辑本段修订', 'Edit the revised paragraph')} rows={6} value={text} maxLength={12000} onChange={e => setText(e.target.value)} />

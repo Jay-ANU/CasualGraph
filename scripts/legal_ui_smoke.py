@@ -4,13 +4,17 @@ from contextlib import contextmanager
 import functools
 import hashlib
 import http.server
+import base64
+import io
 import json
 import os
 from pathlib import Path
 import re
 import threading
 import time
+import zipfile
 from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
 from playwright.sync_api import expect, sync_playwright
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -27,11 +31,54 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self,*args):pass
 server=http.server.ThreadingHTTPServer(('127.0.0.1',4173),functools.partial(Handler,directory=str(ROOT/'frontend/dist')))
 threading.Thread(target=server.serve_forever,daemon=True).start()
-contract={'id':'c1','name':'测试采购合同.txt','status':'redaction_pending','revision':1,'redaction_version':2,'format':'txt','matter_id':'m1','org_id':'o1','warnings':[], 'replacement_count':1,'reviews':[], 'blocks':[{'id':'p1','text':'【脱敏1】应在签约后支付全部价款，交货时间另行通知。','page':None}]}
+contract={'id':'c1','name':'测试采购合同.txt','status':'redaction_pending','revision':1,'redaction_version':2,'format':'txt','matter_id':'m1','org_id':'o1','warnings':[], 'replacement_count':1,'reviews':[], 'original_available':True,'blocks':[{'id':'p1','text':'【脱敏1】应在签约后支付全部价款，交货时间另行通知。','page':None}]}
 finding={'id':'f1','rule_id':'performance','block_id':'p1','original_quote':contract['blocks'][0]['text'],'title':'付款与交货保障不匹配','kind':'commercial','severity':'high','impact':'我方预先承担全部资金风险。','reason':'付款条件未与确定的交货期限挂钩。','suggested_text':'【脱敏1】在交货验收后支付价款，交货应在签约后三十日内完成。','evidence_status':'not_applicable','missing_facts':[],'citations':[],'policy_ids':[],'verification_status':'supported','revision_allowed':True}
 review={'id':'r1','contract_id':'c1','status':'completed','stage':'检查完成，等待人工逐条复核','resumable':False,'engine_version':2,'profile':{'model':{'id':'glm-5.2','provider':'ydata'},'review_mode':'multi_agent'},'error':None,'findings':[finding],'coverage':[{'rule_id':'performance','title':'交付、验收与付款','status':'reviewed','note':'合成测试样例'}],'sources':[],'decisions':{},'policies':[],'notice':'合成测试数据，不是法律结论。'}
 review['collaboration']={'version':1,'max_parallel':3,'call_budget':40,'agents':[{'id':'legal','title':'法律风险审查','status':'completed','completed':2,'total':2,'note':''}]}
 policies=[]; calls=[]; export_requests=[]; review_requests=[]; model_requests=[]; allowed={'value':True,'plan':'max','unavailable':False}
+structured_source={'value':None}
+
+def structured_docx_fixture():
+    """Real source package: merged/nested tables, an image and a read-only header."""
+    from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.shared import Inches
+    from PIL import Image, ImageDraw
+    from legal.docx_structure import parse_docx
+    image=Image.new('RGB',(240,80),'#e7edf5');ImageDraw.Draw(image).text((14,30),'SYNTHETIC SOURCE IMAGE',fill='#183153')
+    png=io.BytesIO();image.save(png,format='PNG');png.seek(0)
+    doc=Document();doc.add_heading('Synthetic Buyer delivery schedule',level=1)
+    table=doc.add_table(rows=4,cols=3);table.style='Table Grid'
+    table.cell(0,0).merge(table.cell(0,2)).text='Delivery and payment'
+    table.rows[0]._tr.get_or_add_trPr().append(OxmlElement('w:tblHeader'))
+    table.cell(1,0).merge(table.cell(2,0)).text='Equipment'
+    table.cell(1,1).text='100';table.cell(1,2).text='Within 10 days'
+    table.cell(2,1).text='200';table.cell(2,2).text='Within 20 days'
+    table.cell(3,0).text='Source image';table.cell(3,1).paragraphs[0].add_run().add_picture(png,width=Inches(1))
+    nested=table.cell(3,2).add_table(rows=1,cols=2);nested.cell(0,0).text='Unit';nested.cell(0,1).text='piece'
+    doc.add_paragraph('Final payment confirmed in writing',style='List Number')
+    doc.sections[0].header.paragraphs[0].text='Synthetic confidential header'
+    stream=io.BytesIO();doc.save(stream);data=stream.getvalue()
+    parsed=parse_docx(data)
+    parsed.update(format='docx',content_hash=hashlib.sha256(data).hexdigest(),original_b64=base64.b64encode(data).decode())
+    return parsed
+
+def structured_pdf_fixture():
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+    from PIL import Image
+    from legal.contract_documents import parse_contract
+    stream=io.BytesIO();pdf=canvas.Canvas(stream,pagesize=(500,650))
+    pdf.drawString(60,590,'Synthetic original page one');pdf.showPage()
+    pdf.drawString(60,590,'Payment is due in 10 days.')
+    pdf.drawImage(ImageReader(Image.new('RGB',(120,40),'#426a94')),60,490,width=120,height=40)
+    pdf.showPage();pdf.save()
+    data=stream.getvalue()
+    # A fixture never contacts a parser service, even if a developer has configured one.
+    with patch.dict(os.environ,{'LEGAL_DOCUMENT_PARSER_URL':'','LEGAL_DOCUMENT_PARSER_TOKEN':''}):
+        parsed=parse_contract(data,'synthetic.pdf')
+    parsed['original_b64']=base64.b64encode(data).decode()
+    return parsed
 model_actions={'allowed':False,'reject_next_create':False}
 model_catalog={'provider':'mixed','models':[{'id':'gpt-fixture','family':'GPT','provider':'ydata'},
     {'id':'claude-fixture','family':'Claude','provider':'anthropic'},{'id':'deepseek-fixture','family':'DeepSeek','provider':'ydata'},
@@ -61,9 +108,13 @@ def review_view():
     ids={f['id'] for f in review['findings']}
     pending=sum(decisions.get(fid,{}).get('decision') not in ('accepted','rejected') for fid in ids)
     selected=sum(decisions.get(fid,{}).get('decision') in ('accepted','draft') for fid in ids)
+    by_block={block['id']:block for block in contract['blocks']}
+    appendix=sum(decisions.get(f['id'],{}).get('decision') in ('accepted','draft') and
+                 (contract['format']=='pdf' or by_block.get(f.get('block_id'),{}).get('native_editable') is False) for f in review['findings'])
     fingerprint=hashlib.sha256(json.dumps({'decisions':decisions,'findings':review['findings']},sort_keys=True).encode()).hexdigest()
     return {**review,'export_state':{'ready':review['status'] in ('completed','partial'),'pending_count':pending,'selected_count':selected,
-            'fingerprint':fingerprint,'confirmation_required':pending>0}}
+            'fingerprint':fingerprint,'confirmation_required':pending>0,'appendix_count':appendix,
+            'parsing_issue_count':len(contract.get('document',{}).get('issues',[]))}}
 
 headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,PATCH,DELETE,OPTIONS','Access-Control-Allow-Headers':'authorization,content-type'}
 def route_api(route):
@@ -83,7 +134,19 @@ def route_api(route):
         assert b'original_upload_confirmed' in req.post_data_buffer and b'original-upload-v1' in req.post_data_buffer
         data=contract
     elif path=='/legal/contracts/c1':data=contract
-    elif path=='/legal/contracts/c1/original-text':data={'blocks':[{'id':'p1','text':'原件对照合成姓名：张三','page':None}]}
+    elif path=='/legal/contracts/c1/original-text':
+        data={'blocks':structured_source['value']['blocks'] if structured_source['value'] else [{'id':'p1','text':'原件对照合成姓名：张三','page':None}]}
+    elif path=='/legal/contracts/c1/original' or path.startswith('/legal/contracts/c1/assets/'):
+        assert req.headers.get('authorization')=='Bearer synthetic', 'Original bytes require authenticated requests'
+        assert not urlparse(req.url).query, 'Credentials must not appear in original/asset URLs'
+        payload=structured_source['value'];assert payload is not None
+        if '/assets/' in path:
+            from legal.document_assets import asset_preview
+            body,mime=asset_preview(payload,path.rsplit('/',1)[1])
+        else:
+            from legal.document_assets import SOURCE_MIMES, original_bytes
+            body,mime=original_bytes(payload),SOURCE_MIMES[payload['format']]
+        route.fulfill(status=200,headers={**headers,'Cache-Control':'no-store'},content_type=mime,body=body);return
     elif path.endswith('/redaction'):
         if req.post_data_json.get('confirmed'):contract['status']='ready'
         data={'blocks':contract['blocks'],'confirmed':req.post_data_json.get('confirmed')}
@@ -151,11 +214,24 @@ def route_api(route):
                 'pending_count':state['pending_count'],'fingerprint':state['fingerprint']}}
         else:
             blocks=[]
+            replacements={}
             for block in contract['blocks']:
                 revised=next((review['decisions'][f['id']]['text'] for f in review['findings'] if f.get('block_id')==block['id']
                     and review['decisions'].get(f['id'],{}).get('decision') in ('accepted','draft')),None)
                 blocks.append(revised or block['text'])
+                if revised is not None:replacements[block['id']]=revised
             text='\n'.join(blocks)
+            if structured_source['value'] and query.get('format') in (['docx'],['pdf']):
+                from legal.document_assets import original_bytes
+                source=structured_source['value'];original=original_bytes(source)
+                if query['format']==['docx']:
+                    from legal.docx_redlines import redline_docx
+                    body=redline_docx(original,source['blocks'],replacements)
+                    mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                else:
+                    from legal.pdf_annotations import annotated_pdf
+                    body=annotated_pdf(original,source['blocks'],replacements);mime='application/pdf'
+                route.fulfill(status=200,headers=headers,content_type=mime,body=body);return
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document' if query.get('format')==['docx'] else 'text/plain; charset=utf-8'
             route.fulfill(status=200,headers=headers,content_type=mime,body=text);return
     elif path=='/legal/reviews/r1/questions':
@@ -537,6 +613,111 @@ try:
         with page.expect_download() as text_download:page.get_by_role('button',name='导出文字稿',exact=True).click()
         assert text_download.value.suggested_filename.endswith('.txt') and export_requests[-1]['format']==['txt']
         assert not any(path.endswith(('/draft-check','/draft-approval')) for _,path in calls)
+        # Real DOCX source -> structured React view -> edit the same paragraph -> real Word redline.
+        from legal.document_context import public_assets, public_blocks, public_structure
+        source_saved_contract=json.loads(json.dumps(contract));source_saved_review=json.loads(json.dumps(review))
+        source=structured_docx_fixture();structured_source['value']=source
+        contract.update(name='结构化合成合同.docx',format='docx',status='ready',original_available=True,
+                        document=public_structure(source['document']),assets=public_assets(source['assets']),blocks=public_blocks(source['blocks']),warnings=source['warnings'])
+        for block in contract['blocks']:block['text']=block['text'].replace('Synthetic Buyer','【脱敏1】')
+        target=next(block for block in source['blocks'] if block['text']=='100')
+        table_finding={**finding,'id':'table-finding','block_id':target['id'],'original_quote':'100','suggested_text':'150','title':'合成表格金额调整'}
+        review.clear();review.update(json.loads(json.dumps(saved_review)))
+        review.update(review_tier='ultra_fast',findings=[table_finding],decisions={'table-finding':{'decision':'draft','text':'150','version':1,'source':'model'}})
+        review['profile']['review_tier']='ultra_fast'
+        before_assets=sum('/assets/' in path for method,path in calls if method=='GET')
+        page.add_init_script("window.sourceRevocations=[];const revoke=URL.revokeObjectURL.bind(URL);URL.revokeObjectURL=u=>{window.sourceRevocations.push(u);revoke(u)};")
+        page.set_viewport_size({'width':1440,'height':1000})
+        page.goto('http://127.0.0.1:4173/legal?contract=c1')
+        expect(page.locator('.lv-contract-table')).to_have_count(2)
+        expect(page.locator('.lv-contract-table [rowspan="2"]')).to_have_count(1)
+        expect(page.locator('.lv-contract-table [colspan="3"]')).to_have_count(1)
+        target_view=page.locator(f'#legal-block-{target["id"]}')
+        expect(target_view).to_contain_text('150')
+        expect(page.locator('img.lv-source-image')).to_have_count(0)
+        assert sum('/assets/' in path for method,path in calls if method=='GET')==before_assets
+        expect(page.get_by_text('Synthetic Buyer delivery schedule',exact=True)).to_have_count(0)
+        expect(page.locator('.lv-document-section')).to_contain_text('Synthetic confidential header')
+        audit_layout(page,'legal-structured-table')
+        page.set_viewport_size({'width':1440,'height':1000})
+        # A positional parsing note opens the original without any model request.
+        image_issue=next(issue for issue in source['document']['issues'] if issue['code']=='image_text_unread')
+        page.locator('.lv-parsing-issues > summary').click()
+        page.locator('.lv-parsing-issue').filter(has_text=image_issue['message']).get_by_role('button').click()
+        original_image=page.locator('img.lv-source-image')
+        expect(original_image).to_have_attribute('src',re.compile(r'^blob:'))
+        page.wait_for_function('Array.from(document.querySelectorAll("img.lv-source-image")).every(image=>image.complete&&image.naturalWidth>0)')
+        expect(page.get_by_text('Synthetic Buyer delivery schedule',exact=True)).to_be_visible()
+        expect(target_view).to_contain_text('100')
+        assert sum('/assets/' in path for method,path in calls if method=='GET')>before_assets
+        image_blob=original_image.get_attribute('src')
+        page.screenshot(path=str(OUT/'legal-structured-original.png'))
+        with page.expect_download() as original_download:page.get_by_role('button',name='下载原文件',exact=True).click()
+        original_download.value.save_as(OUT/'structured-original.docx')
+        assert (OUT/'structured-original.docx').read_bytes()==base64.b64decode(source['original_b64'])
+        page.get_by_role('button',name='对照原件',exact=True).click()
+        expect(original_image).to_have_count(0)
+        page.wait_for_function('url=>window.sourceRevocations.includes(url)',arg=image_blob)
+        expect(page.get_by_text('Synthetic Buyer delivery schedule',exact=True)).to_have_count(0)
+        expect(target_view).to_contain_text('150')
+        # The source link on the finding locates this same merged-table paragraph.
+        page.locator('.lv-finding-source').click()
+        expect(target_view).to_be_in_viewport()
+        expect(target_view).to_contain_text('100')
+        page.get_by_role('button',name='对照原件',exact=True).click()
+        page.get_by_role('button',name='编辑',exact=True).click()
+        page.get_by_label('编辑本段修订',exact=True).fill('175')
+        page.get_by_role('button',name='保存修改',exact=True).click()
+        expect(target_view).to_contain_text('175')
+        with page.expect_download() as structured_download:page.get_by_role('button',name='导出修订稿',exact=True).click()
+        expect(page.get_by_role('dialog')).to_have_count(0)
+        structured_download.value.save_as(OUT/'structured-revision.docx')
+        from lxml import etree
+        from legal.docx_redlines import NS, visible_paragraph_text
+        with zipfile.ZipFile(io.BytesIO(base64.b64decode(source['original_b64']))) as before,zipfile.ZipFile(OUT/'structured-revision.docx') as after:
+            original_xml=etree.fromstring(before.read('word/document.xml'));revised_xml=etree.fromstring(after.read('word/document.xml'))
+            for xpath in ('//w:gridSpan/@w:val','//w:vMerge/@w:val'):
+                assert original_xml.xpath(xpath,namespaces=NS)==revised_xml.xpath(xpath,namespaces=NS)
+            assert len(revised_xml.xpath('//w:tbl',namespaces=NS))==2
+            target_paragraph=revised_xml.xpath('//w:body//w:p[not(ancestor::w:txbxContent)]',namespaces=NS)[target['anchor']]
+            assert visible_paragraph_text(target_paragraph)=='175'
+            assert target_paragraph.xpath('.//w:ins',namespaces=NS)
+            for name in before.namelist():
+                if name.startswith(('word/media/','word/header')):assert before.read(name)==after.read(name)
+        # Actual PDF source pages stay intact; a user-confirmed export adds comments and an appendix.
+        source=structured_pdf_fixture();structured_source['value']=source
+        contract.update(name='合成原始页面.pdf',format='pdf',document=public_structure(source['document']),assets=public_assets(source['assets']),blocks=public_blocks(source['blocks']),warnings=source['warnings'])
+        target=next(block for block in source['blocks'] if block['page']==2 and 'Payment' in block['text'])
+        revised_text='Payment is due in 30 days.'
+        pdf_finding={**finding,'id':'pdf-finding','block_id':target['id'],'original_quote':target['text'],'suggested_text':revised_text,'title':'合成 PDF 账期调整'}
+        review.update(findings=[pdf_finding],decisions={'pdf-finding':{'decision':'draft','text':revised_text,'version':1,'source':'model'}})
+        page.goto('http://127.0.0.1:4173/legal?contract=c1')
+        expect(page.locator('.lv-source-supplement')).to_contain_text(revised_text)
+        expect(page.locator(f'#legal-block-{target["id"]}')).to_contain_text('Payment is due in 10 days.')
+        original_calls=sum(path.endswith('/original') for method,path in calls if method=='GET')
+        page.locator('.lv-finding-source').click()
+        expect(page.get_by_title('原 PDF 页面',exact=True)).to_have_attribute('src',re.compile(r'^blob:.*#page=2$'))
+        assert sum(path.endswith('/original') for method,path in calls if method=='GET')==original_calls+1
+        page.get_by_role('button',name='导出修订稿',exact=True).click()
+        expect(page.get_by_role('dialog',name='导出确认')).to_contain_text('还有 1 项待处理')
+        with page.expect_download() as pdf_download:page.get_by_role('button',name='确认导出',exact=True).click()
+        pdf_download.value.save_as(OUT/'structured-annotated.pdf')
+        assert export_requests[-1]['format']==['pdf'] and export_requests[-1]['confirmed']==['true']
+        from pypdf import PdfReader
+        original_pdf=PdfReader(io.BytesIO(base64.b64decode(source['original_b64'])));annotated=PdfReader(OUT/'structured-annotated.pdf')
+        assert len(annotated.pages)>len(original_pdf.pages)
+        for index,original_page in enumerate(original_pdf.pages):
+            output_page=annotated.pages[index]
+            assert output_page.extract_text()==original_page.extract_text()
+            assert tuple(output_page.mediabox)==tuple(original_page.mediabox)
+            for name,obj in original_page['/Resources'].get('/XObject',{}).items():
+                assert output_page['/Resources']['/XObject'][name].get_object().get_data()==obj.get_object().get_data()
+        assert annotated.pages[1].get('/Annots')
+        assert revised_text in ' '.join(' '.join(p.extract_text() or '' for p in annotated.pages[2:]).split())
+        assert not any(path.endswith(('/draft-check','/draft-approval')) for _,path in calls)
+        assert not errors,errors
+        structured_source['value']=None
+        contract.clear();contract.update(source_saved_contract);review.clear();review.update(source_saved_review)
         # Chat-style reviews: the memo streams in while the model writes, then the finished review opens on it.
         review.clear();review.update(json.loads(json.dumps(saved_review)))
         review.pop('collaboration',None)
@@ -637,7 +818,7 @@ try:
         still.close()
         assert not AXE_VIOLATIONS, AXE_VIOLATIONS
         browser.close()
-    print('PASS: actual built UI with synthetic APIs: Max gate, library, redaction compare, 20 scenarios, party picking on paper, live review, numbered findings, user-controlled export, fast model drafts, chat-style memo streaming, direct edits, stale confirmation, disputed findings, Word/TXT choices, policies, mobile, English switch, Anthropic official Claude and YData routing, recipient-bound consent, provider refresh, explicit follow-up and optional check.')
+    print('PASS: actual built UI with synthetic APIs: Max gate, library, redaction compare, 20 scenarios, party picking on paper, live review, numbered findings, user-controlled export, fast model drafts, chat-style memo streaming, direct edits, stale confirmation, disputed findings, real Word merged/nested tables and image preservation, authenticated original images and PDF pages, positional source links, annotated PDF appendix, Word/PDF/TXT choices, policies, mobile, English switch, Anthropic official Claude and YData routing, recipient-bound consent, provider refresh, explicit follow-up and optional check.')
 except Exception:
     try:
         page.screenshot(path=str(OUT/'failure.png'), full_page=True)

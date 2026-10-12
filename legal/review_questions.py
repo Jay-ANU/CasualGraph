@@ -132,9 +132,14 @@ def ask(r: dict, c: dict, user: dict, question: str, request_id: str, authorize)
                 'review_memo': (p.get('memo') or '')[:12000],
                 'skills': skill_registry.prompt_items(p.get('skills')),
                 'history': [{'question': x['question'], 'answer': x.get('answer', '')} for x in history(r['id'], user_id)[-4:-1]]}
+        from legal.document_context import model_structure, model_request_blocks, STRUCTURE_GUIDANCE
+        structure = model_structure(c['payload'].get('document'))
+        if structure is not None:
+            data['document_structure'] = structure
+            data['contract_blocks'] = model_request_blocks(blocks, structure)
         if len(json.dumps(data, ensure_ascii=False)) > 120000:
             raise HTTPException(422, '本轮材料超过提问上下文预算，请按原文和意见逐条复核。')
-        raw = ydata.chat_json(QUESTION_SYSTEM, data, p['profile']['model'])
+        raw = ydata.chat_json(QUESTION_SYSTEM + ('\n' + STRUCTURE_GUIDANCE if structure is not None else ''), data, p['profile']['model'])
         authorize()
         result = {**pending, **validate_answer(raw, blocks, sources), 'model': p['profile']['model']['id'],
                   'notice': '仅解释本轮合同及证据，不替代法律核验，也不会修改合同。'}

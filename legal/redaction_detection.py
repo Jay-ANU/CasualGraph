@@ -25,6 +25,11 @@ PATTERNS = (
     ('统一信用代码', re.compile(r'(?<![A-Z0-9])[159Y][1239][0-9A-HJ-NPQRTUWXY]{16}(?![A-Z0-9])')),
     ('账号', re.compile(r'(?<!\d)\d{16,19}(?!\d)')),
 )
+PERSON_LABELS = frozenset(('联系人', '联系人姓名', '姓名', '法定代表人', '签约代表', '收件人', '签署人', '负责人'))
+PRIVATE_LABELS = frozenset(('地址', '联系地址', '通讯地址', '注册地址', '开户行', '开户银行', '账号', '账户', '银行账号', '银行账户',
+                          '公司名称', '单位名称', '企业名称', '开户名称', '纳税人识别号', '身份证号', '证件号码', '联系电话',
+                          '手机号码', '手机号', '电子邮箱', '邮箱', '电话', '联系方式'))
+OTHER_HEADERS = frozenset(('序号', '编号', '职务', '职位', '角色', '部门', '项目', '金额', '日期', '备注', '签名', '签字'))
 
 @dataclass(frozen=True)
 class Span:
@@ -76,10 +81,99 @@ def detect(text: str) -> list[Span]:
     return spans
 
 
+def _field_label(value: str) -> str | None:
+    value = re.sub(r'[\s：:]+', '', value)
+    value = re.sub(r'^(?:' + ROLE + ')', '', value)
+    return '联系人' if value in PERSON_LABELS else '地址' if value in PRIVATE_LABELS else None
+
+
+def _table_entities(blocks: list[dict]) -> set[str]:
+    """Use neighbouring field cells and real column headers without joining contracts.
+
+    Each candidate is projected back onto an existing value block. Nested native
+    and OCR tables retain every enclosing cell, so a label next to their outer
+    cell still identifies its value. Metadata contains coordinates only; field
+    labels and sensitive values remain in text.
+    """
+    tables: dict[str, dict[str, dict]] = {}
+    for block in blocks:
+        contexts = [block.get('table')]
+        if isinstance(block.get('ancestor_tables'), list):
+            contexts.extend(block['ancestor_tables'])
+        seen = set()
+        for table in contexts:
+            if (not isinstance(table, dict) or not isinstance(table.get('id'), str)
+                    or not isinstance(table.get('cell_id'), str)
+                    or type(table.get('row')) is not int or type(table.get('col')) is not int):
+                continue
+            key = table['id'], table['cell_id']
+            if key in seen:
+                continue
+            seen.add(key)
+            cells = tables.setdefault(table['id'], {})
+            cell = cells.setdefault(table['cell_id'], {'meta': table, 'blocks': []})
+            cell['blocks'].append(block)
+    entities = set()
+
+    def private_values(cell, label):
+        for block in cell['blocks']:
+            # A second field label is not a person's name or address.
+            if _field_label(block['text']):
+                continue
+            prefix = label + '：'
+            for span in detect(prefix + block['text']):
+                start, end = max(0, span.start - len(prefix)), span.end - len(prefix)
+                if 0 <= start < end <= len(block['text']):
+                    entities.add(block['text'][start:end])
+
+    for indexed in tables.values():
+        cells = list(indexed.values())
+        labels = {cid: _field_label('\n'.join(b['text'] for b in cell['blocks'])) for cid, cell in indexed.items()}
+        top = min((c['meta']['row'] for c in cells), default=0)
+        top_cells = [cell for cell in cells if cell['meta']['row'] == top]
+        # In a first-row label/value form, "张三" must not turn its neighbouring
+        # label into a column header. Recognisable headings or tblHeader establish
+        # column context; an actual single-column field table works as well.
+        inferred_header = bool(top_cells) and all(
+            labels[cell['meta']['cell_id']] or re.sub(r'[\s：:]+', '', '\n'.join(b['text'] for b in cell['blocks'])) in OTHER_HEADERS
+            for cell in top_cells)
+        for cid, label in labels.items():
+            if label is None:
+                continue
+            field = indexed[cid]['meta']
+            row_span, col_span = field.get('row_span', 1), field.get('col_span', 1)
+            row_span = row_span if type(row_span) is int and row_span > 0 else 1
+            col_span = col_span if type(col_span) is int and col_span > 0 else 1
+            is_header = field.get('header') is True or (field['row'] == top and inferred_header)
+            for cell in cells:
+                value = cell['meta']
+                if value['cell_id'] == cid:
+                    continue
+                adjacent = field['row'] <= value['row'] < field['row'] + row_span and value['col'] == field['col'] + col_span
+                below = is_header and value['row'] >= field['row'] + row_span and field['col'] <= value['col'] < field['col'] + col_span
+                if (adjacent and not is_header) or below:
+                    private_values(cell, label)
+    return entities
+
+
+def _replace(value, pattern, replacements):
+    positions, offset = [], 0
+    if pattern:
+        for match in pattern.finditer(value):
+            token = replacements[match.group()]
+            positions.append({'original_start': match.start(), 'original_end': match.end(),
+                              'start': match.start() + offset, 'end': match.start() + offset + len(token), 'token': token})
+            offset += len(token) - len(match.group())
+        value = pattern.sub(lambda m: replacements[m.group()], value)
+    return value, positions
+
+
 def redact(blocks: list[dict], additional_terms: list[str] | None = None,
            excluded_terms: list[str] | None = None) -> tuple[list[dict], dict[str, str]]:
     excluded = set(excluded_terms or [])
-    entities = {block['text'][s.start:s.end] for block in blocks for s in detect(block['text'])}
+    entities = {value[s.start:s.end] for block in blocks for value in (block['text'], block.get('label', ''))
+                if isinstance(value, str) for s in detect(value)}
+    entities.update(_table_entities(blocks))
     entities.difference_update(excluded)
     entities.update(value.strip() for value in additional_terms or [] if value.strip())
     ordered = sorted(entities, key=lambda x: (-len(x), x))
@@ -88,14 +182,9 @@ def redact(blocks: list[dict], additional_terms: list[str] | None = None,
     pattern = re.compile('|'.join(re.escape(x) for x in ordered)) if ordered else None
     output = []
     for block in blocks:
-        text, positions, offset = block['text'], [], 0
-        if pattern:
-            for match in pattern.finditer(text):
-                token = replacements[match.group()]
-                positions.append({'original_start': match.start(), 'original_end': match.end(),
-                                  'start': match.start() + offset, 'end': match.start() + offset + len(token),
-                                  'token': token})
-                offset += len(token) - len(match.group())
-            text = pattern.sub(lambda m: replacements[m.group()], text)
-        output.append({**block, 'text': text, 'redaction_spans': positions})
+        text, positions = _replace(block['text'], pattern, replacements)
+        masked = {**block, 'text': text, 'redaction_spans': positions}
+        if isinstance(block.get('label'), str):
+            masked['label'], masked['label_redaction_spans'] = _replace(block['label'], pattern, replacements)
+        output.append(masked)
     return output, mapping

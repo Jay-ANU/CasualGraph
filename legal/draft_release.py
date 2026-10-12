@@ -56,7 +56,8 @@ def snapshot(r: dict, c: dict) -> dict:
         raise HTTPException(409, '原件或脱敏版本已变化，请重新审查。')
     from legal.contract_documents import restore
     findings = {f['id']: f for f in p.get('findings', [])}
-    original = [{'id': b['id'], 'text': b['text']} for b in cp['redacted_blocks']]
+    from legal.document_context import model_blocks
+    original = model_blocks(cp['redacted_blocks'])
     blocks = {b['id']: b['text'] for b in original}
     source = cp.get('blocks', [])
     if (not original or len(blocks) != len(original)
@@ -80,10 +81,11 @@ def snapshot(r: dict, c: dict) -> dict:
                          'manual': human or replacement != f.get('suggested_text'), 'kind': f.get('kind', 'commercial'),
                          'reason': f.get('reason', ''), 'citations': f.get('citations', []), 'law_refs': f.get('law_refs', [])})
     changes = {item['block_id']: item['text'] for item in selected}
-    final = [{'id': b['id'], 'text': changes.get(b['id'], b['text'])} for b in original]
+    final = [{**b, 'text': changes.get(b['id'], b['text'])} for b in original]
     identity = {'review_id': r['id'], 'contract_id': c['id'], 'revision': c['revision'],
                 'source_hash': cp.get('content_hash') or digest(cp.get('blocks', [])),
                 'source_blocks_hash': digest(source), 'source_package_hash': digest(cp.get('original_b64')),
+                'source_structure_hash': digest(cp.get('document')), 'source_assets_hash': digest(cp.get('assets')),
                 'redacted_hash': digest(original), 'mapping_hash': digest(cp.get('mapping', {})),
                 'profile': p.get('profile'), 'transaction_brief': p.get('transaction_brief'), 'policies': p.get('policies', []),
                 'findings': p.get('findings', []), 'coverage': p.get('coverage', []),
@@ -109,6 +111,10 @@ def export_state(r: dict, c: dict) -> dict:
         state['reason'] = exc.detail
     else:
         state.update(ready=True, selected_count=len(data['selected_changes']), fingerprint=data['fingerprint'])
+        blocks = {b['id']: b for b in c['payload'].get('blocks', [])}
+        state['appendix_count'] = sum(c['payload'].get('format') == 'pdf' or blocks.get(d['block_id'], {}).get('native_editable') is False
+                                      for d in data['selected_changes'])
+        state['parsing_issue_count'] = len((c['payload'].get('document') or {}).get('issues', []))
     return state
 
 
@@ -187,6 +193,12 @@ def check(rid: str, user_id: str, request_id: str, authorize, *, model=None) -> 
         request = {**data, 'profile': payload['profile'], 'transaction_brief': payload.get('transaction_brief'), 'legal_sources': selected_sources,
                    'company_policies': payload.get('policies', []), 'coverage': payload.get('coverage', []),
                    'parsing_warnings': c['payload'].get('warnings', [])}
+        from legal.document_context import model_structure, model_request_blocks, STRUCTURE_GUIDANCE
+        structure = model_structure(c['payload'].get('document'))
+        if structure is not None:
+            request['document_structure'] = structure
+            request['original_contract'] = model_request_blocks(data['original_contract'], structure)
+            request['final_contract'] = model_request_blocks(data['final_contract'], structure)
         if len(json.dumps(request, ensure_ascii=False)) + len(SYSTEM) > MAX_INPUT_CHARACTERS:
             raise HTTPException(422, '修订组合超过上下文预算；没有截断合同或依据，请缩小审查范围。')
         authorize()
@@ -197,7 +209,7 @@ def check(rid: str, user_id: str, request_id: str, authorize, *, model=None) -> 
             metrics = latest['payload'].setdefault('metrics', {})
             metrics['draft_check_model_calls'] = metrics.get('draft_check_model_calls', 0) + 1
             conn.execute('UPDATE legal_reviews SET payload=? WHERE id=?', (store.encode(latest['payload']), rid))
-        raw = (model or ydata.chat_json)(SYSTEM, request, payload['profile']['model'])
+        raw = (model or ydata.chat_json)(SYSTEM + ('\n' + STRUCTURE_GUIDANCE if structure is not None else ''), request, payload['profile']['model'])
         authorize()
         result = {'id': check_id, 'fingerprint': data['fingerprint'], 'final_hash': data['final_hash'],
                   'created_at': now, **validate_check(raw, data['selected_changes']),

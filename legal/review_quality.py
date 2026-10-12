@@ -269,8 +269,9 @@ def validate_facts(raw: Any, blocks: list[dict]) -> dict:
     return {'facts': facts, 'rejected_facts': rejected}
 
 def model_blocks(blocks: list[dict]) -> list[dict]:
-    """What a model needs from a paragraph. Offsets, anchors and redaction spans stay server-side."""
-    return [{'id': b['id'], 'text': b['text'], **({'page': b['page']} if b.get('page') else {})} for b in blocks]
+    """Redacted text plus table/numbering context; private anchors and pixels stay local."""
+    from legal.document_context import model_blocks as structured_blocks
+    return structured_blocks(blocks)
 
 def finding_brief(f: dict) -> dict:
     """A finding reduced to what whole-contract compatibility checks need."""
